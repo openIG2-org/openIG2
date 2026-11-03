@@ -77,6 +77,7 @@ mod gui;
 mod help;
 mod hud;
 mod icon;
+mod info_modern;
 mod info_screen;
 mod kit;
 mod lighting;
@@ -188,6 +189,8 @@ pub struct Options {
     pub modern_menu: bool,
     /// `--modern-colony`: the colony snapshot with the modern panels (ADR 0070).
     pub modern_colony: bool,
+    /// `--modern-info`: the info screen snapshot with the modern panels (ADR 0072).
+    pub modern_info: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -352,6 +355,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_hud: false,
         modern_menu: false,
         modern_colony: false,
+        modern_info: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -454,6 +458,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--modern-hud" => o.modern_hud = true,
             "--modern-menu" => o.modern_menu = true,
             "--modern-colony" => o.modern_colony = true,
+            "--modern-info" => o.modern_info = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {

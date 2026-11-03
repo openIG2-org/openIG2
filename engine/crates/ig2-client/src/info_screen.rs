@@ -226,7 +226,7 @@ impl InfoData {
     /// `InfoProblemaRendez(p)` (exe 0x4e75c0) on `rendezo` (`InfoProblemaRendezo[0..=4]`, shared by every call):
     /// the problems at 100000 or more, the four worst first into slots 1..; slots past the count keep the earlier
     /// planet's entries. Returns the count (`InfoProblemaHanyKiirt`).
-    fn sort_problems(p: &ListPlanet, debug: bool, rendezo: &mut [usize; 5]) -> usize {
+    pub(crate) fn sort_problems(p: &ListPlanet, debug: bool, rendezo: &mut [usize; 5]) -> usize {
         let v = |i: usize| p.problems[i];
         let mut n = 0;
         rendezo[0] = 0;
@@ -494,7 +494,7 @@ pub fn limit_at(mx: i32) -> f64 {
 }
 
 /// A select menu's items: tax 0..=7, auto-build 0..=8 (0..=6 for race 5), priority 1..=3 (`Info_Main`).
-fn select_items(spot: u32, race: u8) -> std::ops::RangeInclusive<i32> {
+pub(crate) fn select_items(spot: u32, race: u8) -> std::ops::RangeInclusive<i32> {
     match spot {
         26 => 0..=7,
         27 => 0..=if race == 5 { 6 } else { 8 },
@@ -1268,12 +1268,33 @@ fn richness(r: &[u8], s: &UiSnap, rules: &ig2_rules::Rules, mp: bool) -> i32 {
     (rich as f32 * rules.race_production_mult.get(race).copied().unwrap_or(1.0) + bonus as f32) as i32
 }
 
-/// The detail mode's panel (re/screens/info.md §6.6): `InfoNagyKiirBolygo(61, 253, p)` (exe 0x4e6500) or
-/// `InfoNagyKiirFlotta(61, 253, f)` (exe 0x4e6ea0), rows 13 apart, size 2.
+/// One text the info panels put (`KiirStr`): virtual position, cells, size, alignment, palette colour, and for the
+/// detail mode's planet settings the selector's hot-spot (26..=28) lying over it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Put {
+    pub text: Vec<u8>,
+    pub x: f32,
+    pub y: f32,
+    pub len: usize,
+    pub size: usize,
+    pub align: Align,
+    pub colour: usize,
+    pub setting: Option<u32>,
+}
+
 #[allow(clippy::too_many_arguments)]
-fn draw_detail(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &crate::ui::UiTexts, rules: &ig2_rules::Rules, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
+fn put(out: &mut Vec<Put>, t: &[u8], x: f32, y: f32, len: usize, size: usize, align: Align, c: usize) {
+    out.push(Put { text: t.to_vec(), x, y, len, size, align, colour: c, setting: None });
+}
+
+/// The detail mode's panel (re/screens/info.md §6.6): `InfoNagyKiirBolygo(61, 253, p)` (exe 0x4e6500) or
+/// `InfoNagyKiirFlotta(61, 253, f)` (exe 0x4e6ea0), rows 13 apart, size 2. `all` = the whole design list (ours, the
+/// modern panel; the original's starts at entry 0 and shows 9 while `i + InfoMaxTervekPtr < n`).
+#[allow(clippy::too_many_arguments)]
+pub fn detail_lines(s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &crate::ui::UiTexts, rules: &ig2_rules::Rules, ui: &InfoScreen, all: bool) -> Vec<Put> {
+    let mut out = Vec::new();
+    let o = &mut out;
     let (x, y0) = (61.0, 253.0);
-    let put = |f: &mut Frame, t: &[u8], x: f32, y: f32, len: usize, align: Align, c: usize| font.text(f, v, t, x, y, len, 2, align, col(c), None);
     let hu = |section: u16, k: i32| txt17.get(0x11, section, k.clamp(0, 99) as u16);
     let en = s.human;
     match ui.detail_entry(d, en) {
@@ -1281,118 +1302,127 @@ fn draw_detail(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData
             let p = &d.planets[i];
             let r = &p.rec;
             let i32_at = |o: usize| i32::from_le_bytes(r[o..o + 4].try_into().unwrap());
-            let label = |f: &mut Frame, k: u16, y: f32, len: usize| put(f, &texts.get(2, 2, k), x + 10.0, y0 + y, len, Align::Left, 1);
+            let label = |o: &mut Vec<Put>, k: u16, y: f32, len: usize| put(o, &texts.get(2, 2, k), x + 10.0, y0 + y, len, 2, Align::Left, 1);
             let (owner, mine) = (r[0x20] as usize, r[0x20] as usize == en || d.debug);
             let mut y = 0.0;
-            label(f, 1, y, 8);
-            put(f, &p.name, x + 80.0, y0 + y, 0x1a, Align::Left, 3);
+            label(o, 1, y, 8);
+            put(o, &p.name, x + 80.0, y0 + y, 0x1a, 2, Align::Left, 3);
             y += 13.0;
-            label(f, 2, y, 0xb);
+            label(o, 2, y, 0xb);
             let surface = [hu(5, r[0x22] as i32), format!(" ({}% ", richness(r, s, rules, d.multiplayer)).into_bytes(), hu(5, 20), b")".to_vec()].concat();
-            put(f, &surface, x + 80.0, y0 + y, 0x1a, Align::Left, 0x21);
+            put(o, &surface, x + 80.0, y0 + y, 0x1a, 2, Align::Left, 0x21);
             y += 13.0;
             if owner != 0 && (owner == en || (en == 7 && r[0xcb] == 0) || r[0xc4 + en] != 0 || d.debug) {
-                label(f, 5, y, 0xb);
-                put(f, format!("{} ({:+})", i32_at(0x28), i32_at(0x2c)).as_bytes(), x + 80.0, y0 + y, 0x1a, Align::Left, 0x21);
+                label(o, 5, y, 0xb);
+                put(o, format!("{} ({:+})", i32_at(0x28), i32_at(0x2c)).as_bytes(), x + 80.0, y0 + y, 0x1a, 2, Align::Left, 0x21);
                 y += 13.0;
             }
             if owner != 0 && mine {
-                label(f, 6, y, 0xb);
-                put(f, &hu(4, 41 + i32_at(0x30) / 100), x + 80.0, y0 + y, 0x1a, Align::Left, 0x21);
+                label(o, 6, y, 0xb);
+                put(o, &hu(4, 41 + i32_at(0x30) / 100), x + 80.0, y0 + y, 0x1a, 2, Align::Left, 0x21);
                 y += 13.0;
-                label(f, 7, y, 0xb);
-                put(f, i32_at(0x44).to_string().as_bytes(), x + 80.0, y0 + y, 0x1a, Align::Left, 0x21);
+                label(o, 7, y, 0xb);
+                put(o, i32_at(0x44).to_string().as_bytes(), x + 80.0, y0 + y, 0x1a, 2, Align::Left, 0x21);
                 y += 13.0;
                 for (k, a, b) in [(8u16, 0x28, 0x50), (10, 0x48, 0x4c)] {
                     let c = if i32_at(a) < i32_at(b) { 6 } else { 0x21 };
-                    label(f, k, y, 0xb);
-                    put(f, i32_at(a).to_string().as_bytes(), x + 80.0, y0 + y, 0x1a, Align::Left, c);
-                    put(f, &texts.get(2, 2, k + 1), x + 115.0, y0 + y, 0xb, Align::Left, 1);
-                    put(f, i32_at(b).to_string().as_bytes(), x + 168.0, y0 + y, 0x1a, Align::Left, c);
+                    label(o, k, y, 0xb);
+                    put(o, i32_at(a).to_string().as_bytes(), x + 80.0, y0 + y, 0x1a, 2, Align::Left, c);
+                    put(o, &texts.get(2, 2, k + 1), x + 115.0, y0 + y, 0xb, 2, Align::Left, 1);
+                    put(o, i32_at(b).to_string().as_bytes(), x + 168.0, y0 + y, 0x1a, 2, Align::Left, c);
                     y += 13.0;
                 }
             }
             if owner != 0 && (owner == en || ((en != 7 || r[0xcb] != 0) && r[0xc4 + en] > 1) || d.debug) {
-                label(f, 12, y, 0xb);
-                put(f, i32_at(0x58).to_string().as_bytes(), x + 80.0, y0 + y, 0xb, Align::Left, 0x21);
+                label(o, 12, y, 0xb);
+                put(o, i32_at(0x58).to_string().as_bytes(), x + 80.0, y0 + y, 0xb, 2, Align::Left, 0x21);
                 y += 13.0;
             }
             if owner != 0 && mine {
                 // `AdoMertek_Nev`, `AutoBuild_Nev`, `BolygoPrioritas_Nev` (the selectors 26..=28 lie over them).
                 for (k, (base, off)) in [(22, 0x34usize), (30, 0x6c), (41, 0x6d)].into_iter().enumerate() {
-                    label(f, 15 + k as u16, y + 13.0 * k as f32, 0x20);
-                    put(f, &hu(5, base + r[off] as i32), x + 80.0, y0 + y + 13.0 * k as f32, 0x10, Align::Left, 0x21);
+                    label(o, 15 + k as u16, y + 13.0 * k as f32, 0x20);
+                    put(o, &hu(5, base + r[off] as i32), x + 80.0, y0 + y + 13.0 * k as f32, 0x10, 2, Align::Left, 0x21);
+                    o.last_mut().unwrap().setting = Some(26 + k as u32);
                 }
                 y += 39.0;
             }
-            label(f, 13, y, 0xb);
+            label(o, 13, y, 0xb);
             let h = ui.texts.0.clamp(1, 5);
             let code = i16::from_le_bytes([r[0x168 + 2 * h], r[0x169 + 2 * h]]);
             if code != 0 {
                 if let Some((_, t)) = infostr.iter().find(|t| t.0 == code) {
-                    put(f, t, x + 80.0, y0 + y, 0x1a, Align::Left, 6);
+                    put(o, t, x + 80.0, y0 + y, 0x1a, 2, Align::Left, 6);
                 }
             }
             if owner != 0 && mine {
                 y += 13.0;
-                label(f, 14, y, 0xb);
+                label(o, 14, y, 0xb);
                 let mut rendezo = [0usize; 5];
                 let n = InfoData::sort_problems(p, d.debug, &mut rendezo);
                 for &pr in &rendezo[1..=n] {
-                    put(f, (p.problems[pr] / 10000).to_string().as_bytes(), x + 80.0, y0 + y, 2, Align::Right, 6);
-                    put(f, b"%", x + 93.0, y0 + y, 1, Align::Left, 6);
-                    put(f, &hu(4, 21 + pr as i32), x + 106.0, y0 + y, 0x20, Align::Left, 0x21);
+                    put(o, (p.problems[pr] / 10000).to_string().as_bytes(), x + 80.0, y0 + y, 2, 2, Align::Right, 6);
+                    put(o, b"%", x + 93.0, y0 + y, 1, 2, Align::Left, 6);
+                    put(o, &hu(4, 21 + pr as i32), x + 106.0, y0 + y, 0x20, 2, Align::Left, 0x21);
                     y += 13.0;
                 }
             }
         }
         Some(Entry::Fleet(i)) => {
             let fl = &d.fleets[i];
-            let label = |f: &mut Frame, k: u16, y: f32| put(f, &texts.get(9, 2, k), x, y0 + y, 0xc, Align::Left, 1);
-            let value = |f: &mut Frame, t: &[u8], y: f32, len: usize| put(f, t, x + 76.0, y0 + y, len, Align::Left, 2);
+            let label = |o: &mut Vec<Put>, k: u16, y: f32| put(o, &texts.get(9, 2, k), x, y0 + y, 0xc, 2, Align::Left, 1);
+            let value = |o: &mut Vec<Put>, t: &[u8], y: f32, len: usize| put(o, t, x + 76.0, y0 + y, len, 2, Align::Left, 2);
             let mine = fl.owner as usize == en;
             let mut y = 0.0;
-            label(f, 1, y);
-            value(f, &fl.name, y, 0x14);
+            label(o, 1, y);
+            value(o, &fl.name, y, 0x14);
             y += 13.0;
             if mine || d.debug || d.radar > 1 {
-                label(f, 2, y);
-                value(f, fl.ships.to_string().as_bytes(), y, 10);
+                label(o, 2, y);
+                value(o, fl.ships.to_string().as_bytes(), y, 10);
                 y += 13.0;
-                label(f, 3, y);
-                value(f, fl.ground.to_string().as_bytes(), y, 10);
+                label(o, 3, y);
+                value(o, fl.ground.to_string().as_bytes(), y, 10);
                 y += 13.0;
             }
             if mine || d.debug || d.radar > 2 {
-                label(f, 4, y);
-                value(f, (((fl.speed as f64) * 100.0 + 0.5) as i32).to_string().as_bytes(), y, 10);
+                label(o, 4, y);
+                value(o, (((fl.speed as f64) * 100.0 + 0.5) as i32).to_string().as_bytes(), y, 10);
                 y += 13.0;
             }
             if mine {
-                label(f, 5, y);
-                value(f, fl.power.to_string().as_bytes(), y, 10);
+                label(o, 5, y);
+                value(o, fl.power.to_string().as_bytes(), y, 10);
                 y += 13.0;
                 if fl.order != 0 {
                     // `sprintf((9,2,8|9|10), …)`: "Space", "Planet %s", "Fleet %s".
                     let fmt = texts.get(9, 2, 8 + fl.kind.clamp(0, 2) as u16);
                     let target = if fl.kind == 0 { crate::ui::sprintf(&fmt, &[0]) } else { replace_s(&fmt, &fl.target) };
-                    label(f, 6, y);
-                    value(f, &target, y, 0x1e);
+                    label(o, 6, y);
+                    value(o, &target, y, 0x1e);
                     y += 13.0;
                 }
-                label(f, 7, y);
+                label(o, 7, y);
                 // From entry 0 while `i + InfoMaxTervekPtr < n` [quirk: the pointer shortens the list].
-                for (k, (name, count)) in fl.designs.iter().enumerate().take(9) {
-                    if k + ui.designs_ptr >= fl.designs.len() {
+                for (k, (name, count)) in fl.designs.iter().enumerate().take(if all { usize::MAX } else { 9 }) {
+                    if !all && k + ui.designs_ptr >= fl.designs.len() {
                         break;
                     }
                     let t = [&name[..], format!(" ({count})").as_bytes()].concat();
-                    value(f, &t, y, 0x18);
+                    value(o, &t, y, 0x18);
                     y += 13.0;
                 }
             }
         }
         None => {}
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_detail(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, infostr: &[(i16, Vec<u8>)], txt17: &crate::ui::UiTexts, rules: &ig2_rules::Rules, col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
+    for p in detail_lines(s, d, texts, infostr, txt17, rules, ui, false) {
+        font.text(f, v, &p.text, p.x, p.y, p.len, p.size, p.align, col(p.colour), None);
     }
 }
 
@@ -1404,76 +1434,89 @@ fn replace_s(fmt: &[u8], s: &[u8]) -> Vec<u8> {
     }
 }
 
+/// One row's texts (`KirakBolygoInfo` exe 0x4eb840, `KirakFlottaInfo` exe 0x4ebfc0, re/screens/info.md §6.2), y
+/// from the row's top: `problem` = the step `h` and the `InfoProblemaRendezo` slot it shows (step 0 the morale),
+/// `counter` = `Counter` (the production line's choice).
+#[allow(clippy::too_many_arguments)]
+pub fn entry_lines(d: &InfoData, e: Entry, texts: &UiTexts, txt17: &crate::ui::UiTexts, names: &[Vec<u8>], en: usize, problem: (usize, usize), counter: i32) -> Vec<Put> {
+    let mut out = Vec::new();
+    let o = &mut out;
+    let cat = |parts: &[&[u8]]| parts.concat();
+    let line = |o: &mut Vec<Put>, t: &[u8], y: f32, size: usize, c: usize| put(o, t, 70.0, y, 0x13, size, Align::Left, c);
+    let empire = |e: u8| names.get(e as usize).cloned().unwrap_or_default();
+    match e {
+        Entry::Planet(i) => {
+            let p = &d.planets[i];
+            line(o, &p.name, 3.0, 2, 0x22);
+            line(o, &empire(p.owner), 15.0, 1, 0x23);
+            if p.owner != 0 && p.details {
+                let l = format!(": {} ({:+})", p.pop, p.growth);
+                line(o, &cat(&[&texts.get(2, 3, 1), l.as_bytes()]), 24.0, 1, 0x23);
+            }
+            if p.owner as usize == en || (d.debug && p.owner != 0) {
+                let (step, slot) = problem;
+                let text = if step < 1 {
+                    let morale = p.morale / 100;
+                    cat(&[&texts.get(2, 3, 2), b": ", &txt17.get(0x11, 4, (41 + morale).clamp(0, 99) as u16)])
+                } else {
+                    cat(&[format!("{}% ", p.problems[slot] / 10000).as_bytes(), &txt17.get(0x11, 4, (21 + slot) as u16)])
+                };
+                line(o, &text, 33.0, 1, 0x23);
+                if let Some(q) = &p.queue[((counter / 30) % 2 == 0) as usize] {
+                    line(o, q, 42.0, 1, 1);
+                }
+            }
+        }
+        Entry::Fleet(i) => {
+            let fl = &d.fleets[i];
+            let (name_col, c) = if fl.flags & 0x400 != 0 { (6, 6) } else if fl.flags & 0x4000 != 0 { (1, 1) } else { (3, 0x21) };
+            line(o, &fl.name, 3.0, 2, name_col);
+            line(o, &empire(fl.owner), 15.0, 1, c);
+            let mine = fl.owner as usize == en || d.debug;
+            if mine {
+                if fl.order == 0 {
+                    line(o, &texts.get(2, 3, 3), 24.0, 1, c);
+                } else if fl.order == 1 || fl.order == 2 {
+                    let target = if fl.kind == 0 { texts.get(2, 3, 4) } else { fl.target.clone() };
+                    line(o, &cat(&[&texts.get(2, 3, 4 + fl.order as u16), b":", &target]), 24.0, 1, c);
+                }
+            }
+            if mine || d.radar > 1 {
+                let (ships, fighters) = (fl.ships - fl.fighters, fl.fighters);
+                let text = |a: u16, cap: bool| {
+                    let tail = if cap { format!(":{}/{}", fl.ground, fl.capacity) } else { format!(":{}", fl.ground) };
+                    cat(&[&texts.get(2, 3, a), format!(":{ships} ").as_bytes(), &texts.get(2, 3, a + 1), format!(":{fighters} ").as_bytes(), &texts.get(2, 3, a + 2), tail.as_bytes()])
+                };
+                let mut t = text(7, true);
+                if t.len() > 0x13 {
+                    t = text(10, true);
+                }
+                if t.len() > 0x13 {
+                    t = text(10, false);
+                }
+                line(o, &t, 33.0, 1, c);
+            }
+            if mine || d.radar > 2 {
+                let speed = ((fl.speed as f64) * 100.0 + 0.5) as i32;
+                line(o, &cat(&[&texts.get(2, 3, 13), format!(": {speed}").as_bytes()]), 42.0, 1, c);
+            }
+        }
+    }
+    out
+}
+
 /// `KirakBolygoFlottakat(70, 249)` (exe 0x4eb700): the rows from `BolygoFlottaPointer`, 56 apart
 /// (re/screens/info.md §6.2), each line `KiirStrAlap(s, 70, y + dy, 0x13, size, 0xc, colour)`.
 #[allow(clippy::too_many_arguments)]
 fn draw_rows(f: &mut Frame, font: &Font, v: &Virtual, s: &UiSnap, d: &InfoData, texts: &UiTexts, txt17: &crate::ui::UiTexts, names: &[Vec<u8>], col: &dyn Fn(usize) -> [f32; 3], ui: &InfoScreen) {
-    let cat = |parts: &[&[u8]]| parts.concat();
-    let put = |f: &mut Frame, t: &[u8], y: f32, size: usize, c: usize| font.text(f, v, t, 70.0, y, 0x13, size, Align::Left, col(c), None);
-    let empire = |e: u8| names.get(e as usize).cloned().unwrap_or_default();
-    let en = s.human;
     if ui.detail {
         return;
     }
-    for (k, e) in ui.rows(d, en).into_iter().enumerate() {
+    for (k, e) in ui.rows(d, s.human).into_iter().enumerate() {
         let y = (0xf9 + 0x38 * k) as f32;
-        match e {
-            Entry::Planet(i) => {
-                let p = &d.planets[i];
-                put(f, &p.name, y + 3.0, 2, 0x22);
-                put(f, &empire(p.owner), y + 15.0, 1, 0x23);
-                if p.owner != 0 && p.details {
-                    let line = format!(": {} ({:+})", p.pop, p.growth);
-                    put(f, &cat(&[&texts.get(2, 3, 1), line.as_bytes()]), y + 24.0, 1, 0x23);
-                }
-                if p.owner as usize == en || (d.debug && p.owner != 0) {
-                    let (step, slot, _) = ui.problem_rows[k];
-                    let text = if step < 1 {
-                        let morale = p.morale / 100;
-                        cat(&[&texts.get(2, 3, 2), b": ", &txt17.get(0x11, 4, (41 + morale).clamp(0, 99) as u16)])
-                    } else {
-                        cat(&[format!("{}% ", p.problems[slot] / 10000).as_bytes(), &txt17.get(0x11, 4, (21 + slot) as u16)])
-                    };
-                    put(f, &text, y + 33.0, 1, 0x23);
-                    if let Some(q) = &p.queue[((ui.counter / 30) % 2 == 0) as usize] {
-                        put(f, q, y + 42.0, 1, 1);
-                    }
-                }
-            }
-            Entry::Fleet(i) => {
-                let fl = &d.fleets[i];
-                let (name_col, c) = if fl.flags & 0x400 != 0 { (6, 6) } else if fl.flags & 0x4000 != 0 { (1, 1) } else { (3, 0x21) };
-                put(f, &fl.name, y + 3.0, 2, name_col);
-                put(f, &empire(fl.owner), y + 15.0, 1, c);
-                let mine = fl.owner as usize == en || d.debug;
-                if mine {
-                    if fl.order == 0 {
-                        put(f, &texts.get(2, 3, 3), y + 24.0, 1, c);
-                    } else if fl.order == 1 || fl.order == 2 {
-                        let target = if fl.kind == 0 { texts.get(2, 3, 4) } else { fl.target.clone() };
-                        put(f, &cat(&[&texts.get(2, 3, 4 + fl.order as u16), b":", &target]), y + 24.0, 1, c);
-                    }
-                }
-                if mine || d.radar > 1 {
-                    let (ships, fighters) = (fl.ships - fl.fighters, fl.fighters);
-                    let line = |a: u16, cap: bool| {
-                        let tail = if cap { format!(":{}/{}", fl.ground, fl.capacity) } else { format!(":{}", fl.ground) };
-                        cat(&[&texts.get(2, 3, a), format!(":{ships} ").as_bytes(), &texts.get(2, 3, a + 1), format!(":{fighters} ").as_bytes(), &texts.get(2, 3, a + 2), tail.as_bytes()])
-                    };
-                    let mut t = line(7, true);
-                    if t.len() > 0x13 {
-                        t = line(10, true);
-                    }
-                    if t.len() > 0x13 {
-                        t = line(10, false);
-                    }
-                    put(f, &t, y + 33.0, 1, c);
-                }
-                if mine || d.radar > 2 {
-                    let speed = ((fl.speed as f64) * 100.0 + 0.5) as i32;
-                    put(f, &cat(&[&texts.get(2, 3, 13), format!(": {speed}").as_bytes()]), y + 42.0, 1, c);
-                }
-            }
+        let (step, slot, _) = ui.problem_rows[k];
+        for p in entry_lines(d, e, texts, txt17, names, s.human, (step, slot), ui.counter) {
+            font.text(f, v, &p.text, p.x, y + p.y, p.len, p.size, p.align, col(p.colour), None);
         }
     }
 }

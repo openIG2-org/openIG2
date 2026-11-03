@@ -418,3 +418,4 @@ Captures: `run_screendiff.py <install> quick-1.sav info:IDS [--fleets N] [--star
 `Mouse_Lenyom` 0xDB465F at `Info_Main`'s entry), records `infokeringeto` (`info_turn`), the list, slots, detail mode,
 star log and an open menu in `<state>.ui.json`; the client takes them as `--info-turn`, `--info-detail`,
 `--info-texts`, `--info-star`, `--info-log`, `--info-select`.
+Modern panels: with "Modern info screen" on (default) the screen is egui console plates (ADR 0072, `info_modern.rs`); its rows and detail texts come from the shared `info_screen::entry_lines` / `detail_lines` builders and its acts run the hot-spot code through `info_modern_apply`; the classic drawing is unchanged and every capture stays byte-identical.

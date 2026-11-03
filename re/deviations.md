@@ -6,7 +6,7 @@ not known yet), **keep** (the difference stays: deliberate, harmless or an origi
 opt-in option proposed to the maintainers; classic keeps the original; listed in `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice;
 tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
 rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (500).
+(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (504).
 
 ## Open: player-visible
 
@@ -94,6 +94,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 497 | colony, modern panels' buttons | the modern colony screen's buttons act on the release over them (a drag off cancels), the original's on the press; the press still runs the original's code, so the order and sound are the same, a moment later | yes | ADR 0070 |
 | 498 | colony, modern build menu | a building is picked with one click on its row; the original's pick list is held open under the pointer, and hovering one of its entries drops the build cursor; the end state of a pick is the same | yes | ADR 0070, colony.md §10 |
 | 499 | colony, modern panels and the wheel | the mouse wheel over a modern panel doesn't zoom the view (as ADR 0065's starmap panels) | yes | ADR 0070 |
+| 501 | info, modern input | the limit follows a press or drag on its bar (the original sets it whenever the pointer rests on the bar, no button needed; same order 0x5c); an empire is picked by a click, not the pointer passing over its column; the panels take the left button only (the original's rows, buttons and menus also the right) | yes | ADR 0072 |
+| 502 | info, modern list | the list shows every planet or fleet of the empire, scrolling and sortable by order, name, size or alerts; the original shows four rows at a time with arrows and a scroll bar; a planet row's problem line steps by itself, not shared by four rows; a fleet's detail shows its whole design list (the original's nine) | yes | ADR 0072, info.md |
+| 503 | info, modern panels | the 3D frame, its globes, heads and button animation aren't drawn in the modern info screen; off = the original's | yes | ADR 0072 |
 
 ## Enhanced
 

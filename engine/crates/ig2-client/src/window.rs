@@ -280,6 +280,8 @@ struct App {
     /// Ours (ADR 0070): the modern colony screen's state and the acts of its last frame.
     colony_modern: crate::colony_modern::State,
     colony_acts: Vec<crate::colony_modern::Act>,
+    info_modern: crate::info_modern::State,
+    info_acts: Vec<crate::info_modern::Act>,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -813,6 +815,8 @@ impl App {
             gui_held: 0,
             modern_acts: Vec::new(),
             colony_modern: Default::default(),
+            info_modern: Default::default(),
+            info_acts: Vec::new(),
             colony_acts: Vec::new(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
@@ -1806,9 +1810,66 @@ impl App {
         self.display.modern_colony && self.front.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.world.colony_curr.is_some() && self.colony.as_ref().is_some_and(|c| c.ui.info.is_none())
     }
 
+    /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
+    fn info_modern_up(&self) -> bool {
+        self.display.modern_info && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Info) && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+    }
+
+    /// The modern info screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the classic
+    /// `Info_Main` code at the hot-spot the original's player would use (re/screens/info.md §5..§7).
+    fn info_modern_apply(&mut self) {
+        use crate::info_modern::{Act, Press};
+        use crate::info_screen::Buttons;
+        if !self.info_modern_up() {
+            self.info_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.info_acts) {
+            if let Act::Bar(b) = a {
+                self.bar_act(b);
+                continue;
+            }
+            let Some(h) = &mut self.hud else { return };
+            let (s, human) = (&self.world.ui, self.world.ui.human);
+            let (d, ui) = (&s.info, &mut h.info);
+            let drag = |p: Press| match p {
+                Press::Left => Buttons { press: true, down: true, left: true, ..Default::default() },
+                Press::Right => Buttons { press: true, down: true, right: true, ..Default::default() },
+                Press::Drag => Buttons { down: true, left: true, ..Default::default() },
+                Press::Release => Buttons { release: true, left: true, ..Default::default() },
+            };
+            let mut out = Vec::new();
+            match a {
+                Act::Empire(e) if ui.spot_on(e as u32, s) => ui.hover(Some(e as u32)),
+                Act::Chart(c) if ui.spot_on(16 + c as u32, s) => ui.press(Some(16 + c as u32), d, human, 0.0),
+                Act::StarLog(on) if ui.spot_on(if on { 15 } else { 14 }, s) => ui.press(Some(if on { 15 } else { 14 }), d, human, 0.0),
+                // The entry's row among the four shown (`BolygoFlottaPointer` moved to it), pressed.
+                Act::Open(j) if !ui.detail => {
+                    ui.pointer = j.min(d.list(ui.selected, human).len().saturating_sub(4));
+                    let id = 9 + (j - ui.pointer) as u32;
+                    if ui.spot_on(id, s) {
+                        ui.press(Some(id), d, human, 0.0);
+                    }
+                }
+                Act::Back if ui.spot_on(37, s) => ui.press(Some(37), d, human, 0.0),
+                // The menu's item under the pointer on the release (`infosmSelected`).
+                Act::Setting(k, item) if ui.spot_on(k, s) => {
+                    (ui.select, ui.select_item) = (Some(k), item);
+                    out = ui.orders(Some(k), [0.0; 2], drag(Press::Release), d, human);
+                }
+                Act::Triangle(at, p) => out = ui.orders(Some(29), at, drag(p), d, human),
+                Act::Limit(x, p) if ui.spot_on(32, s) => out = ui.orders(Some(32), [x, 210.0], drag(p), d, human),
+                _ => {}
+            }
+            for c in out {
+                self.world.send(c);
+            }
+        }
+    }
+
     /// The pointer is over one of the modern HUD's panels (its last frame's).
     fn over_gui(&self) -> bool {
-        (self.modern_up() || self.colony_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+        (self.modern_up() || self.colony_modern_up() || self.info_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
     }
 
     /// The pointer is over the modern colony's card (its last frame's).
@@ -4958,7 +5019,7 @@ impl App {
             return;
         }
         let at = self.virtual_cursor();
-        let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in;
+        let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in && !self.info_modern_up();
         let info_down = self.info_down;
         let (line_on, waiting, story) = self.message_line_gates();
         // `GFX_AllandoCallBack2`'s story text `_s(5, 0x215d)` on the colony screen.
@@ -5289,6 +5350,8 @@ impl App {
         let mut mv = None;
         let colony_modern = self.colony_modern_up();
         let mut cmv = None;
+        let info_modern = self.info_modern_up();
+        let mut imv = None;
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
@@ -5355,6 +5418,7 @@ impl App {
         }
         if let (Some(s), Some(h), Some(m)) = (self.overlay, &mut self.hud, &mut self.frame_models) {
             h.frame_tex = match s {
+                crate::ui::Screen::Info if info_modern => None,
                 crate::ui::Screen::Info => m.render_info(&mut g.renderer, &self.install, &h.info.frame_view(&self.world.ui), size),
                 crate::ui::Screen::Messages => m.render_messages(&mut g.renderer, &self.install, h.messages.frame, size),
                 _ => None,
@@ -5419,7 +5483,14 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
-            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony);
+            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony) || (info_modern && screen == crate::ui::Screen::Info);
+            h.modern_info = info_modern && screen == crate::ui::Screen::Info;
+            if h.modern_info {
+                let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                let mut m = crate::info_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, gates, t);
+                m.bar.bind_keys(&self.bindings);
+                imv = Some(m);
+            }
             match (screen, &self.colony, &self.world.colony_curr) {
                 (crate::ui::Screen::Colony, Some(c), Some(curr)) => {
                     let cursor = crate::font::Virtual::new(c.view.camera.size).virtual_of(self.cursor);
@@ -5489,7 +5560,7 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
-            if mv.is_none() && cmv.is_none() {
+            if mv.is_none() && cmv.is_none() && imv.is_none() {
                 ov.draw(&mut frame, h, size);
             }
         }
@@ -5508,6 +5579,14 @@ impl App {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.colony_modern, &mut self.colony_acts, g.band());
             g.gui.run(band, &style, |ctx| acts.extend(crate::colony_modern::show(ctx, cv, st)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
+        if let (Some(iv), Some(h)) = (&imv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band) = (&mut self.info_modern, &mut self.info_acts, g.band());
+            g.gui.run(band, &style, |ctx| acts.extend(crate::info_modern::show(ctx, iv, st)));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -5544,6 +5623,7 @@ impl App {
         }
         self.modern_apply();
         self.colony_modern_apply();
+        self.info_modern_apply();
     }
 }
 
@@ -5790,7 +5870,7 @@ impl ApplicationHandler for App {
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
-        if !page && (self.modern_up() || self.colony_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6326,13 +6406,14 @@ impl App {
                 spy.hover(&d, at);
             }
         }
+        let info_modern = self.info_modern_up();
         if let Some(v) = &self.view {
             let at = v.camera.virtual_of(p);
             self.panels.hover(at);
             self.menus.hover(at);
             if let Some(h) = &mut self.hud {
                 match self.overlay {
-                    Some(crate::ui::Screen::Info) => {
+                    Some(crate::ui::Screen::Info) if !info_modern => {
                         let id = h.info.spot_at(&self.tables.race_name_x, at, &self.world.ui);
                         h.info.hover(id);
                         let b = crate::info_screen::Buttons { down: self.info_down, left: true, ..Default::default() };
@@ -6512,13 +6593,17 @@ impl App {
             }
             return;
         }
-        let modern = self.modern_up() || self.colony_modern_up();
+        let modern = self.modern_up() || self.colony_modern_up() || self.info_modern_up();
         if !modern && self.top_menus_button(button, pressed) {
             return;
         }
         // The top bar's spots win over every screen's (`top_bar`).
         let at = self.virtual_cursor();
         if !modern && self.top_bar_mouse(button, pressed, at) {
+            return;
+        }
+        // Ours (ADR 0072): the modern info screen's panels own the whole screen; no press reaches the hidden hot-spots.
+        if self.info_modern_up() {
             return;
         }
         if self.spy.is_some() && (bit == 0 || self.mouse_held & !bit != 0) {
