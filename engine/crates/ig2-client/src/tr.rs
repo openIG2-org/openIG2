@@ -57,6 +57,8 @@ const TABLE: &[(&str, &str)] = &[
     ("The size of the remake's own pages and panels; they grow with the window.", "A remake saját oldalainak és paneljeinek mérete; az ablakkal együtt nőnek."),
     // The modern starmap HUD (ADR 0065).
     ("Speed", "Sebesség"),
+    // The modern fleet panel (ADR 0077).
+    ("Equipment", "Felszerelés"),
     ("Quick research", "Gyors kutatás"),
     ("Build cursor", "Építési kurzor"),
     ("No research", "Nincs kutatás"),

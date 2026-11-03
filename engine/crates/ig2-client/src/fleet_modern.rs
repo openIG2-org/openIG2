@@ -1,0 +1,717 @@
+//! Ours (ADR 0077): the starmap's fleet info panel (re/screens/starmap.md §19) and transfer panel (§13) as the
+//! design boards' panels on the design kit (ADR 0073), under the modern starmap HUD (ADR 0065, 0079). The panels
+//! take no input themselves: the window hands the pointer to the original's hot-spot code moved where the panels
+//! drew their controls ([`State::pointer`]), so the press-and-hold sale menu, the held transfer cells (left one
+//! more each step, right all), the scroll bar, the exit, the keys and the orders stay the original's. The units'
+//! models are the original's render target, cut out of it into the cards' wells ([`pictures`]).
+
+use egui::{pos2, vec2, Color32, Pos2, Rect, Stroke, Vec2};
+use ig2_sim::save::{va, SaveState, TECH_SIZE};
+
+use crate::gui::ds::{self, Font, Text, Weight};
+use crate::orders::Selection;
+use crate::starmap_panels::Panels;
+
+/// One unit card: the design's name, how many, the original's highlight.
+#[derive(Debug, Clone, Default)]
+pub struct Card {
+    pub name: String,
+    pub count: i32,
+    pub selected: bool,
+    /// The count in the warning colour (a fleet's vehicles over its capacity).
+    pub warn: bool,
+}
+
+/// A side's vehicle capacity: the label (`GetString(2, 5, 2)`), the value and how full.
+#[derive(Debug, Clone, Default)]
+pub struct Cap {
+    pub label: String,
+    pub value: String,
+    pub fraction: Option<f32>,
+    pub over: bool,
+}
+
+/// The selected design's data (`FlottaInfoText2d`'s lower half).
+#[derive(Debug, Clone, Default)]
+pub struct Detail {
+    pub name: String,
+    pub rows: Vec<(String, String)>,
+    /// The pod slots: the tech's name and count, the count at the slot's most; `None` = empty.
+    pub pods: Vec<Option<(String, String, bool)>>,
+    pub empty: String,
+    pub pods_label: String,
+}
+
+/// The sale menu open (`StarmapSelectDeleteMode`): its rows, the one under the pointer, its virtual box.
+#[derive(Debug, Clone, Default)]
+pub struct Sale {
+    pub rows: Vec<(String, bool)>,
+    pub hovered: i32,
+    pub at: [i32; 2],
+}
+
+/// The fleet info panel.
+#[derive(Debug, Clone, Default)]
+pub struct FleetInfo {
+    pub title: String,
+    pub owner: String,
+    pub colour: Color32,
+    pub status: String,
+    /// The eight shown places (k = item − first).
+    pub cards: [Option<Card>; 8],
+    pub first: i32,
+    pub total: i32,
+    pub detail: Option<Detail>,
+    pub cap: Option<Cap>,
+    pub exit: String,
+    pub sale: Option<Sale>,
+}
+
+/// One side of the transfer panel.
+#[derive(Debug, Clone, Default)]
+pub struct Side {
+    pub title: String,
+    pub owner: String,
+    pub colour: Color32,
+    pub cards: [Option<Card>; 8],
+    pub cap: Cap,
+}
+
+/// The transfer panel: the left holder (`f1`) and the right one, the shared list's scroll.
+#[derive(Debug, Clone, Default)]
+pub struct Transfer {
+    pub sides: [Side; 2],
+    pub first: i32,
+    pub total: i32,
+    pub exit: String,
+}
+
+/// What the panels show this frame.
+#[derive(Debug, Clone)]
+pub enum View {
+    Fleet(FleetInfo),
+    Transfer(Transfer),
+}
+
+/// Where the panels put the original's controls this frame (points), and the wells for [`pictures`].
+#[derive(Debug, Clone, Default)]
+pub struct State {
+    /// Virtual → points: x0, y0, scale.
+    map: [f32; 3],
+    panels: Vec<Rect>,
+    /// A control's rect and the virtual point of the original's hot-spot it is.
+    spots: Vec<(Rect, [f32; 2])>,
+    /// The scroll bar's track: the virtual y runs 30..359 along it.
+    track: Option<Rect>,
+    /// The sale menu's rows and the virtual points of the original's.
+    menu: Option<(Rect, Vec<Spot>)>,
+    /// Where the sale menu opened (points).
+    sale_at: Option<Pos2>,
+    /// The wells: the source rectangle on the virtual 640 × 480 screen, the well in pixels, the opacity.
+    pub wells: Vec<([f32; 4], Rect, f32)>,
+}
+
+/// A control's rect and the virtual point of the original's it is.
+type Spot = (Rect, [f32; 2]);
+
+/// A point of the original's panels that is none of their controls (hot-spot 0x58: the panel takes the press).
+const NEUTRAL: [f32; 2] = [30.0, 40.0];
+
+impl State {
+    /// The pointer `at` (virtual) as the original's panel code should see it: over a card or a plate the middle of
+    /// its hot-spot, along the scroll bar the original's bar at that height, over the sale menu the original's row,
+    /// over the rest of the panels the original panel's empty part. Elsewhere unchanged.
+    /// The scroll bar held (`Mouse_Megfogva` latches hot-spot 0x57, which reads the pointer's height only): the
+    /// original's bar at the pointer's height along the drawn track, wherever across.
+    pub fn scroll_pointer(&self, at: [f32; 2]) -> [f32; 2] {
+        let Some(t) = self.track else { return self.pointer(at) };
+        let y = self.map[1] + at[1] * self.map[2];
+        [320.0, 30.0 + ((y - t.top()) / t.height()).clamp(0.0, 1.0) * 329.0]
+    }
+
+    pub fn pointer(&self, at: [f32; 2]) -> [f32; 2] {
+        if self.panels.is_empty() {
+            return at;
+        }
+        let m = self.map;
+        let p = pos2(m[0] + at[0] * m[2], m[1] + at[1] * m[2]);
+        // While the sale menu is open only its rows answer: a card beside it would land in the original's rows.
+        if let Some((r, rows)) = &self.menu {
+            return if r.contains(p) { rows.iter().find(|x| x.0.contains(p)).map_or(NEUTRAL, |x| x.1) } else { NEUTRAL };
+        }
+        if let Some(t) = self.track.filter(|t| t.expand2(vec2(8.0, 0.0)).contains(p)) {
+            return [320.0, 30.0 + ((p.y - t.top()) / t.height()).clamp(0.0, 1.0) * 329.0];
+        }
+        if let Some(s) = self.spots.iter().find(|s| s.0.contains(p)) {
+            return s.1;
+        }
+        // The original's cells, scroll bar and exit button where they were answer no more.
+        if self.panels.iter().any(|r| r.contains(p)) || crate::kit::inside([0, 24, 640, 416], at) {
+            NEUTRAL
+        } else {
+            at
+        }
+    }
+}
+
+const EDGE: f32 = 24.0;
+const HEAD: f32 = 64.0;
+const FOOT: f32 = 64.0;
+const PAD: Vec2 = vec2(22.0, 20.0);
+const GAP: f32 = 14.0;
+/// The fleet board's panel: 1320 wide, its unit column 640.
+const FLEET_W: f32 = 1320.0;
+const FLEET_LEFT: f32 = 640.0;
+/// The transfer board's two panels, 620 wide, 80 apart.
+const SIDE_W: f32 = 620.0;
+const SIDES_GAP: f32 = 80.0;
+const TITLE: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tracking: 0.12, upper: false, lcd: false };
+const STATUS: Font = Font { size: 14.0, line: 18.0, weight: Weight::Medium, tracking: 0.1, upper: true, lcd: false };
+const CARD_NAME: Font = Font { size: 15.0, line: 20.0, weight: Weight::Medium, tracking: 0.1, upper: false, lcd: false };
+const DETAIL_NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
+const OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
+const EXIT: Font = Font { size: 18.0, line: 22.0, weight: Weight::Medium, tracking: 0.16, upper: false, lcd: false };
+
+
+/// The virtual centre of the original's cell `k` (left panel; `right` the transfer's right one) and its model's
+/// place on the render target (`InfoPanel::poses`, `PanelModels::render`: x 91 + 129·(k mod 2), y 84 + 70·(k div 2),
+/// the right panel 328 further).
+fn cell(k: usize, right: bool) -> ([f32; 2], [f32; 4]) {
+    let x = 91.0 + 129.0 * (k % 2) as f32 + if right { 328.0 } else { 0.0 };
+    let y = 84.0 + 70.0 * (k / 2) as f32;
+    ([x, y + 8.0], [x - 48.0, y - 26.0, 96.0, 52.0])
+}
+
+/// The fleet panel's big model on the render target (`InfoForgatAlap` at (150, −150): about (470, 90)).
+const PREVIEW: [f32; 4] = [375.0, 40.0, 190.0, 100.0];
+
+fn hover(ui: &egui::Ui, r: Rect) -> bool {
+    ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p))
+}
+
+fn down(ui: &egui::Ui) -> bool {
+    ui.ctx().input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
+}
+
+/// One frame of the panels over the starmap (after the HUD's).
+pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
+    let ppp = ctx.pixels_per_point();
+    let screen = ctx.screen_rect();
+    let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
+    *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, ..Default::default() };
+    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 28.0;
+    // Room down to the selection card (24 from the bottom, about 150 high).
+    let room = (screen.bottom() - top - EDGE - 200.0).max(360.0);
+    let t = ds::open_t(ctx, egui::Id::new("fmh-open"), true);
+    egui::Area::new(egui::Id::new("fmh")).order(egui::Order::Background).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
+        ui.set_opacity(t);
+        let slide = vec2(0.0, (1.0 - t) * 12.0);
+        match v {
+            View::Fleet(f) => fleet(ui, f, st, screen, top, room, slide),
+            View::Transfer(tr) => transfer(ui, tr, st, screen, top, room, slide),
+        }
+    });
+    let o = t;
+    // The sale menu lies over the models (drawn after the panels): the wells under it stay empty while it is open.
+    if let Some((m, _)) = &st.menu {
+        st.wells.retain(|w| !w.1.intersects(*m));
+    }
+    for w in &mut st.wells {
+        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
+        w.2 *= o;
+    }
+}
+
+/// A panel with the boards' header strip: the background, the header, its rim lines; the header's rect.
+fn panel(ui: &egui::Ui, r: Rect, title: &str, owner: &str, colour: Color32, status: &str) {
+    let k = ds::tokens();
+    let p = ui.painter();
+    ds::paint_panel(p, r, ds::PanelKind::Glass, 0.97);
+    let head = Rect::from_min_size(r.min, vec2(r.width(), HEAD));
+    ds::header_strip(p, head);
+    let inner = head.shrink2(vec2(PAD.x, 0.0));
+    let base = ds::fit::baseline(inner, TITLE);
+    let w = Text::new(title, TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.5)).width;
+    let mut x = inner.left() + w + 18.0;
+    if !owner.is_empty() {
+        let f = Text::new(owner, OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
+        ds::glowing_galley(p, pos2(x, base - f.baseline()), &f.galley, colour);
+        x += f.width + 18.0;
+    }
+    if !status.is_empty() {
+        Text::new(status, STATUS).color(k.ink_muted).baseline(base).paint(ui, Rect::from_min_max(pos2(x, inner.top()), inner.max));
+    }
+}
+
+/// A unit card: the well with the model and the count (or the count under it), the name; the original's highlight
+/// as the list's selected look, the pointer's as the hover rim. `round` = the transfer's button glyph.
+fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: Option<(ds::Icon, bool)>, st: &mut State) {
+    let k = ds::tokens();
+    let p = ui.painter();
+    let hot = ds::hover_t(ui.ctx(), ui.id().with(("fmh-card", r.min.x as i32, r.min.y as i32)), hover(ui, r));
+    if c.selected {
+        ds::vgrad(p, r, ds::RADIUS_PANEL, &[(0.0, Color32::from_white_alpha(36)), (1.0, Color32::from_white_alpha(5))]);
+        ds::rim(p, r, ds::RADIUS_PANEL, k.ink_silver);
+    } else {
+        ds::rim(p, r, ds::RADIUS_PANEL, if c.warn { k.enemy } else { k.rim.lerp_to_gamma(k.rim_bright, hot) });
+    }
+    let inner = r.shrink(8.0);
+    // The board's 130-point well in a 196-point card; the transfer's button row under the name.
+    let foot = if round.is_some() { 42.0 + 8.0 } else { 0.0 };
+    let well = Rect::from_min_max(inner.min, pos2(inner.right(), (inner.top() + 130.0).min(inner.bottom() - 20.0 - 8.0 - foot)));
+    p.rect_filled(well, ds::RADIUS_PLATE, k.glass_deep);
+    ds::radial(p, well, ds::RADIUS_PLATE, [0.5, 0.6], &[(0.0, k.rim_bright.gamma_multiply(0.18 + 0.12 * hot)), (0.7, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    ds::rim(p, well, ds::RADIUS_PLATE, k.rim);
+    st.wells.push((src, well.shrink(2.0), alpha * ui.opacity()));
+    let name = Rect::from_min_size(pos2(inner.left(), well.bottom() + 8.0), vec2(inner.width(), 20.0));
+    let name_text = Text::new(&c.name, CARD_NAME).color(k.ink).shrink(12.0);
+    if round.is_some() { name_text.paint(ui, name) } else { name_text.center().paint(ui, name) };
+    let count = c.count.to_string();
+    let lcd = |at: Rect| {
+        ds::lcd_window(p, at);
+        Text::new(&count, Font::READOUT.sized(18.0)).center().color(if c.warn { k.enemy } else { k.lcd_ink }).paint_only(ui, at.shrink2(vec2(4.0, 0.0)));
+    };
+    match round {
+        None => {
+            let w = 14.0 + 11.0 * count.len().max(1) as f32;
+            lcd(Rect::from_min_size(well.right_bottom() - vec2(6.0 + w, 6.0 + 24.0), vec2(w, 24.0)));
+        }
+        Some((icon, right)) => {
+            let row = Rect::from_min_size(pos2(inner.left(), name.bottom() + 8.0), vec2(inner.width(), 42.0));
+            let w = 14.0 + 11.0 * count.len().max(3) as f32;
+            let (l, b) = if right { (Rect::from_min_size(pos2(row.right() - w, row.center().y - 12.0), vec2(w, 24.0)), row.left()) } else { (Rect::from_min_size(pos2(row.left(), row.center().y - 12.0), vec2(w, 24.0)), row.right() - 42.0) };
+            lcd(l);
+            let br = Rect::from_min_size(pos2(b, row.center().y - 21.0), vec2(42.0, 42.0));
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(br));
+            ds::forced(hot > 0.5, hot > 0.5 && down(ui), || ds::round_button(&mut child, ds::Glyph::Icon(icon), true, false));
+        }
+    }
+}
+
+/// A plate drawn without input (the pointer's remap presses the original's spot), lit by the pointer.
+fn plate(ui: &mut egui::Ui, r: Rect, text: &str) {
+    let hot = hover(ui, r);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+    ds::forced(hot, hot && down(ui), || child.add_sized(r.size(), ds::Plate::new(text).width(r.width()).height(r.height()).font(EXIT)));
+}
+
+/// The capacity footer's label, bar and value from `x`.
+fn capacity(ui: &egui::Ui, foot: Rect, c: &Cap, bar_w: f32) -> f32 {
+    let k = ds::tokens();
+    let p = ui.painter();
+    let base = ds::fit::baseline(foot, Font::DATA);
+    let label = c.label.trim().trim_end_matches(':');
+    let w = Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, foot.with_max_x(foot.left() + 180.0)).width;
+    let mut x = foot.left() + w + 16.0;
+    let tone = if c.over { k.enemy } else { k.info };
+    if let Some(f) = c.fraction {
+        let bar = Rect::from_min_size(pos2(x, foot.center().y - 4.0), vec2(bar_w, 8.0));
+        p.rect_filled(bar, 4, k.glass_deep);
+        let f = ui.ctx().animate_value_with_time(ui.id().with(("fmh-cap", bar.min.x as i32)), f.clamp(0.0, 1.0), ds::anim(ds::GLIDE_TIME));
+        if f > 0.0 {
+            p.rect_filled(bar.with_max_x(bar.left() + (bar_w * f).max(8.0)), 4, tone);
+        }
+        ds::rim(p, bar, 4, if c.over { k.enemy } else { k.rim });
+        x += bar_w + 16.0;
+    }
+    x + Text::new(&c.value, Font::DATA).color(tone).baseline(base).paint(ui, Rect::from_min_max(pos2(x, foot.top()), pos2(x + 120.0, foot.bottom()))).width
+}
+
+/// The cards' grid in `body`: 3 across, the board's `row_h` high while two rows hold the cards, three rows sharing
+/// the height when the original's eight places fill more.
+fn grid(body: Rect, n: usize, row_h: f32, three: bool) -> (Vec<Rect>, f32) {
+    let w = ((body.width() - 2.0 * GAP) / 3.0).floor();
+    let rows = if three { 3.0 } else { 2.0 };
+    let h = row_h.min(((body.height() - (rows - 1.0) * GAP) / rows).floor());
+    let cells = (0..n).map(|k| Rect::from_min_size(body.min + vec2((k % 3) as f32 * (w + GAP), (k / 3) as f32 * (h + GAP)), vec2(w, h))).collect();
+    (cells, h)
+}
+
+fn scroll(ui: &egui::Ui, body: Rect, first: i32, total: i32, st: &mut State) {
+    if total <= 8 {
+        return;
+    }
+    let k = ds::tokens();
+    let track = Rect::from_min_max(pos2(body.right() + 6.0, body.top()), pos2(body.right() + 10.0, body.bottom()));
+    let p = ui.painter();
+    p.rect_filled(track, 2, k.glass_deep);
+    ds::rim(p, track, 2, k.rim);
+    let h = (track.height() * 8.0 / total as f32).max(24.0);
+    let y = track.top() + (track.height() - h) * first as f32 / (total - 8).max(1) as f32;
+    let hot = hover(ui, track.expand2(vec2(8.0, 0.0)));
+    p.rect_filled(Rect::from_min_size(pos2(track.left(), y), vec2(track.width(), h)), 2, if hot { k.ink_silver } else { k.rim_bright });
+    st.track = Some(track);
+}
+
+fn fleet(ui: &mut egui::Ui, f: &FleetInfo, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
+    let k = ds::tokens();
+    let w = FLEET_W.min(screen.width() - 2.0 * EDGE);
+    let h = 700.0f32.min(room);
+    let r = Rect::from_min_size(pos2(screen.center().x - w / 2.0, top), vec2(w, h)).translate(slide);
+    panel(ui, r, &f.title, &f.owner, f.colour, &f.status);
+    st.panels.push(r);
+    let p = &ui.painter().clone();
+    let split = r.left() + (FLEET_LEFT * w / FLEET_W).round();
+    let body = Rect::from_min_max(pos2(r.left(), r.top() + HEAD), pos2(r.right(), r.bottom() - FOOT));
+    p.vline(split - 0.5, body.y_range(), Stroke::new(1.0f32, k.rim));
+    p.hline(r.x_range(), body.bottom() + 0.5, Stroke::new(1.0f32, k.rim));
+    // The units: 3 across, the original's eight places.
+    let cards = Rect::from_min_max(body.min + PAD, pos2(split - PAD.x - if f.total > 8 { 12.0 } else { 0.0 }, body.bottom() - PAD.y));
+    let (cells, _) = grid(cards, 8, 196.0, f.cards[6].is_some());
+    for (i, c) in f.cards.iter().enumerate() {
+        let Some(c) = c else { continue };
+        let (centre, src) = cell(i, false);
+        card(ui, cells[i], c, src, 1.0, None, st);
+        st.spots.push((cells[i], centre));
+    }
+    scroll(ui, cards, f.first, f.total, st);
+    // The selected design: its model on the void, its name, the data table and the pods.
+    let right = Rect::from_min_max(pos2(split, body.top()), body.max);
+    // The model's view gives way to the data where the screen is short (a large UI scale).
+    let need = f.detail.as_ref().map_or(0.0, |d| 58.0 + 12.0 + (d.rows.len() as f32 * 28.0).max(24.0 + d.pods.len() as f32 * 28.0 + 12.0));
+    let pic = Rect::from_min_size(right.min, vec2(right.width(), (body.height() - need).clamp(110.0, 290.0).floor()));
+    p.rect_filled(pic, 0, k.void);
+    p.hline(pic.x_range(), pic.bottom() - 0.5, Stroke::new(1.0f32, k.rim));
+    if let Some(d) = &f.detail {
+        let wf = (PREVIEW[2] / PREVIEW[3]).min(pic.width() / pic.height());
+        let ph = (pic.height() - 24.0).min((pic.width() - 48.0) / wf);
+        st.wells.push((PREVIEW, Rect::from_center_size(pic.center(), vec2(ph * wf, ph)), ui.opacity()));
+        let inner = Rect::from_min_max(pic.left_bottom() + vec2(24.0, 18.0), right.max - vec2(24.0, 12.0));
+        Text::new(&d.name, DETAIL_NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 26.0)));
+        let cols = Rect::from_min_max(inner.min + vec2(0.0, 40.0), inner.max);
+        let half = ((cols.width() - 32.0) / 2.0).floor();
+        let pitch = (cols.height() / d.rows.len().max(1) as f32).clamp(20.0, 28.0);
+        for (n, (label, value)) in d.rows.iter().enumerate() {
+            let row = Rect::from_min_size(cols.min + vec2(0.0, n as f32 * pitch), vec2(half, 20.0));
+            let base = ds::fit::baseline(row, Font::DATA);
+            let (a, b) = row.split_left_right_at_x(row.left() + 146.0_f32.min(half * 0.6));
+            Text::new(label.trim().trim_end_matches(':'), Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
+            Text::new(value, Font::DATA).color(k.info).baseline(base).paint(ui, b);
+        }
+        // The pods: a recessed list, an empty slot muted.
+        let list = Rect::from_min_size(cols.min + vec2(half + 32.0, 0.0), vec2(half, 0.0));
+        let mut y = list.top();
+        if !d.pods_label.is_empty() {
+            Text::new(&d.pods_label, Font::LABEL).color(k.ink_muted).paint(ui, Rect::from_min_size(pos2(list.left(), y), vec2(half, 18.0)));
+            y += 24.0;
+        }
+        let row_h = ((cols.bottom() - y - 12.0) / d.pods.len().max(1) as f32).clamp(20.0, 28.0);
+        let well = Rect::from_min_size(pos2(list.left(), y), vec2(half, row_h * d.pods.len() as f32 + 12.0));
+        if !d.pods.is_empty() {
+            p.rect_filled(well, ds::RADIUS_PLATE, k.glass_deep);
+            ds::rim(p, well, ds::RADIUS_PLATE, k.rim);
+        }
+        for (n, pod) in d.pods.iter().enumerate() {
+            let row = Rect::from_min_size(pos2(well.left() + 4.0, well.top() + 6.0 + n as f32 * row_h), vec2(half - 8.0, row_h)).shrink2(vec2(8.0, 0.0));
+            let base = ds::fit::baseline(row, Font::DATA);
+            match pod {
+                None => _ = Text::new(&d.empty, Font::DATA).color(k.ink_muted).baseline(base).paint(ui, row),
+                Some((name, count, full)) => {
+                    let (a, b) = row.split_left_right_at_x(row.right() - 36.0);
+                    Text::new(name, Font::DATA).color(k.ink).baseline(base).paint(ui, a.with_max_x(a.right() - 6.0));
+                    // The original's slot at its most in its own colour (0x22 against 3): here the brighter ink.
+                    Text::new(count, Font::DATA).right().color(if *full { k.info } else { k.info.gamma_multiply(0.8) }).baseline(base).paint(ui, b);
+                }
+            }
+        }
+    }
+    // The footer: the capacity, the exit plate (hot-spot 9).
+    let foot = Rect::from_min_max(pos2(r.left() + PAD.x, body.bottom()), pos2(r.right() - PAD.x, r.bottom()));
+    if let Some(c) = &f.cap {
+        capacity(ui, foot, c, 200.0);
+    }
+    let ew = Text::new(&f.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(100.0, 220.0) + 80.0;
+    let exit = Rect::from_min_size(pos2(foot.right() - ew, foot.center().y - 22.0), vec2(ew, 44.0));
+    plate(ui, exit, &f.exit);
+    st.spots.push((exit, [527.0, 410.0]));
+    if let Some(s) = &f.sale {
+        sale(ui, s, st, screen);
+    } else {
+        st.sale_at = None;
+    }
+}
+
+/// The sale menu at the pointer of the press (`smSelectX/Y` = the pointer + (14, −6)), the original's rows lit by
+/// the pointer, a row that can't be had muted.
+fn sale(ui: &egui::Ui, s: &Sale, st: &mut State, screen: Rect) {
+    let k = ds::tokens();
+    let at = *st.sale_at.get_or_insert_with(|| ui.ctx().input(|i| i.pointer.hover_pos()).unwrap_or(screen.center()) + vec2(14.0, -6.0));
+    let font = Font::DATA;
+    let w = s.rows.iter().map(|r| Text::new(&r.0, font).layout(ui.ctx(), f32::INFINITY).width).fold(120.0, f32::max) + 24.0;
+    let row_h = 30.0;
+    let mut r = Rect::from_min_size(at, vec2(w + 12.0, row_h * s.rows.len() as f32 + 12.0));
+    r = r.translate(vec2((screen.right() - 8.0 - r.right()).min(0.0), (screen.bottom() - 8.0 - r.bottom()).min(0.0)));
+    let p = ui.painter().clone().with_layer_id(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("fmh-sale")));
+    ds::shadow(&p, r, ds::RADIUS_PANEL, 8, 24, 0, Color32::from_black_alpha(204));
+    ds::paint_panel(&p, r, ds::PanelKind::Deep, 0.97);
+    let mut rows = Vec::new();
+    for (n, (text, ok)) in s.rows.iter().enumerate() {
+        let row = Rect::from_min_size(r.min + vec2(6.0, 6.0 + n as f32 * row_h), vec2(w, row_h));
+        let on = *ok && s.hovered == n as i32 + 1;
+        if on {
+            ds::hgrad(&p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
+            ds::rim(&p, row, ds::RADIUS_PLATE, k.ink_silver);
+        }
+        let inner = row.shrink2(vec2(10.0, 0.0));
+        let f = Text::new(text, font).color(if *ok { k.ink } else { k.ink_muted }).layout(ui.ctx(), inner.width());
+        p.galley(pos2(inner.left(), ds::fit::baseline(inner, font) - f.baseline()), f.galley, Color32::WHITE);
+        rows.push((row, [s.at[0] as f32 + 1.0, s.at[1] as f32 + 13.0 * n as f32 + 6.0]));
+    }
+    st.menu = Some((r, rows));
+}
+
+fn transfer(ui: &mut egui::Ui, t: &Transfer, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
+    let k = ds::tokens();
+    let sw = SIDE_W.min((screen.width() - 2.0 * EDGE - SIDES_GAP) / 2.0);
+    let h = 700.0f32.min(room);
+    let x0 = screen.center().x - sw - SIDES_GAP / 2.0;
+    for (s, side) in t.sides.iter().enumerate() {
+        let r = Rect::from_min_size(pos2(x0 + s as f32 * (sw + SIDES_GAP), top), vec2(sw, h)).translate(slide);
+        panel(ui, r, &side.title, &side.owner, side.colour, "");
+        st.panels.push(r);
+        let body = Rect::from_min_max(pos2(r.left(), r.top() + HEAD), pos2(r.right(), r.bottom() - FOOT));
+        ui.painter().hline(r.x_range(), body.bottom() + 0.5, Stroke::new(1.0f32, k.rim));
+        let cards = Rect::from_min_max(body.min + PAD, body.max - PAD - vec2(if t.total > 8 { 12.0 } else { 0.0 }, 0.0));
+        let (cells, _) = grid(cards, 8, 224.0, side.cards[6].is_some());
+        let right = s == 1;
+        for (i, c) in side.cards.iter().enumerate() {
+            let Some(c) = c else { continue };
+            let (centre, src) = cell(i, right);
+            let icon = if right { ds::Icon::ChevronLeft } else { ds::Icon::ChevronRight };
+            // An empty side's model is already three quarters transparent on the target.
+            card(ui, cells[i], c, src, 1.0, Some((icon, right)), st);
+            st.spots.push((cells[i], centre));
+        }
+        if right {
+            scroll(ui, cards, t.first, t.total, st);
+        }
+        let foot = Rect::from_min_max(pos2(r.left() + PAD.x, body.bottom()), pos2(r.right() - PAD.x, r.bottom()));
+        capacity(ui, foot, &side.cap, 160.0);
+        if right {
+            let ew = Text::new(&t.exit, EXIT).layout(ui.ctx(), f32::INFINITY).width.clamp(100.0, 200.0) + 72.0;
+            let exit = Rect::from_min_size(pos2(foot.right() - ew, foot.center().y - 22.0), vec2(ew, 44.0));
+            plate(ui, exit, &t.exit);
+            st.spots.push((exit, [527.0, 410.0]));
+        }
+    }
+    // The arrows between the panels.
+    let c = pos2(screen.center().x, top + h * 0.5 - 40.0) + slide;
+    for (dy, icon) in [(-14.0, ds::Icon::ChevronRight), (14.0, ds::Icon::ChevronLeft)] {
+        icon.paint(ui.painter(), Rect::from_center_size(c + vec2(0.0, dy), vec2(28.0, 28.0)), k.ink_silver);
+    }
+}
+
+/// The models of the original's render target (`PanelModels::render` over the virtual 640 × 480 screen) in the wells
+/// [`show`] left, each fitted into its well.
+pub fn pictures(f: &mut crate::render::Frame, wells: &[([f32; 4], Rect, f32)], models: Option<crate::render::TexId>, v: &crate::font::Virtual) {
+    let Some(tex) = models else { return };
+    let wide = crate::kit::Wide::new(v);
+    for &(src, r, alpha) in wells {
+        let [x0, y0, w0, h0] = src;
+        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
+        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
+        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
+        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+        f.push(tex, crate::render::Blend::Alpha, i);
+    }
+}
+
+fn i16_at(b: &[u8], o: usize) -> i16 {
+    i16::from_le_bytes([b[o], b[o + 1]])
+}
+
+fn i32_at(b: &[u8], o: usize) -> i32 {
+    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+}
+
+fn f32_at(b: &[u8], o: usize) -> f32 {
+    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
+}
+
+fn cstr(b: &[u8]) -> &[u8] {
+    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+}
+
+impl crate::ui::Hud {
+    /// What the modern panels show: the fleet info panel (`Kind::Fleet`) or the transfer panel from the state the
+    /// original's texts read (`FlottaInfoText2d` ELF 0x6e74b0, `StarmapGfx2D_3`'s transfer texts); `card` = the HUD's
+    /// short info of the selection (the owner and the status lines). `None` for the vehicles' panel (still the
+    /// original's) and nothing open.
+    pub fn fleet_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, panels: &Panels, sel: &Selection, card: Option<&crate::starmap_modern::Info>) -> Option<View> {
+        use crate::starmap_info::Kind;
+        let lang = self.texts.lang;
+        let dec = |b: &[u8]| ig2_formats::text::decode(cstr(b), lang).trim().to_string();
+        let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
+        let en = state.mem.i32(va::EN).clamp(0, 18) as u8;
+        let design = |e: u8, d: usize| state.designs.get(e as usize).and_then(|x| x.get(d)).map(|r| &r[..]);
+        let fleet = |f: i32| usize::try_from(f).ok().and_then(|f| state.fleets.get(f)).map(|r| &r[..]);
+        let suffixed = |rec: &[u8], n: u16| {
+            let mut s = dec(&rec[..0x14]);
+            if i32_at(rec, 0x1c) > 0 {
+                s = format!("{s} ({})", dec(&self.texts.get(2, 4, n)));
+            }
+            s
+        };
+        let fleet_cap = |r: &[u8]| {
+            let (have, cap) = (i32_at(r, 0x5c), i32_at(r, 0x78));
+            let label = dec(&self.texts.get(2, 5, 2));
+            if cap == 0 {
+                Cap { label, value: dec(&self.texts.get(2, 5, 3)), fraction: None, over: false }
+            } else {
+                Cap { label, value: format!("{have}/{cap}"), fraction: Some(have as f32 / cap as f32), over: have > cap }
+            }
+        };
+        let owner_of = |o: u8| (self.empire_names.get(o as usize).map(|n| dec(n)).unwrap_or_default(), col(if o == 0 { 12 } else { o as usize + 15 }));
+        if let Some(t) = &panels.transfer {
+            let rows = crate::starmap_panels::rows(state, t);
+            let full = |h: i32| h > 0 && fleet(h).is_some_and(|r| i32_at(r, 0x78) <= i32_at(r, 0x5c));
+            let side = |h: i32, right: bool| {
+                let (title, owner, cap) = if h < 1 {
+                    let r = state.mem.read(va::PLANETS + ((-h).max(0) as usize * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
+                    let cap = Cap { label: dec(&self.texts.get(2, 5, 4)), value: i32_at(&r, 0x58).to_string(), fraction: None, over: false };
+                    (dec(&r[..0x18]), r[0x20], cap)
+                } else {
+                    let r = fleet(h).unwrap_or(&[0u8; 0x80][..]);
+                    (dec(&r[..0x14]), r[0x15], fleet_cap(r))
+                };
+                let (owner, colour) = owner_of(owner);
+                let cards = std::array::from_fn(|k| {
+                    let row = rows.get(t.first as usize + k)?;
+                    let rec = design(en, row.design)?;
+                    let count = if right { row.right } else { row.left };
+                    Some(Card { name: suffixed(rec, 1), count, selected: false, warn: row.group == 3 && full(h) && count > 0 })
+                });
+                Side { title, owner, colour, cards, cap }
+            };
+            return Some(View::Transfer(Transfer { sides: [side(t.f1, false), side(t.f2, true)], first: t.first, total: rows.len() as i32, exit: dec(&self.texts.get(2, 4, 4)) }));
+        }
+        let i = panels.info.as_ref().filter(|i| i.kind == Kind::Fleet)?;
+        let rows = i.rows(state, sel);
+        let owner = i.owner(state, sel);
+        let fr = fleet(sel.fleet as i32);
+        let cards = std::array::from_fn(|k| {
+            let item = i.first as usize + k;
+            let row = rows.get(item)?;
+            let rec = design(owner, row.design)?;
+            Some(Card { name: suffixed(rec, 1), count: row.count, selected: item as i32 == i.selected, warn: false })
+        });
+        let detail = (!rows.is_empty()).then(|| rows.get(i.selected.max(0) as usize)).flatten().and_then(|r| design(owner, r.design)).map(|rec| {
+            let race = i16_at(rec, 0x40);
+            let hull = i32_at(rec, 0x44).max(0) as usize;
+            let table = rules.race_pod_table.get(race.max(0) as usize).copied().unwrap_or(0) - 1;
+            let slots = rules.pod_slots.get(table.max(0) as usize).and_then(|t| t.get(hull));
+            let n = slots.map_or(0, |s| s.iter().filter(|p| p.pod_type > 0).count());
+            let pods = (1..=n)
+                .map(|p| {
+                    let tech = rec[0x50 + p] as usize;
+                    (tech != 0).then(|| {
+                        let max = slots.and_then(|s| s.get(p - 1)).map_or(0, |s| s.max_count).min(state.mem.u8(va::TECHS + (tech * TECH_SIZE) as u32 + 0x24) as i32);
+                        let cnt = rec[0x5d + p] as i32;
+                        (dec(&crate::hud::tech_name(&self.texts, tech)), if cnt == 0 { "-".into() } else { cnt.to_string() }, cnt >= max && cnt > 0)
+                    })
+                })
+                .collect();
+            // `+0x3c ·f32 100 + 0.5`, a quarter for `+0x38` bit 0 (ELF 0x6e8557..0x6e85d2).
+            let speed = ((f32_at(rec, 0x3c) * 100.0) as f64 + 0.5) as i32;
+            let speed = if rec[0x38] & 1 != 0 { speed / 4 } else { speed };
+            let mut lines = vec![
+                (dec(&self.texts.get(2, 5, 6)), dec(&crate::hud::tech_name(&self.texts, i32_at(rec, 0x48).max(0) as usize))),
+                (dec(&self.texts.get(2, 5, 7)), i32_at(rec, 0x30).to_string()),
+                (dec(&self.texts.get(2, 5, 8)), i32_at(rec, 0x2c).to_string()),
+                (dec(&self.texts.get(2, 5, 9)), speed.to_string()),
+            ];
+            if i16_at(rec, 0x16) == 1 && rec[0x36] & 1 == 0 {
+                lines.push((dec(&self.texts.get(2, 5, 10)), rec[0x28].to_string()));
+            }
+            Detail { name: suffixed(rec, 5), rows: lines, pods, empty: dec(&self.texts.get(2, 5, 5)), pods_label: dec(&self.texts.ours("Equipment")) }
+        });
+        let sale = i.sale.as_ref().map(|s| Sale { rows: s.rows.iter().map(|(t, ok)| (dec(t), *ok)).collect(), hovered: s.hovered, at: [s.x, s.y] });
+        let (owner_name, colour) = owner_of(owner);
+        let status = card.map(|c| c.lines.iter().skip(1).map(|l| l.0.clone()).filter(|l| !l.is_empty()).take(1).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
+        Some(View::Fleet(FleetInfo {
+            title: fr.map(|r| dec(&r[..0x14])).unwrap_or_default(),
+            owner: owner_name,
+            colour,
+            status,
+            cards,
+            first: i.first,
+            total: rows.len() as i32,
+            detail,
+            cap: fr.map(fleet_cap),
+            exit: dec(&self.texts.get(2, 4, 4)),
+            sale,
+        }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fleet_view() -> View {
+        let c = |n: &str, count, selected| Some(Card { name: n.into(), count, selected, warn: false });
+        View::Fleet(FleetInfo {
+            title: "Fleet 1".into(),
+            owner: "Godan Kingdom".into(),
+            colour: Color32::GREEN,
+            status: "Waiting".into(),
+            cards: [c("Standard destroyer", 2, true), c("Colony ship", 1, false), c("A very long design name indeed", 12, false), None, None, None, None, None],
+            first: 0,
+            total: 3,
+            detail: Some(Detail { name: "Standard destroyer".into(), rows: vec![("Type:".into(), "Destroyer".into()), ("Armour:".into(), "10".into())], pods: vec![None, Some(("Radar".into(), "1".into(), true))], empty: "empty".into(), pods_label: String::new() }),
+            cap: Some(Cap { label: "Tank capacity:".into(), value: "2/2".into(), fraction: Some(1.0), over: false }),
+            exit: "Exit".into(),
+            sale: None,
+        })
+    }
+
+    fn run(v: &View, st: &mut State, at: Option<Pos2>) {
+        let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).ctx;
+        for _ in 0..3 {
+            let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1920.0, 1080.0))), ..Default::default() };
+            if let Some(p) = at {
+                input.events.push(egui::Event::PointerMoved(p));
+            }
+            let _ = ctx.run(input, |ctx| show(ctx, v, st));
+        }
+    }
+
+    /// The pointer over a card reaches the original's cell, over the exit plate hot-spot 9, over the rest of the
+    /// panel the panel's empty part; off the panels it is unchanged.
+    #[test]
+    fn the_pointer_reaches_the_original_spots() {
+        let mut st = State::default();
+        run(&fleet_view(), &mut st, None);
+        let virt = |p: Pos2| [(p.x - st.map[0]) / st.map[2], (p.y - st.map[1]) / st.map[2]];
+        let (r0, c0) = st.spots[0];
+        assert_eq!(st.pointer(virt(r0.center())), c0);
+        assert_eq!(c0, cell(0, false).0);
+        let (r2, c2) = st.spots[2];
+        assert_eq!(st.pointer(virt(r2.center())), c2);
+        let exit = st.spots.last().unwrap();
+        assert_eq!(st.pointer(virt(exit.0.center())), [527.0, 410.0]);
+        assert!(crate::kit::inside([445, 380, 164, 60], [527.0, 410.0]));
+        let panel = st.panels[0];
+        assert_eq!(st.pointer(virt(panel.right_top() + vec2(-40.0, 30.0))), NEUTRAL);
+        // Under the selection card: the original's; the original's exit button's old place: no more.
+        assert_eq!(st.pointer([60.0, 460.0]), [60.0, 460.0]);
+        assert_eq!(st.pointer([500.0, 400.0]), NEUTRAL);
+        // Every card centre is the original's cell (hot-spots 0x43 + 2k).
+        for k in 0..8 {
+            let c = cell(k, false).0;
+            let want = [0x43, 0x45, 0x47, 0x49, 0x4b, 0x4d, 0x4f, 0x51][k];
+            let spot = [[28, 60, 124, 70], [152, 60, 139, 70]][k % 2];
+            assert!(crate::kit::inside([spot[0], spot[1] + 70 * (k as i32 / 2), spot[2], spot[3]], c), "{want:#x}");
+        }
+    }
+
+    /// Long names never widen a card: the wells keep their size whatever the text.
+    #[test]
+    fn long_names_keep_the_cards() {
+        let mut st = State::default();
+        run(&fleet_view(), &mut st, None);
+        let (a, b) = (st.spots[0].0, st.spots[2].0);
+        assert_eq!(a.size(), b.size());
+        assert_eq!(st.wells.len(), 4);
+    }
+}

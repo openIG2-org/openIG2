@@ -293,6 +293,8 @@ struct App {
     production_hold: Option<(usize, usize, bool)>,
     research_modern: crate::research_modern::State,
     research_acts: Vec<crate::research_modern::Act>,
+    /// Ours (ADR 0077): where the modern fleet and transfer panels put the original's controls.
+    fleet_modern: crate::fleet_modern::State,
     /// `IG2_PROFILE_TOUR`'s keys (crate::prof).
     tour: Option<crate::prof::Tour>,
     cursor: [f32; 2],
@@ -838,6 +840,7 @@ impl App {
             production_hold: None,
             research_modern: Default::default(),
             research_acts: Vec::new(),
+            fleet_modern: Default::default(),
             tour: crate::prof::Tour::from_env(),
             cursor: [0.0; 2],
             left_down: None,
@@ -2448,8 +2451,19 @@ impl App {
 
     /// Ours (ADR 0079): under the modern HUD the long info's controls lie elsewhere; the virtual point `at` as its
     /// hot-spots see it.
+    /// Ours (ADR 0077): so are the fleet and transfer panels'.
     fn starmap_virtual(&self, at: [f32; 2]) -> [f32; 2] {
-        if self.modern_up() && self.menus.info_on() { self.modern.info_pointer(at) } else { at }
+        match () {
+            _ if self.modern_up() && self.menus.info_on() => self.modern.info_pointer(at),
+            _ if self.fleet_modern_up() => self.fleet_modern.pointer(at),
+            _ => at,
+        }
+    }
+
+    /// Ours (ADR 0077): the modern fleet info or transfer panel is up (under the modern starmap HUD; the vehicles'
+    /// panel stays the original's).
+    fn fleet_modern_up(&self) -> bool {
+        self.modern_up() && (self.panels.transfer.is_some() || self.panels.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet))
     }
 
     /// `TutorialStarmapMindenLetiltvaKiveveAKurzorMozgatoBillentyuket` (exe 0xf66ff8, DISABLE STARMAP): read only by
@@ -2463,7 +2477,7 @@ impl App {
         if self.starmap_locked() {
             return false;
         }
-        let at = self.virtual_cursor();
+        let at = self.starmap_virtual(self.virtual_cursor());
         let sel = self.selection();
         // Under the modern HUD the info box's spots (8, the tanks' 10, production's 11) are its card's (ADR 0065).
         if self.modern_up() && self.panels.spot(&self.world.game.state, &sel, at).is_some_and(|id| matches!(id, 8 | 10 | 11)) {
@@ -5478,7 +5492,12 @@ impl App {
         // A button held on a panel steps on the 100 Hz UI ticks (`Starmap_Main::KezdoIdo` counts 60 a second).
         if self.panel_held.is_some() || self.production_hold.is_some() {
             // The modern view's held count button keeps its half (ADR 0071).
-            let at = self.production_hold.map_or_else(|| self.virtual_cursor(), |(l, k, plus)| crate::production_modern::count_spot(l, k, plus).1);
+            let at = match self.production_hold {
+                Some((l, k, plus)) => crate::production_modern::count_spot(l, k, plus).1,
+                // ADR 0077: a held modern scroll bar reads the pointer's height only.
+                None if self.fleet_modern_up() && self.panels.scrolling() => self.fleet_modern.scroll_pointer(self.virtual_cursor()),
+                None => self.starmap_virtual(self.virtual_cursor()),
+            };
             for _ in 0..due_ui {
                 let acts = self.panels.hold_frame(&self.world.game.state, &sel, at);
                 self.apply(acts);
@@ -5509,6 +5528,9 @@ impl App {
         let research_modern = self.research_modern_up();
         let mut rmv = None;
         let classic_panels = !(self.panels.modern && self.panels.transfer.is_none() && self.panels.info.is_none());
+        // Ours (ADR 0077): the fleet info and transfer panels' modern ones; the original's models are cut into them.
+        let fleet_modern = self.fleet_modern_up();
+        let mut fmv = None;
         let (Some(g), Some(v)) = (&mut self.gpu, &mut self.view) else { return };
         let t = now as f32 / 1000.0;
         let size = { let (w, h) = g.band(); [w as f32, h as f32] };
@@ -5680,8 +5702,11 @@ impl App {
                         }
                         mv = Some(m);
                     }
-                    if classic_panels {
+                    if classic_panels && !fleet_modern {
                         h.draw_starmap_panels(&mut frame, &self.panels, &self.world.game.state, self.tables, &sel, panel_tex, size, t);
+                    }
+                    if fleet_modern {
+                        fmv = h.fleet_modern_view(&self.world.game.state, self.tables, &self.panels, &sel, mv.as_ref().and_then(|m| m.info.as_ref()));
                     }
                     if production_modern {
                         pmv = Some(h.production_modern_view(&self.world.game.state, &self.panels, sel.planet));
@@ -5741,13 +5766,19 @@ impl App {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.modern, &mut self.modern_acts, g.band());
             let (pst, pacts) = (&mut self.production_modern, &mut self.production_acts);
+            let fst = &mut self.fleet_modern;
             g.gui.run(band, &style, |ctx| {
                 acts.extend(crate::starmap_modern::show(ctx, mv, st));
                 if let Some(pv) = &pmv {
                     pacts.extend(crate::production_modern::show(ctx, pv, pst, mv.race));
                 }
+                match &fmv {
+                    Some(fv) => crate::fleet_modern::show(ctx, fv, fst),
+                    None => *fst = Default::default(),
+                }
             });
             let mut f = crate::render::Frame::new([0.0; 4]);
+            crate::fleet_modern::pictures(&mut f, &self.fleet_modern.wells, panel_tex, &crate::font::Virtual::new(size));
             ov.draw(&mut f, h, size);
             top = Some(f);
         }

@@ -895,6 +895,11 @@ impl Panels {
         }
     }
 
+    /// A scroll bar is held (hot-spot 0x57, the transfer's or the fleet panel's).
+    pub fn scrolling(&self) -> bool {
+        self.hold.is_some_and(|h| h.spot == 0x57) || self.info.as_ref().is_some_and(|i| i.scrolling)
+    }
+
     /// The pointer moved (the open design list follows it).
     pub fn hover(&mut self, at: [f32; 2]) {
         if let Some(i) = &mut self.info {

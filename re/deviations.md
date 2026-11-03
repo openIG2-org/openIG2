@@ -108,6 +108,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 513 | modern pause menu, Esc and O | Esc or O steps from a sub-page to the pause menu to the game and takes back unapplied settings; the original leaves the screen at once | yes | ADR 0078 |
 | 514 | modern pause menu and Options page, click sound | the click sound plays on every activation; the original plays `PlaySoundGlobal(0)` only on Quit, Back and No | no | ADR 0078 |
 | 518 | modern main menu, entries | an entry acts when the button is released over it (either button); the original's rings and the classic panel act on the press frame (`IG2_gameUpdate`, exe 0x4e0440) | no | ADR 0078 |
+| 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open over their field with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
 
 ## Enhanced
 

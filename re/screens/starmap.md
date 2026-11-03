@@ -742,6 +742,7 @@ to even. 0x58 (24, 24, 592, 339) covers the map; the minimap is off. Hot-spot 9 
 `run_screen.py … --kep 2 --planet 71 --rop 2` (production) and `--fleets 2 --rop 0xe --rop-fleet 1` (two new
 fleets of the human beside planet 71, the transfer between them) press the icons in ig2.exe itself (`screen.js`
 writes `AktRopIkon` 0xE83654 right after `Starmap_Main` clears it) and save the moment.
+Under the modern HUD the panel is the design board's two panels on the design kit (`fleet_modern.rs`, ADR 0077); the original's panel code takes the pointer through a remap, the models are cut into the cards' wells.
 
 ## 14. The radial icon menu ("rop" icons)
 Pressing the left button on the map picks a unit and opens up to four icons around the pointer; releasing the button
@@ -1074,6 +1075,7 @@ The exit button (hot-spot 9) is §12.2's: `StarmapGfx2D_2`'s `starf` fader `((1 
 `tools/trace/scripts/fleetinfo.json` with `--fleets 2 --rop-fleet 1`: the info box's release Global[0] + Global[5]
 (Click1, benyilas1), a cell press Global[0], the exit button Global[0] + Global[5].] The vehicle panel's
 (`PlaySoundGlobal(0)` on opening and a cell press, none on hot-spot 9) are from the decompile.
+Under the modern HUD the panel is the design board's fleet panel on the design kit (`fleet_modern.rs`, ADR 0077): same hot-spots, sale menu and orders through the pointer remap; the minimap and console stay off as in the original.
 
 ## 20. The vehicle info panel (`StarmapTanksInfo` exe 0xF176ED, ELF 0x1728e98)
 The vehicles on the player's planet: up to 8 designs per page with their counts, the selected one's model and data, a

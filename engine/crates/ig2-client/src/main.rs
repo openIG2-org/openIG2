@@ -116,6 +116,7 @@ mod starmap_info;
 mod starmap_menus;
 mod starmap_modern;
 mod colony_modern;
+mod fleet_modern;
 mod production_modern;
 mod research_modern;
 mod spacewar_fx;

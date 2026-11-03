@@ -1189,14 +1189,14 @@ fn clean(s: &str) -> String {
 }
 
 /// The long info's panel (the board's: 460 wide, right, under the bar) and its parts' sizes.
-const LI_W: f32 = 460.0;
+const LI_W: f32 = 500.0;
 const LI_PAD: f32 = 18.0;
 const LI_HEAD: f32 = 144.0;
 const LI_GLOBE: f32 = 112.0;
 const LI_LABEL: f32 = 130.0;
 /// A settings row: the label's column, the ALL chip, the round − and + (`.ig-round.small` in its ring: 42).
 const LI_SET_LABEL: f32 = 120.0;
-const LI_ALL: f32 = 44.0;
+const LI_ALL: f32 = 64.0;
 const LI_ROUND: f32 = 42.0;
 const LI_PLATES: f32 = 44.0;
 const LI_NAME: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
@@ -1250,8 +1250,10 @@ fn menus(ctx: &egui::Context, v: &View, st: &mut State, ink: &Ink, acts: &mut Ve
     }
     egui::Area::new(egui::Id::new("smh-menus")).order(egui::Order::Foreground).interactable(false).fixed_pos(ctx.screen_rect().min).fade_in(false).show(ctx, |ui| {
         if let Some(s) = &m.select {
-            let shift = select_shift(m, s, st, ui.ctx().screen_rect());
-            let bounds = select(ui, m, s, shift);
+            let (shift, field) = select_shift(m, s, st, ui.ctx().screen_rect());
+            // A settings menu marks the field's value (ADR 0077).
+            let current = field.and_then(|n| m.info.as_ref()?.settings.as_ref().map(|x| x.1[n].clone()));
+            let bounds = select(ui, m, s, shift, current.as_deref());
             if let Some(pl) = &mut st.placed {
                 pl.menu = (shift != [0.0; 2]).then_some((shift, bounds));
             }
@@ -1262,20 +1264,28 @@ fn menus(ctx: &egui::Context, v: &View, st: &mut State, ink: &Ink, acts: &mut Ve
     });
 }
 
-/// A settings menu of the long info drops from its modern field (under it, or over it where the screen ends): moved
-/// by as much from where the original opened it at the press (virtual).
-fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> [f32; 2] {
-    let (Some(pl), Some(first)) = (&st.placed, s.rows.first()) else { return [0.0; 2] };
+/// A settings menu of the long info opens over its modern field, the field's value on the field (ADR 0077; under
+/// it when no row is the value, kept on the screen): moved by as much from where the original opened it at the press
+/// (virtual); and which field (0 tax, 1 autobuild, 2 priority).
+fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> ([f32; 2], Option<usize>) {
+    let (Some(pl), Some(first)) = (&st.placed, s.rows.first()) else { return ([0.0; 2], None) };
     let dist = |c: [f32; 2]| (c[0] - first.rect[0]).abs() + (c[1] - first.rect[1]).abs();
-    let near = pl.spots.iter().filter(|sp| matches!(sp.0, 0x5a | 0x5e | 0x60)).filter_map(|sp| spot_centre(sp.0).map(|c| (sp.1, dist(c)))).min_by(|a, b| a.1.total_cmp(&b.1));
-    let Some((field, _)) = near.filter(|n| n.1 < 60.0) else { return [0.0; 2] };
+    let near = pl.spots.iter().filter(|sp| matches!(sp.0, 0x5a | 0x5e | 0x60)).filter_map(|sp| spot_centre(sp.0).map(|c| (sp.1, dist(c), sp.0))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let Some((field, _, id)) = near.filter(|n| n.1 < 60.0) else { return ([0.0; 2], None) };
+    let n = [0x5a, 0x5e, 0x60].iter().position(|&x| x == id);
+    let value = n.and_then(|n| m.info.as_ref()?.settings.as_ref().map(|x| x.1[n].clone()));
+    let on_field = value.and_then(|v| s.rows.iter().position(|r| r.text == v));
     let k = m.map[2];
     let (x0, y0) = s.rows.iter().fold((f32::MAX, f32::MAX), |a, r| (a.0.min(r.rect[0]), a.1.min(r.rect[1])));
     let (x1, y1) = s.rows.iter().fold((f32::MIN, f32::MIN), |a, r| (a.0.max(r.rect[0] + r.rect[2]), a.1.max(r.rect[1] + r.rect[3])));
     let (w, h) = ((x1 - x0) * k, (y1 - y0) * k);
     let left = field.left().min(screen.right() - 16.0 - w);
-    let top = if field.bottom() + 8.0 + h <= screen.bottom() - 8.0 { field.bottom() + 8.0 } else { field.top() - 8.0 - h };
-    [(left - m.map[0]) / k - x0, (top - m.map[1]) / k - y0]
+    let top = match on_field {
+        Some(i) => (field.center().y - (i as f32 + 0.5) * h / s.rows.len() as f32).clamp(BAR_H + 8.0, (screen.bottom() - 8.0 - h).max(BAR_H + 8.0)),
+        None if field.bottom() + 8.0 + h <= screen.bottom() - 8.0 => field.bottom() + 8.0,
+        None => field.top() - 8.0 - h,
+    };
+    ([(left - m.map[0]) / k - x0, (top - m.map[1]) / k - y0], n)
 }
 
 /// The radial menu: a hub at the press point, a hairline to each icon, the icons on metal keys that come out of the
@@ -1342,7 +1352,7 @@ fn radial(ui: &egui::Ui, m: &Menus, r: &Radial, ink: &Ink) {
 
 /// A select menu (moved by `shift`, virtual): a deep glass panel around the rows, the row under the pointer in the
 /// list's selected look. Its bounds in points.
-fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2]) -> Rect {
+fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option<&str>) -> Rect {
     let k = ds::tokens();
     let p = ui.painter();
     let rect = |r: [f32; 4]| m.rect([r[0] + shift[0], r[1] + shift[1], r[2], r[3]]);
@@ -1352,7 +1362,7 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2]) -> Rect {
         b = b.union(rect(r.rect));
     }
     let row_h = b.height() / s.rows.len().max(1) as f32;
-    let font = Font::DATA.sized((row_h * 0.55).clamp(11.0, 15.0));
+    let font = Font::DATA.sized((row_h * 0.55).clamp(11.0, 15.0)).tracking(0.08);
     let sub = Font::LABEL.upper(false).sized((row_h * 0.45).clamp(10.0, 13.0));
     // Room for the texts (the sale's line is wider than its row).
     let widest = s.rows.iter().map(|r| Text::new(&r.text, font).layout(ui.ctx(), f32::INFINITY).width + if r.sub.is_empty() { 0.0 } else { Text::new(&r.sub, sub).layout(ui.ctx(), f32::INFINITY).width + 10.0 }).fold(0.0, f32::max);
@@ -1363,9 +1373,15 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2]) -> Rect {
         let mut row = rect(r.rect);
         row.max.x = b.max.x;
         let row = row.expand2(vec2(4.0, 0.0));
-        if r.hovered {
+        // The field's value in the list's selected look, the row under the pointer with the bright rim (the boards'
+        // menus); a menu without a value (the planet list) lights the pointer's row.
+        let hot = ds::hover_t(ui.ctx(), egui::Id::new(("smh-select", r.text.as_str())), r.hovered);
+        if current == Some(r.text.as_str()) || (current.is_none() && r.hovered) {
             ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
             ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
+        }
+        if current.is_some() && hot > 0.0 {
+            ds::rim(p, row.shrink(1.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
         }
         let inner = row.shrink2(vec2(6.0, 0.0));
         let base = crate::gui::ds::fit::baseline(inner, font);
@@ -1482,7 +1498,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
                 if hot > 0.0 {
                     ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
                 }
-                Text::new(all, Font::LABEL.tracking(0.08)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
+                Text::new(all, Font::LABEL.tracking(0.12).upper(false)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
                 spots.push((all_id, r));
                 for (id, glyph) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
                     let r = next(LI_ROUND, LI_ROUND);
@@ -1716,7 +1732,8 @@ mod tests {
         let (shift, bounds) = st.placed.as_ref().and_then(|p| p.menu).expect("menu");
         let field = st.placed.as_ref().unwrap().spots.iter().find(|s| s.0 == 0x5a).unwrap().1;
         assert!((field.left() - (map[0] + (450.0 + shift[0]) * map[2])).abs() < 1.0, "{shift:?}");
-        assert!((field.bottom() + 8.0 - (map[1] + (297.0 + shift[1]) * map[2])).abs() < 1.0, "{shift:?}");
+        // The field's value ("Low", the first row) lies on the field (ADR 0077).
+        assert!((field.center().y - (map[1] + (303.5 + shift[1]) * map[2])).abs() < 1.0, "{shift:?}");
         let row = pos2(map[0] + (470.0 + shift[0]) * map[2], map[1] + (316.0 + shift[1]) * map[2]);
         assert!(bounds.contains(row));
         let back = st.info_pointer(virt(row));

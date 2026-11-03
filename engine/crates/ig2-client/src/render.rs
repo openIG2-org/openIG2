@@ -2242,7 +2242,11 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
-    let sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
+    let mut sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
+    // `--select-fleet` with `--panel`: the panels' fleet.
+    if let (Some(f), Some(_)) = (o.select_fleet, &o.panel) {
+        (sel.mode, sel.fleet) = (2, f);
+    }
     let mut panels = match &o.panel {
         Some(panel) => crate::starmap_panels::Panels::opened(panel)?,
         None => crate::starmap_panels::Panels::default(),
@@ -2284,10 +2288,15 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         panels.spin_frames = n;
     }
     panels.modern = o.modern_hud && o.modern_research;
+    // Ours (ADR 0077): under the modern HUD the fleet info and transfer panels are its own, the models cut into them.
+    let fleet_modern = o.modern_hud && (panels.transfer.is_some() || panels.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet));
+    let mut panel_tex = None;
     if o.panel.is_some() && !(panels.modern && panels.transfer.is_none() && panels.info.is_none()) {
         let size = [o.size.0 as f32, o.size.1 as f32];
-        let tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, &view.camera.matrix(), size);
-        hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, tex, size, t);
+        panel_tex = models.render(&mut r, &l.install, &l.tables, &panels, &world.game.state, &sel, &view.camera.matrix(), size);
+        if !fleet_modern {
+            hud.draw_starmap_panels(&mut frame, &panels, &world.game.state, &l.tables, &sel, panel_tex, size, t);
+        }
     }
     let mut staged = None;
     if o.planet_info || o.rop_menu.is_some() || o.menu.is_some() {
@@ -2345,6 +2354,8 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let mut st = crate::starmap_modern::State::default();
         let pv = (panels.modern && panels.production_open()).then(|| hud.production_modern_view(&world.game.state, &panels, sel.planet));
         let mut pst = crate::production_modern::State::default();
+        let fv = if fleet_modern { hud.fleet_modern_view(&world.game.state, &l.tables, &panels, &sel, mv.info.as_ref()) } else { None };
+        let mut fst = crate::fleet_modern::State::default();
         // The first frames size and place the anchored panels; `--mouse` hovers them.
         for _ in 0..3 {
             if let Some(m) = o.mouse {
@@ -2355,9 +2366,14 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
                 if let Some(pv) = &pv {
                     crate::production_modern::show(ctx, pv, &mut pst, mv.race);
                 }
+                if let Some(fv) = &fv {
+                    crate::fleet_modern::show(ctx, fv, &mut fst);
+                }
             });
         }
-        r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))
+        let mut top = crate::render::Frame::new([0.0; 4]);
+        crate::fleet_modern::pictures(&mut top, &fst.wells, panel_tex, &crate::font::Virtual::new(size));
+        r.draw_to_image_over_top(&frame, Some(top), o.size, t, |d, q, tex| gui.paint(d, q, tex))
     } else {
         r.draw_to_image(&frame, o.size, t)
     };
