@@ -5895,8 +5895,11 @@ impl App {
         }
         if let (Some(iv), Some(h)) = (&imv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
-            let (st, acts, band) = (&mut self.info_modern, &mut self.info_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::info_modern::show(ctx, iv, st)));
+            let (st, acts, band, install) = (&mut self.info_modern, &mut self.info_acts, g.band(), &self.install);
+            g.gui.run(band, &style, |ctx| {
+                st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, install));
+                acts.extend(crate::info_modern::show(ctx, iv, st));
+            });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);

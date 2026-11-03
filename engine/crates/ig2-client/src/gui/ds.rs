@@ -448,6 +448,40 @@ pub fn open_t(ctx: &egui::Context, id: egui::Id, open: bool) -> f32 {
     ctx.animate_bool_with_time_and_easing(id.with("open"), open, anim(OPEN_TIME), egui::emath::easing::cubic_out)
 }
 
+/// A planet's globe: its surface map `tex` (equirectangular, the texture repeating across) on a sphere of `radius` at
+/// `centre`, turned by `spin` (0..1 a full turn), lit from the upper left with a soft dark limb and a faint glow of
+/// the atmosphere `air`; `alpha` fades it.
+pub fn globe(p: &Painter, centre: Pos2, radius: f32, tex: egui::TextureId, spin: f32, air: Color32, alpha: f32) {
+    use std::f32::consts::PI;
+    const N: u32 = 24;
+    let r = Rect::from_center_size(centre, Vec2::splat(2.0 * radius));
+    shadow(p, r, 255, 0, (radius * 0.35) as u8, 0, air.gamma_multiply(0.35 * alpha));
+    let light = [-0.55f32, -0.6, 0.58];
+    let mut mesh = egui::Mesh::with_texture(tex);
+    for j in 0..=N {
+        for i in 0..=N {
+            // A grid over the disc: the square's points pulled onto the circle (rows at fixed latitude).
+            let lat = PI * (j as f32 / N as f32 - 0.5);
+            let lon = PI * (i as f32 / N as f32 - 0.5);
+            let (x, y, z) = (lat.cos() * lon.sin(), lat.sin(), lat.cos() * lon.cos());
+            let lit = (x * light[0] + y * light[1] + z * light[2]).max(0.0);
+            let shade = (0.22 + 0.9 * lit) * (0.55 + 0.45 * z.sqrt());
+            let c = Color32::from_gray((shade.min(1.0) * 255.0) as u8).gamma_multiply(alpha);
+            let uv = Pos2::new(lon / (2.0 * PI) + 0.25 + spin, j as f32 / N as f32);
+            mesh.vertices.push(egui::epaint::Vertex { pos: centre + Vec2::new(x, y) * radius, uv, color: c });
+        }
+    }
+    for j in 0..N {
+        for i in 0..N {
+            let a = j * (N + 1) + i;
+            mesh.add_triangle(a, a + 1, a + N + 2);
+            mesh.add_triangle(a, a + N + 2, a + N + 1);
+        }
+    }
+    p.add(Shape::mesh(mesh));
+    p.circle_stroke(centre, radius - 0.5, Stroke::new(1.0f32, air.gamma_multiply(0.45 * alpha)));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

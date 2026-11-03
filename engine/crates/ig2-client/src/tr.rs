@@ -323,6 +323,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Pop.", "Népes."),
     ("Credits", "Kredit"),
     ("Ships", "Hajók"),
+    ("Orders", "Parancsok"),
+    ("Morale", "Morál"),
     ("Vehicles", "Járművek"),
     ("Built", "Épült"),
     ("Lost", "Veszt."),

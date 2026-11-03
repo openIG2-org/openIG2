@@ -2215,6 +2215,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
                 gui.run(o.size, &style, |ctx| {
                     crate::info_modern::show(ctx, &v, &mut st);
                 });
+                    st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, &l.install));
             }
             let rgba = r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex));
             crate::assets::write_snapshot(out, o, &rgba)?;

@@ -54,3 +54,33 @@ bar, ten chart buttons and, in a scenario game, the swap to the star log.
 - No exe capture exists for the new look: screenshots go with the change (`--snapshot --modern-info`).
 - `info_screen::Put` (a positioned text) lets a modern screen reuse the original's text builders while the classic
   drawing stays the same calls in the same order.
+
+## Amendment (2026-11-03): the design boards
+The info boards of the design kit (ADR 0073: the list, the detail mode; 1920 × 1080 at 100 % UI scale, one board
+pixel one point) replace §2's console plates. Implemented by `info_modern.rs` on `gui::ds`; the kit gains
+`ds::globe` (a surface map drawn as a lit, turning sphere).
+1. **Layout**, anchored to the sides (4:3, 16:9, 21:9 keep working; a shorter window, a larger UI scale, closes the
+   gaps and never the panels): under the bar, the eight race columns as metal rings, four left and four right of the
+   money panel, a met empire's leader (`textures/diplomac/<race>a.bmp`, the race its empire plays) in its ring and
+   its name under it in the relation's colour, the others empty and faded, the selected one with a silver ring; the
+   money panel (deep, 400 wide) with the triangle, its knob and the three shares on LCDs (blinking after a drag);
+   under them the selected empire's panel (960 wide): `KirakBirodalomInfo`'s rows as two table columns and the
+   spending limit as a bar with a metal thumb and the limit on an LCD; bottom left the list panel (half the width):
+   tabs for the planets, the fleets and the empires met with their counts, the empire's name, sortable column heads
+   (name, population or ships, alerts; the middle column, morale or orders, has none), 92-point rows (a planet's
+   globe turning from its surface's map `textures/starmap/p<n>.bmp`, a fleet's mark; the name over the owner and a
+   planet's production line; population, morale and the worst problem, or a fleet's ships, order and speed, on one
+   baseline), under them the range shown, a scroll bar and the row's hint; bottom right the ten charts on the
+   original's button plates (`textures/info/info_b1..5` left, `info_j1..5` right; the star log's swap under the left
+   column, `info_b6` / `info_j6`) around the chart panel (the chart's title, the known empires' names, the lines on
+   one scale with the original's bright spot running along each) or the star log; an Exit plate bottom right.
+2. **The detail mode** takes the list's place (a short slide and crossfade): the entry's globe (220), name, owner and
+   Back (37) on the left, the detail rows as a table (labels without their colons), the planet settings as
+   drop-downs.
+3. **Exit** is the bar's starmap key (`AktKepKell` 2), as the top bar's screen menu; the original's info screen is
+   left through the same menu.
+4. **Text**: every label goes through `ds::Text` in a box of the board's size (test `long_texts_keep_the_panels`);
+   the morale column's head is ours ("Morale"), the fleet columns' are ours ("Ships", "Orders", "Speed").
+5. Still differs from the boards: the race rings show the 2D head picture (the boards show the game's rendered 3D
+   head); the detail values keep the original's palette colours; the detail mode has Back where the board shows
+   Colony and Map (the original's detail mode has neither).
