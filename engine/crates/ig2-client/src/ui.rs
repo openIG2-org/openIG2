@@ -1075,7 +1075,8 @@ impl Hud {
         m::View {
             planet: dec(&Panels::planet_name(state, planet)),
             lines,
-            exit: dec(&self.texts.get(2, 4, 4)),
+            // The panel's own label is "OFF" in the English tables; the modern plate says what it does.
+            exit: dec(&self.texts.ours("Exit")),
             exit_locked: panels.locks.exit,
             tips: [tip(0xc), tip(0xd), tip(0xe), tip(0xf), tip(0x10), tip(0x11), tip(0x12), tip(0x13), tip(0x23)],
             labels: m::Labels {

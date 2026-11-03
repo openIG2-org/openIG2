@@ -77,3 +77,10 @@ research boards (1920 × 1080 at 100 % UI scale, one design pixel one point; 4:3
 - **Input**: the buttons, lamps, keys, tiles and plates act on the press of either button, as the original's
   latched hot-spots; a held count keeps repeating with the pointer off it until the button is up.
 - `--snapshot --stage-queue` gives the snapshot's planet a production queue (a still of the filled view).
+
+## Amended 2026-11-03: board compare pass
+Compared with the boards at 1920 × 1080 (Hungarian and English; `--research-pick A,F` shows category A's field F in the research snapshot) and fixed: the research tech's stat pair ("Firepower: 25") is a table row; table labels shrink to their column; the funding plates' labels are upper case; the category tiles' columns are sized by their content; count buttons 8 pt apart and lamps 26 high; the exit plate says "Exit". The kit's controls and the rows, tiles, slots and lamps show the hand pointer, and under the modern bar the classic top bar's tooltips are off and the pointer comes from the modern panels. Not done, on purpose:
+- Slot priority up/down: the original's queue order (0x1d) has no such act.
+- "Into fleet" lamp on ship lines (the original has it for vehicles only) and the price per unit (the original shows count × price).
+- Locked techs last after a gap (the original keeps field order); category counts on upright digits (the kit's LCD text slants).
+- The planet card is the starmap HUD's own, with its extra rows and buttons; the live background behind the research screen is the live-background option's.

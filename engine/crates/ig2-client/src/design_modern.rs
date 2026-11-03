@@ -201,6 +201,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
         for r in &v.rows {
             // A list row (`.ig-list li`) with the hull at its right in 14, muted (silver on the chosen row).
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             let on = r.n == v.pointer;
             ds::row_back(ui, rect, ds::hover_t(ui.ctx(), resp.id, resp.hovered()), on);
             let inner = rect.shrink2(vec2(8.0, 0.0));
@@ -261,6 +262,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
     for p in &v.pods {
         let open = v.popup.as_ref().is_some_and(|x| x.button == 0x54) && v.pod == p.k;
         let (r, resp) = ui.allocate_exact_size(vec2(w, 52.0), Sense::click());
+        let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
         let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
         let chosen = v.pod == p.k;
         let pt = ui.painter();
@@ -275,9 +277,9 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         let n = p.k.to_string();
         Text::new(&n, Font::LABEL.tracking(0.0)).center().color(k.ink_silver).paint(ui, Rect::from_center_size(c, vec2(28.0, 28.0)));
         // The controls at the right: the count (−/+ while it can change), or "Choose" on an empty pod while editing.
-        let ctl = Rect::from_min_max(pos2(r.right() - 10.0 - 140.0, r.top()), pos2(r.right() - 10.0, r.bottom()));
+        let ctl = Rect::from_min_max(pos2(r.right() - 10.0 - 156.0, r.top()), pos2(r.right() - 10.0, r.bottom()));
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(ctl).layout(egui::Layout::right_to_left(egui::Align::Center)));
-        c.spacing_mut().item_spacing.x = 4.0;
+        c.spacing_mut().item_spacing.x = 8.0;
         let mut ctl_w = 0.0;
         if p.counts {
             let plus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Plus), true, false), tip(v, 0x34));
@@ -288,7 +290,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
             } else if pressed(&plus) {
                 st.count = Some((p.k, true));
             }
-            ctl_w = 140.0;
+            ctl_w = 156.0;
         } else if !p.tech.is_empty() {
             ctl_w = ds::lcd(&mut c, &p.count.to_string(), 22.0, 1).rect.width();
         } else if v.editing {
@@ -312,14 +314,17 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
                 ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(40.0);
                 let at = ui.painter().add(egui::Shape::Noop);
+                // Top-down inside the row's `horizontal` (else the rows stand side by side, only the first one seen).
                 let r = egui::Frame::new().inner_margin(6).show(ui, |ui| {
-                    ui.set_width(w - 40.0 - 12.0);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (sel, name) in &pop.rows {
-                        if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
-                            acts.push(Act::Pick(*sel));
+                    ui.vertical(|ui| {
+                        ui.set_width(w - 40.0 - 12.0);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (sel, name) in &pop.rows {
+                            if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)).selected(*sel != 0 && *name == p.tech))) {
+                                acts.push(Act::Pick(*sel));
+                            }
                         }
-                    }
+                    });
                 });
                 let rect = r.response.rect;
                 ds::behind(ui, at, |p| {
@@ -345,6 +350,7 @@ fn properties(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
         ui.spacing_mut().item_spacing.y = 4.0;
         Text::new(&v.labels.name, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0));
         let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+        let resp = resp.on_hover_cursor(egui::CursorIcon::Text);
         let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
         let editing = v.entry.is_some();
         let p = ui.painter();
@@ -376,7 +382,7 @@ fn properties(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     for (i, (label, value)) in v.stats.iter().enumerate() {
         let cell = Rect::from_min_size(pos2(r.left() + third * i as f32, r.top()), vec2(third - 12.0, 22.0));
         let vw = Text::new(value, Font::DATA.sized(18.0)).right().baseline(base).paint(ui, cell.with_min_x(cell.right() - 48.0)).width;
-        Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, cell.with_max_x(cell.right() - vw - 6.0));
+        Text::new(label, Font::LABEL).shrink(9.0).color(k.ink_muted).baseline(base).paint(ui, cell.with_max_x(cell.right() - vw - 6.0));
     }
 }
 
@@ -455,6 +461,18 @@ mod tests {
             let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 1080.0))), ..Default::default() }, |ctx| acts = show(ctx, v, st));
         }
         (ctx, acts)
+    }
+
+    /// The pod's tech list stands its rows one under the other: each more row makes the parts panel a row taller.
+    #[test]
+    fn the_pod_list_shows_every_row() {
+        let height = |n: usize| {
+            let mut v = view("Laser");
+            v.popup = Some(Popup { button: 0x54, rows: (0..n as i32).map(|t| (t, format!("Tech {t}"))).collect() });
+            let (ctx, _) = run(&v, &mut State::default(), 1920.0);
+            ctx.memory(|m| m.area_rect(egui::Id::new("dmh-parts"))).unwrap().height()
+        };
+        assert!(height(3) - height(1) > 2.0 * 20.0, "{} {}", height(1), height(3));
     }
 
     /// The panels keep the board's widths with long names, at 4:3 and 21:9 too, and ask for nothing untouched.

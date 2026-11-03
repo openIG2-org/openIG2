@@ -1430,6 +1430,10 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
         Some(f) => s.hold(f, o.spy_closing),
         None => s.hold_open(),
     }
+    if let Some((a, f)) = o.research_pick {
+        s.modern_act(state, crate::research_modern::Act::Area(a));
+        s.modern_act(state, crate::research_modern::Act::Field(f));
+    }
     if let Some(m) = o.mouse {
         s.tip.mouse = m;
     }

@@ -257,6 +257,8 @@ pub struct Options {
     pub design_edit: Option<usize>,
     /// `--design-row N`: the list's row chosen first.
     pub design_row: Option<usize>,
+    /// `--research-pick A,F`: the research snapshot shows category A's field F first (the modern panels' picks).
+    pub research_pick: Option<(usize, i32)>,
     /// `--watch FILE`: the window opens this replay in the viewer (ADR 0038 §6).
     pub watch: Option<PathBuf>,
     /// `--trade-eta N`: the unsaved `AktEtaDays` (the trade screen's delivery time) as the exe had it.
@@ -413,6 +415,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_trade: false,
         design_edit: None,
         design_row: None,
+        research_pick: None,
         watch: None,
         trade_eta: None,
         dkm: None,
@@ -556,6 +559,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--modern-spy" => o.modern_spy = true,
             "--modern-trade" => o.modern_trade = true,
             "--design-row" => o.design_row = Some(val()?.parse().map_err(|e| format!("--design-row: {e}"))?),
+            "--research-pick" => {
+                let (a, f) = val()?.split_once(',').and_then(|(a, f)| Some((a.trim().parse().ok()?, f.trim().parse().ok()?))).ok_or("--research-pick A,F")?;
+                o.research_pick = Some((a, f));
+            }
             "--design-edit" => o.design_edit = Some(val()?.parse().map_err(|e| format!("--design-edit: {e}"))?),
             "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),
             "--dkm" => {

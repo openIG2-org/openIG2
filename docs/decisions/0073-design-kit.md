@@ -107,3 +107,6 @@ with all their states, so that every screen built on it looks the same and fits 
   go with them).
 - Screen pages build on `ds` and run `Text` for every label; a board's measurements are points one for one at 100 %
   UI scale.
+
+## Amendment: the hand pointer (2026-11-03)
+`look()` makes every enabled kit control (plates, keys, round buttons, list rows) show the hand pointer on hover, as the original does over its hot-spots (re/screens/input.md §8). The round −/+ buttons are not red-tinted like the board's.

@@ -18,6 +18,10 @@ struct Look {
 fn look(ui: &Ui, r: &Response, focused: bool) -> Look {
     let on = ui.is_enabled();
     let (hovered, down) = FORCED.with(std::cell::Cell::get).unwrap_or((r.hovered(), r.is_pointer_button_down_on()));
+    // The hand over every enabled control, as the original's spots (`Mouse_Szoveg_Set`'s type 1, re/screens/input.md §8).
+    if on && (r.hovered() || r.is_pointer_button_down_on()) {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
     Look { hover: hover_t(ui.ctx(), r.id, on && hovered), down: on && down, on, focus: focused || r.has_focus() }
 }
 

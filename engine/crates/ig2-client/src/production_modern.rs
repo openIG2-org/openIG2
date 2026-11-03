@@ -199,7 +199,7 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             acts.push(Act::Spot(0xc));
         }
         let plate = ds::title_plate(ui, &v.planet, PLATE_W);
-        let plate = ui.interact(plate.rect, ui.id().with("pmh-name"), Sense::click());
+        let plate = ui.interact(plate.rect, ui.id().with("pmh-name"), Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         // The planet list opens on the press and picks on the release, as the original's (hot-spot 0x32).
         let list = |r: &egui::Response| r.is_pointer_button_down_on() && r.ctx.input(|i| i.pointer.primary_pressed());
         if list(&ds::tip(plate, &v.tips[7])) {
@@ -247,6 +247,7 @@ fn line_panel(ui: &mut Ui, l: usize, line: &Line, v: &View, st: &mut State, acts
 fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v: &View, st: &mut State, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), SLOT_H), Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let open = st.list == Some((l, s));
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
     let p = ui.painter();
@@ -292,7 +293,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     let ctl = Rect::from_min_max(pos2(rect.right() - 10.0 - ctl_w, inner.top()), pos2(rect.right() - 10.0, inner.bottom()));
     let mut row = |top: f32, h: f32| ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(ctl.left(), top), pos2(ctl.right(), top + h))).layout(egui::Layout::right_to_left(egui::Align::Center)));
     let mut step = row(ctl.top() - 2.0, 42.0);
-    step.spacing_mut().item_spacing.x = 4.0;
+    step.spacing_mut().item_spacing.x = 8.0;
     let plus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Plus), true, false), &v.tips[5])).inner;
     ds::lcd(&mut step, &slot.count.to_string(), 22.0, 3);
     let minus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Minus), true, false), &v.tips[4])).inner;
@@ -301,7 +302,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     } else if pressed(&plus) {
         st.count = Some((l, s, true));
     }
-    let mut lamps = row(ctl.bottom() - 24.0, 24.0);
+    let mut lamps = row(ctl.bottom() - 26.0, 26.0);
     lamps.spacing_mut().item_spacing.x = 6.0;
     if let Some(f) = slot.into_fleet {
         if pressed(&ds::tip(lamp(&mut lamps, &v.labels.into_fleet, f), &v.tips[3])) {
@@ -339,7 +340,8 @@ fn toggle_list(ctx: &egui::Context, st: &mut State, l: usize, s: usize) {
 fn lamp(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
     let k = ds::tokens();
     let w = Text::new(label, LAMP).layout(ui.ctx(), 120.0).width + 16.0;
-    let (r, resp) = ui.allocate_exact_size(vec2(w.max(56.0), 24.0), Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(w.max(56.0), 26.0), Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
     let lit = ui.ctx().animate_bool_with_time(resp.id.with("lit"), on, ds::anim(ds::HOVER_TIME));
     let p = ui.painter();

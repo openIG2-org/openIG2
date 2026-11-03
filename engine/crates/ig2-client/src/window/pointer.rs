@@ -160,7 +160,9 @@ impl App {
         // Ours (ADR 0065): under the modern HUD no bar spot, its panels' own tooltips over them, the map's elsewhere
         // but the info box's (8, 10, 11, its card's).
         let info_modern = self.info_modern_up();
-        let modern = self.modern_up() || info_modern;
+        // The modern research and design screens (ADR 0071, 0075) have the modern bar too, and egui's pointer.
+        let pages = self.research_modern_up() || self.design_modern_up();
+        let modern = self.modern_up() || info_modern || pages;
         let over_gui = self.over_gui();
         let bar_spot = |at: [f32; 2]| if modern { None } else { crate::hud::bar_tip_spot(at) };
         let starmap = if starmap_shown && bar_spot(at).is_none() && !over_gui { self.starmap_tip(at).filter(|t| !modern || !(matches!(t.id, 8 | 10 | 11) || (t.id == 0x35 && t.now))) } else { None };
@@ -183,11 +185,13 @@ impl App {
         let screen_kind = match self.overlay {
             _ if !game || bar_spot(at).is_some() => 0,
             None | Some(crate::ui::Screen::Info) if over_gui => self.gpu.as_ref().map_or(0, |g| g.gui.pointer_kind()),
+            Some(crate::ui::Screen::Research | crate::ui::Screen::Design) if pages && over_gui => self.gpu.as_ref().map_or(0, |g| g.gui.pointer_kind()),
             _ if self.options.is_some() => spot(self.options.as_ref().map(|o| &o.s.tip)) as i32,
             _ if self.help.is_some() => spot(self.help.as_ref().map(|h| &h.s.tip)) as i32,
             _ if self.spy.is_some() => spot(self.spy.as_ref().map(|s| &s.screen.tip)) as i32,
-            Some(crate::ui::Screen::Research) => (spot(self.research.as_ref().map(|r| &r.tip)) || self.research_hand(at)) as i32,
-            Some(crate::ui::Screen::Design) => self.design.as_ref().is_some_and(|d| d.tip.under != 0 || d.pods.hand) as i32,
+            // Under the modern panels the console's spots aren't there: the hand only over the models and pods.
+            Some(crate::ui::Screen::Research) => ((!pages && spot(self.research.as_ref().map(|r| &r.tip))) || self.research_hand(at)) as i32,
+            Some(crate::ui::Screen::Design) => self.design.as_ref().is_some_and(|d| (!pages && d.tip.under != 0) || d.pods.hand) as i32,
             Some(crate::ui::Screen::Trade) => spot(self.trade.as_ref().map(|t| &t.tip)) as i32,
             Some(crate::ui::Screen::Info | crate::ui::Screen::Messages) => info.is_some() as i32,
             None if starmap_shown => match starmap.as_ref().map(|t| t.id) {

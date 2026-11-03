@@ -47,3 +47,6 @@ UI scale) lays the same functions out as kit panels around the turning hull.
 - The 3D pod pick on the hull and the tech models' tooltips are not reachable with the left button under the
   panels; the parts panel does the same.
 - No exe capture exists for the new look: screenshots go with the change.
+
+## Amended 2026-11-03: board compare pass
+The chosen pod's tech list lists every fitting tech one under another (it showed only the first row), the fitted one marked; the pod count buttons have the board's 8-pt gaps; the properties row's labels shrink to fit; the kit's controls and the rows show the hand pointer, and the classic top bar's tooltips are off under the modern bar. Not done: the board crops the hull to the middle well, and large hulls overlap the panels' edges.

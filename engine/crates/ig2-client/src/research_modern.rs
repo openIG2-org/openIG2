@@ -188,6 +188,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
         ui.spacing_mut().item_spacing.y = 0.0;
         for t in &v.techs {
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             let on = t.field == v.field;
             ds::row_back(ui, r, hot, on);
@@ -251,7 +252,7 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
     ui.spacing_mut().item_spacing.y = 14.0;
     if let Some(d) = &v.detail {
         Text::new(&d.name, Font::HEADING.sized(24.0)).show(ui, vec2(w, 30.0));
-        let body = d.info.join(" ");
+        let (body, stats) = stat_lines(&d.info);
         if !body.is_empty() {
             let lines = ((room - 420.0) / 26.0).clamp(2.0, 8.0) as usize;
             let fit = Text::new(&body, Font::BODY).lines(lines).layout(ui.ctx(), w);
@@ -267,9 +268,13 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
             let row = |ui: &mut Ui, label: &str, h: f32| {
                 let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
                 let first = Rect::from_min_size(r.min, vec2(w, 20.0));
-                Text::new(label, Font::LABEL).color(k.ink_muted).baseline(ds::fit::baseline(first, Font::DATA)).paint(ui, first.with_max_x(r.left() + 112.0));
+                Text::new(label, Font::LABEL).shrink(9.0).color(k.ink_muted).baseline(ds::fit::baseline(first, Font::DATA)).paint(ui, first.with_max_x(r.left() + 112.0));
                 r.with_min_x(r.left() + 120.0)
             };
+            for (label, value) in &stats {
+                let r = row(ui, label, 22.0);
+                Text::new(value, Font::DATA.sized(18.0)).baseline(ds::fit::baseline(r, Font::DATA)).paint(ui, r);
+            }
             let need = &d.need.1;
             let r = row(ui, &d.need.0, 22.0 * need.len().max(1) as f32 - 2.0);
             for (i, (name, owned)) in need.iter().enumerate() {
@@ -301,7 +306,7 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
                     let half = (w - 8.0) / 2.0;
                     for (urgent, label, cost) in [(false, &v.labels.normal, normal), (true, &v.labels.double, double)] {
                         let on = v.urgent == urgent;
-                        let b = ui.add(Plate::new(label).sub(cost).width(half).height(64.0).primary(on).font(Plate::FONT.sized(16.0)));
+                        let b = ui.add(Plate::new(label).sub(cost).width(half).height(64.0).primary(on).font(Plate::FONT.sized(16.0).upper(true)));
                         // The urgent button flips the funding: a press on the other plate.
                         if pressed(&ds::tip(b, &v.tips[2])) && !on {
                             acts.push(Act::Urgent);
@@ -320,6 +325,7 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
     match &v.current {
         Some(c) => {
             let (r, resp) = ui.allocate_exact_size(vec2(w, 58.0), Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
             let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             let p = ui.painter();
             p.rect_filled(r, ds::RADIUS_PLATE, k.glass_raised);
@@ -345,6 +351,35 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
     }
 }
 
+/// The info lines as running text and the stat pairs some end with ("…  Firepower: 25"): a short label and a value
+/// with a digit after the last colon become table rows, the rest stays text.
+fn stat_lines(lines: &[String]) -> (String, Vec<(String, String)>) {
+    let mut body = Vec::new();
+    let mut stats = Vec::new();
+    for l in lines {
+        let pair = l.rsplit_once(':').map(|(head, v)| (head.trim_end(), v.trim())).filter(|(_, v)| !v.is_empty() && v.chars().count() <= 12 && v.chars().any(|c| c.is_ascii_digit()));
+        // The label: after the last wide gap (tab or 2+ spaces), else the whole head if it is short.
+        let split = pair.and_then(|(head, v)| {
+            let cut = head.rfind('\t').or_else(|| head.rfind("  ").map(|i| i + 1));
+            let (text, label) = match cut {
+                Some(i) => (head[..i].trim(), head[i + 1..].trim()),
+                None => ("", head.trim()),
+            };
+            (!label.is_empty() && label.chars().count() <= 24).then(|| (text.to_string(), label.to_string(), v.to_string()))
+        });
+        match split {
+            Some((text, label, v)) => {
+                if !text.is_empty() {
+                    body.push(text);
+                }
+                stats.push((label, v));
+            }
+            None => body.push(l.trim().to_string()),
+        }
+    }
+    (body.join(" "), stats)
+}
+
 /// The categories as tiles in their three groups (`.grp`, flex 3 : 2 : 1, two rows), the exit at the right.
 fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
     let k = ds::tokens();
@@ -362,10 +397,12 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
             ds::edge_line(p, r, ds::RADIUS_PANEL as f32, true, k.metal_light);
             let head = Rect::from_min_size(r.min + vec2(10.0, 8.0), vec2(gw - 20.0, 16.0));
             Text::new(&v.labels.groups[g], Font::LABEL.sized(12.0).tracking(0.16)).color(k.ink_silver).paint(ui, head);
-            let tw = (gw - 20.0 - 6.0 * (cols - 1) as f32) / cols as f32;
+            let widths = columns(ui.ctx(), v, ns, gw - 20.0);
             for (i, n) in ns.iter().enumerate() {
                 let Some(a) = v.areas.iter().find(|a| a.n == *n) else { continue };
-                let at = pos2(head.left() + (i / 2) as f32 * (tw + 6.0), head.bottom() + 6.0 + (i % 2) as f32 * (TILE_H + 6.0));
+                let x: f32 = widths[..i / 2].iter().map(|w| w + 6.0).sum();
+                let at = pos2(head.left() + x, head.bottom() + 6.0 + (i % 2) as f32 * (TILE_H + 6.0));
+                let tw = widths[i / 2];
                 let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(tw, TILE_H))));
                 // Every category's button stays on, the chosen one too (`Forgotabla` clicks and turns it again).
                 let resp = tile(&mut c, a, a.n == v.area, vec2(tw, TILE_H));
@@ -383,11 +420,54 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
     });
 }
 
+/// A group's column widths (`.cats`: auto columns, two rows): each its widest tile's content, the room left shared
+/// out evenly; short of room, shrunk in proportion (the names then fit by shrinking).
+fn columns(ctx: &egui::Context, v: &View, ns: &[usize], width: f32) -> Vec<f32> {
+    let cols = ns.len().div_ceil(2);
+    let need: Vec<f32> = (0..cols)
+        .map(|c| {
+            ns[2 * c..(2 * c + 2).min(ns.len())]
+                .iter()
+                .filter_map(|n| v.areas.iter().find(|a| a.n == *n))
+                .map(|a| {
+                    let name = Text::new(&a.name, TILE.weight(Weight::Medium)).layout(ctx, 1000.0).width;
+                    let count = Text::new(&format!("{}/{}", a.owned, a.known), Font::READOUT.sized(15.0).tracking(0.08)).layout(ctx, 1000.0).width;
+                    24.0 + name + 10.0 + count + if a.running { 12.0 } else { 0.0 }
+                })
+                .fold(0.0, f32::max)
+        })
+        .collect();
+    share(&need, width - 6.0 * (cols - 1) as f32)
+}
+
+/// Widths `need` in `room`: the room left shared out evenly; short of room, the narrow ones keep their width and the
+/// widest share the rest.
+fn share(need: &[f32], room: f32) -> Vec<f32> {
+    let cols = need.len();
+    let sum: f32 = need.iter().sum();
+    if sum <= room {
+        return need.iter().map(|w| w + (room - sum) / cols as f32).collect();
+    }
+    // Short of room: the narrow columns keep their width, the widest ones share the rest (their names shrink).
+    let mut sorted = need.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let (mut left, mut cap) = (room, room / cols as f32);
+    for (i, w) in sorted.iter().enumerate() {
+        cap = left / (cols - i) as f32;
+        if *w > cap {
+            break;
+        }
+        left -= w;
+    }
+    need.iter().map(|w| w.min(cap)).collect()
+}
+
 /// A category tile (`.cat`): the name, owned / known on LCD digits, the owned share as a line along the bottom; the
 /// chosen one pressed with a white rim, its line in LCD ink; the running project's category marked with a dot.
 fn tile(ui: &mut Ui, a: &Area, on: bool, size: egui::Vec2) -> egui::Response {
     let k = ds::tokens();
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && ui.is_enabled());
     let sel = ui.ctx().animate_bool_with_time(resp.id.with("sel"), on, ds::anim(ds::GLIDE_TIME));
     let p = ui.painter();
@@ -448,6 +528,23 @@ mod tests {
         }
     }
 
+    /// Short of room the narrow columns keep their content's width and only the widest are cut.
+    #[test]
+    fn narrow_columns_keep_their_width() {
+        assert_eq!(share(&[100.0, 200.0, 300.0], 660.0), vec![120.0, 220.0, 320.0]);
+        assert_eq!(share(&[100.0, 200.0, 300.0], 450.0), vec![100.0, 175.0, 175.0]);
+        assert_eq!(share(&[100.0, 100.0], 100.0), vec![50.0, 50.0]);
+    }
+
+    #[test]
+    fn stat_pairs_leave_the_text() {
+        let lines = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let (body, stats) = stat_lines(&lines(&["A gun that fires.", "Very well.       Firepower: 25"]));
+        assert_eq!((body.as_str(), stats), ("A gun that fires. Very well.", vec![("Firepower".to_string(), "25".to_string())]));
+        let (body, stats) = stat_lines(&lines(&["Range: 3", "Ratio: a long sentence, not a stat value at all"]));
+        assert_eq!((body.as_str(), stats), ("Ratio: a long sentence, not a stat value at all", vec![("Range".to_string(), "3".to_string())]));
+    }
+
     #[test]
     fn the_panels_keep_the_boards_places() {
         for w in [1440.0, 1920.0, 2520.0] {
@@ -479,8 +576,8 @@ mod tests {
         let click = |p: egui::Pos2| vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
         // The first group's third tile (category 3): column 1, row 0.
         let room = 1920.0 - 2.0 * EDGE - EXIT_W - 36.0;
-        let tw = (room * 3.0 / 6.0 - 20.0 - 12.0) / 3.0;
-        let at = pos2(n.left() + 10.0 + tw + 6.0 + 20.0, n.top() + 8.0 + 16.0 + 6.0 + 20.0);
+        let widths = columns(&ctx, &v, GROUPS[0], room * 3.0 / 6.0 - 20.0);
+        let at = pos2(n.left() + 10.0 + widths[0] + 6.0 + 20.0, n.top() + 8.0 + 16.0 + 6.0 + 20.0);
         let (_, acts) = run(&v, &mut st, click(at), 1920.0);
         assert_eq!(acts, vec![Act::Area(3)]);
         // The first row of the list: field 1.
