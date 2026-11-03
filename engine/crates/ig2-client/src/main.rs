@@ -87,6 +87,7 @@ mod kit;
 mod lighting;
 mod mainscr;
 mod mainscr_modern;
+mod newgame_modern;
 mod menu_flow;
 mod mods_page;
 mod mainscr_scene;

@@ -187,6 +187,9 @@ struct Front {
     /// The press that opened the statistics or replays screen: its release isn't theirs (ADR 0059: the panel's
     /// entries lie over their rows).
     opening: bool,
+    /// Ours (ADR 0078): the modern new game page's race and level, and the races' portraits (read when it first opens).
+    ng: crate::newgame_modern::State,
+    ng_heads: Option<[Option<egui::TextureHandle>; 3]>,
 }
 
 impl Front {
@@ -204,7 +207,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, mods: None, opening: false }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, mods: None, opening: false, ng: Default::default(), ng_heads: None }
     }
 }
 
@@ -1871,6 +1874,11 @@ impl App {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.s.panel().is_some())
     }
 
+    /// Ours (ADR 0078): the modern new game page is up.
+    fn new_game_modern_up(&self) -> bool {
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.new_game_up() && f.mp.is_none() && f.mods.is_none())
+    }
+
     fn info_modern_up(&self) -> bool {
         self.display.modern_info && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Info) && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
     }
@@ -2974,6 +2982,7 @@ impl App {
         let mut mp_outs = Vec::new();
         let mut mods_acts = Vec::new();
         let mut main_pick = None;
+        let mut ng_act = None;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -2992,6 +3001,13 @@ impl App {
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
+        } else if let (true, Some(h)) = (fr.s.new_game_up() && fr.mp.is_none(), &self.hud) {
+            // Ours (ADR 0078): the modern new game page over the scene.
+            let theme = theme(h);
+            let heads = fr.ng_heads.get_or_insert_with(|| crate::newgame_modern::load_heads(&g.gui.ctx, &self.install));
+            let (st, blurbs, gt) = (&mut fr.ng, &fr.s.blurbs, fr.s.gt.min(1.0));
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| ng_act = crate::newgame_modern::page(ctx, &h.texts, st, blurbs, heads, gt));
+            ov.draw(&mut frame, h, size);
         } else if let (true, Some(p), Some(h)) = (fr.s.modern && fr.mp.is_none(), fr.s.panel(), &self.hud) {
             // Ours (ADR 0078): the modern main menu over the scene.
             let theme = theme(h);
@@ -3022,6 +3038,21 @@ impl App {
         }
         for a in mods_acts {
             self.mods_act(a);
+        }
+        if let Some(a) = ng_act {
+            use crate::newgame_modern::Act;
+            self.audio.play(crate::audio::CLICK);
+            let Some(f) = &mut self.front else { return };
+            match a {
+                Act::Back => f.s.close_race(),
+                Act::Start { race, level } => f.s.start_campaign(race, level),
+                Act::Scenarios => {
+                    f.s.close_race();
+                    if let Some(a) = f.s.act_item(crate::menu_flow::Item::Scenarios) {
+                        self.front_act(a);
+                    }
+                }
+            }
         }
         match main_pick {
             Some(crate::mainscr_modern::Pick::Item(i)) => {
@@ -6467,7 +6498,7 @@ impl ApplicationHandler for App {
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
-        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.new_game_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6808,8 +6839,10 @@ impl ApplicationHandler for App {
             {
                 self.open_history();
             }
-            // Ours (ADR 0078): a press over the modern main menu's panel is the page's (a right one is no Esc there).
+            // Ours (ADR 0078): a press over the modern main menu's panel is the page's (a right one is no Esc there);
+            // the new game page takes them all.
             WindowEvent::MouseInput { .. } if self.main_menu_modern_up() && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area()) => {}
+            WindowEvent::MouseInput { .. } if self.new_game_modern_up() => {}
             // The main menu's boxes, race spheres and difficulty rings take either button (`Mouse_Lenyom`, FX3).
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.front.is_some() => {
                 let Some(f) = &mut self.front else { return };

@@ -559,7 +559,7 @@ impl MainScr {
     /// Ours (ADR 0059): the Back label, on the screens without a back of their own: the ring sub-sets, the race
     /// choice and the name entry (the scenario panel has Cancel, our MP screens their own).
     pub fn back_shown(&self) -> bool {
-        self.flow && !self.covered && (self.menu != Menu::Main || self.race.is_some() || self.name.is_some()) && self.scenario.is_none() && !self.mp
+        self.flow && !self.new_game_up() && !self.covered && (self.menu != Menu::Main || self.race.is_some() || self.name.is_some()) && self.scenario.is_none() && !self.mp
             && self.disconnected.is_none() && self.high_score.is_none() && self.leaving.is_none() && self.start.is_none() && self.loading.is_none()
     }
 
@@ -593,6 +593,27 @@ impl MainScr {
                 None
             }
         }
+    }
+
+    /// Ours (ADR 0078): the modern new game page (the race choice drawn as egui) is up.
+    pub fn new_game_up(&self) -> bool {
+        self.modern && self.race.is_some() && !self.covered && self.start.is_none() && self.leaving.is_none()
+    }
+
+    /// The race choice's closing end (`Event::Closed`) at once: back to the single-player set.
+    pub fn close_race(&mut self) {
+        self.race = None;
+        self.rings = 3;
+        self.cel = 1.0;
+    }
+
+    /// Ours (ADR 0078): the modern page's Start: `CampaignGameStart` for `race` 0..=2 at `level`
+    /// (`FajValasztasNehezsegiSzint`: 0 easy, 1 hard, 2 normal).
+    pub fn start_campaign(&mut self, race: u8, level: u8) {
+        if let Some(r) = &mut self.race {
+            (r.selected, r.level, r.start_game) = (Some(race as usize), level, true);
+        }
+        self.start = Some(Start::Campaign { race, level });
     }
 
     /// The main ring set at rest with nothing over it (ours: where the Settings and History labels show).
@@ -884,6 +905,11 @@ impl MainScr {
         }
         // Case 2: `YouAreDisconnectedVolt` cleared.
         if self.disconnected.take().is_some() {
+            return;
+        }
+        // Ours (ADR 0078): the modern new game page goes at once.
+        if self.new_game_up() {
+            self.close_race();
             return;
         }
         if let Some(r) = &mut self.race {
@@ -1443,6 +1469,24 @@ mod tests {
         s.menu = Menu::Single;
         s.escape();
         assert_eq!(s.menu, Menu::Single);
+    }
+
+    /// Ours (ADR 0078): the modern new game page: Esc closes the race choice at once, back to the single-player set;
+    /// Start is `CampaignGameStart` for the page's race and level, the page gone while the screen is left.
+    #[test]
+    fn modern_new_game_page() {
+        let mut s = MainScr::enter();
+        s.modern = true;
+        s.menu = Menu::Single;
+        s.race = Some(crate::mainscr_race::RaceChoice::open());
+        assert!(s.new_game_up() && !s.back_shown());
+        s.escape();
+        assert_eq!((s.race.is_none(), s.menu, s.rings, s.cel), (true, Menu::Single, 3, 1.0));
+        s.race = Some(crate::mainscr_race::RaceChoice::open());
+        s.start_campaign(2, 1);
+        assert!(!s.new_game_up());
+        s.tick();
+        assert!(matches!(s.leaving, Some((_, Start::Campaign { race: 2, level: 1 }))));
     }
 
     /// The right button: nothing on a menu ring (`mainscr-right.json`); the race spheres' boxes take it as the left

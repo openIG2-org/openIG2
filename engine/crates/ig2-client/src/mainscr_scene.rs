@@ -407,8 +407,9 @@ impl MainScene {
             }
         }
         // The race scene (§9.2): `kezdo_.xv` 0.611 at (0, 0, −800), camera-fixed; its opening by `SetFrame`, then each
-        // race's head (A), rings (B, C) moved by `MozgatKor`, the telescopes (subs 3..8) hidden.
-        if let Some(rc) = &s.race {
+        // race's head (A), rings (B, C) moved by `MozgatKor`, the telescopes (subs 3..8) hidden. Ours (ADR 0078): not
+        // under the modern new game page.
+        if let Some(rc) = s.race.as_ref().filter(|_| !s.modern) {
             let (model, place, alpha) = self.race_posed(install, rc);
             // The scene's side lights, then its own parallel light.
             let base = side.clone().parallel(0xdcc8c8, [0.0, 0.0, -1000.0]);
@@ -521,7 +522,7 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     let Some(font) = &h.font else { return };
     let d = crate::options::Draw { font, white: h.white, glow: h.white, v: Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms };
     let blink = crate::kit::fader_design::blink(now_ms);
-    if let Some(rc) = &s.race {
+    if let Some(rc) = s.race.as_ref().filter(|_| !s.modern) {
         rc.draw_blurb(frame, &d, blink);
     }
     if let (Some(sc), Some(a)) = (&mut s.scenario, assets) {
@@ -691,6 +692,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // Ours (ADR 0062): the modern Options screen's egui page, driven by the script's pointer.
     let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&install);
     let k = crate::gui::Gui::scale(o.size.1);
+    let (mut ng, mut ng_heads) = (crate::newgame_modern::State::default(), None);
     for t in 0..=script.end() {
         let mut press = None;
         let mut release = None;
@@ -808,6 +810,31 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 Some(crate::mainscr_modern::Pick::Back) => s.escape(),
                 None => {}
             }
+        }
+        // Ours (ADR 0078): the modern new game page, driven by the script's pointer.
+        if let (true, None, None) = (s.new_game_up(), &mp, &options) {
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
+            }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let heads = ng_heads.get_or_insert_with(|| crate::newgame_modern::load_heads(&gui.ctx, &install));
+            let mut act = None;
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| act = crate::newgame_modern::page(ctx, &hud.texts, &mut ng, &s.blurbs, heads, s.gt.min(1.0)));
+            match act {
+                Some(crate::newgame_modern::Act::Back) => s.close_race(),
+                Some(crate::newgame_modern::Act::Start { race, level }) => s.start_campaign(race, level),
+                Some(crate::newgame_modern::Act::Scenarios) => {
+                    s.close_race();
+                    picked = s.act_item(crate::menu_flow::Item::Scenarios);
+                }
+                None => {}
+            }
+            press = None;
+            release = None;
         }
         // Ours (ADR 0053): the modern Options screen takes the keys.
         if let Some(os) = options.as_mut().map(|o| &mut o.1).filter(|os| os.modern.is_some()) {
