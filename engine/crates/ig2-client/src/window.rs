@@ -119,12 +119,8 @@ impl Gpu {
     }
 
     /// Draw the frame on the window: through the band's target when it is letterboxed top and bottom, with the
-    /// side strips black under the "letterbox" option. Gives the frame back (the overlays' `SaveScreen`).
-    fn present(&mut self, frame: crate::render::Frame, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
-        self.present_over(frame, None, out, t)
-    }
-
-    /// [`Gpu::present`], with this frame's egui page (ADR 0062) over the band and `top` (the pointer) over it.
+    /// side strips black under the "letterbox" option, this frame's egui page (ADR 0062) over the band and `top` (the
+    /// pointer) over it. Gives the frame back (the overlays' `SaveScreen`).
     fn present_over(&mut self, mut frame: crate::render::Frame, top: Option<crate::render::Frame>, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
         let l = self.layout();
         crate::kit::layout::letterbox_bars(&mut frame, &l, self.assets.white);
