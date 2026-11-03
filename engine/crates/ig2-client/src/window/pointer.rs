@@ -179,7 +179,7 @@ impl App {
         let spot = |t: Option<&crate::kit::Tooltip>| t.is_some_and(|t| t.under != 0);
         let screen_kind = match self.overlay {
             _ if !game || bar_spot(at).is_some() => 0,
-            None | Some(crate::ui::Screen::Info) if over_gui => self.gpu.as_ref().is_some_and(|g| g.gui.hand) as i32,
+            None | Some(crate::ui::Screen::Info) if over_gui => self.gpu.as_ref().map_or(0, |g| g.gui.pointer_kind()),
             _ if self.options.is_some() => spot(self.options.as_ref().map(|o| &o.s.tip)) as i32,
             _ if self.help.is_some() => spot(self.help.as_ref().map(|h| &h.s.tip)) as i32,
             _ if self.spy.is_some() => spot(self.spy.as_ref().map(|s| &s.screen.tip)) as i32,
@@ -231,7 +231,7 @@ impl App {
                     let kind = if !game {
                         // Ours (ADR 0062): the hand over an egui page's buttons.
                         let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) || (self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || f.mods.is_some()));
-                        (if page { self.gpu.as_ref().is_some_and(|g| g.gui.hand) } else { self.front.as_ref().is_some_and(|f| f.s.hand) }) as i32
+                        if page { self.gpu.as_ref().map_or(0, |g| g.gui.pointer_kind()) } else { self.front.as_ref().is_some_and(|f| f.s.hand) as i32 }
                     } else if bar_spot(at).is_some() {
                         1
                     } else {

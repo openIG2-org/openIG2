@@ -486,6 +486,8 @@ pub struct Hud {
     pub pics: crate::hud::Pictures,
     /// `UpdateFrame`'s hot points by pointer shape (`ig2_rules::Rules::mouse_hotspot`).
     mouse_hotspot: Vec<i32>,
+    /// Ours (ADR 0073 §5): the modern pointer set, drawn instead of `MOUSE.BMP` with a modern theme.
+    cursors: crate::gui::ds::cursor::Set,
     pub colony_brushes: Vec<ig2_rules::Brush>,
     pub starmap_brushes: Vec<ig2_rules::Brush>,
     /// The speed buttons: `IdoSpeed` 0..=2 and `IdoPause`, set by the client each frame.
@@ -572,6 +574,7 @@ impl Hud {
                 p
             },
             mouse_hotspot: rules.mouse_hotspot.clone(),
+            cursors: crate::gui::ds::cursor::Set::load(r),
             colony_brushes: rules.colony_brushes.clone(),
             starmap_brushes: rules.starmap_brushes.clone(),
             speed: 2,
@@ -740,7 +743,15 @@ impl Hud {
     }
 
     /// [`Self::draw_pointer`] at phase `MouseFazis` (one a 10 ms UI tick): the cell's row `(phase / 5) % 40`.
+    /// Ours (ADR 0073 §5): the modern set instead with a modern theme and "Modern cursors" on; a page's extra types
+    /// (100 on) are the arrow or the hand in `MOUSE.BMP`.
     pub fn draw_pointer_phase(&self, f: &mut Frame, size: [f32; 2], at: [i32; 2], kind: i32, phase: u64) {
+        if crate::gui::ds::cursor::modern() {
+            let px = Virtual::new(size).px(at[0] as f32, at[1] as f32);
+            self.cursors.draw(f, kind, phase, px, crate::gui::Gui::scale(size[1] as u32));
+            return;
+        }
+        let kind = crate::gui::ds::cursor::Cursor::from_kind(kind).classic_kind();
         let hot = self.mouse_hotspot.get(kind as usize).copied().unwrap_or(0) as f32;
         let row = ((phase / 5) % 40) as f32;
         self.pics.blit(f, &Virtual::new(size), MOUSE_PICTURE, [kind as f32 * 20.0, row * 20.0, 20.0, 20.0], [at[0] as f32 - hot, at[1] as f32 - hot]);

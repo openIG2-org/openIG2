@@ -857,10 +857,15 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("--snapshot") => match args.get(1) {
-            Some(out) => parse(&args[2..]).and_then(|o| render::snapshot(&o, std::path::Path::new(out))),
+            // A still: the design kit's state changes are instant (ADR 0073).
+            Some(out) => parse(&args[2..]).and_then(|o| {
+                gui::ds::set_motion(false);
+                render::snapshot(&o, std::path::Path::new(out))
+            }),
             None => Err("usage: --snapshot <out.png> [options]".into()),
         },
         Some("--playthrough") => playthrough::main(&args[1..]),
+        Some("--ui-gallery") => gui::ds::gallery::snapshot(&args[1..]),
         Some("--mp-host") => mp_lobby::headless_host(),
         Some("--info") => parse(&args[1..]).and_then(|o| info(&o)),
         Some("--version") => {

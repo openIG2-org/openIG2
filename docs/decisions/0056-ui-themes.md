@@ -1,6 +1,6 @@
 # ADR 0056: UI themes
 
-Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::theme` (the theme files, the current theme) and
+Date: 2026-11-01. Status: accepted; amended by ADR 0073 (the built-in Modern theme's colours). Implemented by `ig2-client::theme` (the theme files, the current theme) and
 the remake's own screens that draw with it (`options::modern`, `stats_screen`, `replay_viewer`, `mp_lobby`,
 `event_log`); the option is a Remake row (ADR 0048) on the Interface tab (ADR 0053).
 

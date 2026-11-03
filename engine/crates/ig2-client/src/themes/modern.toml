@@ -1,21 +1,21 @@
-# The built-in Modern theme (ADR 0056): the main-menu Options screen's look. A mod's `theme.toml` has the same
-# keys, every one optional (a missing key keeps this file's value). Colours are [r, g, b] in 0..255, transparencies
+# The built-in Modern theme (ADR 0056): the design kit's deep-space palette (ADR 0073). A mod's `theme.toml` has the
+# same keys, every one optional (a missing key keeps this file's value). Colours are [r, g, b] in 0..255, transparencies
 # [fill, edge] in 0..255 (0 = opaque).
-panel = [4, 12, 24]
-panel_edge = [40, 90, 130]
+panel = [9, 29, 48]
+panel_edge = [43, 93, 130]
 panel_transparency = [0, 0]
-tab = [10, 30, 50]
-tab_selected = [20, 70, 110]
-button = [10, 40, 70]
-button_edge = [10, 30, 50]
+tab = [16, 36, 60]
+tab_selected = [81, 98, 148]
+button = [29, 45, 77]
+button_edge = [15, 47, 68]
 button_transparency = [0, 0]
-text = [219, 230, 245]
-text_dim = [128, 148, 173]
+text = [254, 255, 255]
+text_dim = [126, 141, 152]
 text_off = [77, 84, 97]
-accent = [102, 199, 255]
-hover = [255, 219, 115]
-track_on = [41, 128, 191]
-track_off = [46, 51, 64]
-knob = [230, 240, 255]
+accent = [73, 167, 255]
+hover = [159, 211, 255]
+track_on = [81, 98, 148]
+track_off = [0, 12, 20]
+knob = [201, 206, 210]
 font_title = 4
 font_text = 2

@@ -4,6 +4,8 @@
 //! test's go the same way. The keyboard stays with the page's own navigation. The UI theme (ADR 0056) is the style
 //! ([`style`]); the shared widgets for the pages are below it.
 
+pub mod ds;
+
 use crate::theme::Theme;
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2};
 
@@ -32,6 +34,8 @@ pub struct Gui {
     painted: Option<(Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor)>,
     /// The pointer is over something clickable (the game pointer's hand).
     pub hand: bool,
+    /// The page's pointer (egui's cursor icon, ADR 0073 §5).
+    pub cursor: egui::CursorIcon,
 }
 
 impl Gui {
@@ -39,20 +43,30 @@ impl Gui {
     pub fn new(format: wgpu::TextureFormat) -> Self {
         let ctx = egui::Context::default();
         ctx.options_mut(|o| o.input_options.line_scroll_speed = 60.0);
-        Self { ctx, renderer: None, format, events: Vec::new(), at: None, start: web_time::Instant::now(), painted: None, hand: false }
+        let mut f = egui::FontDefinitions::default();
+        ds::add_fonts(&mut f);
+        ctx.set_fonts(f);
+        Self { ctx, renderer: None, format, events: Vec::new(), at: None, start: web_time::Instant::now(), painted: None, hand: false, cursor: egui::CursorIcon::Default }
     }
 
-    /// The remaster's sans (`fonts/jurabook.ttf`, in the install) for the pages' text where the install has it; egui's
-    /// bundled font stays behind it for the letters it lacks, and is the font without it.
+    /// The design's faces (ADR 0073: Oxanium, Share Tech Mono, in the client) in front of the remaster's sans
+    /// (`fonts/jurabook.ttf`, in the install) where the install has it, then egui's bundled fonts, for the letters the
+    /// ones before lack.
     pub fn install_fonts(self, install: &ig2_formats::Install) -> Self {
         // An `ecGs` container on disk; a file that doesn't parse would panic in egui, so it is checked first.
         if let Some(bytes) = install.read("fonts/jurabook.ttf").ok().filter(|b| ab_glyph::FontRef::try_from_slice(b).is_ok()) {
             let mut f = egui::FontDefinitions::default();
             f.font_data.insert("jura".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
             f.families.entry(egui::FontFamily::Proportional).or_default().insert(0, "jura".into());
+            ds::add_fonts(&mut f);
             self.ctx.set_fonts(f);
         }
         self
+    }
+
+    /// The page's pointer as the overlay's pointer type ([`ds::cursor::Cursor::kind`]).
+    pub fn pointer_kind(&self) -> i32 {
+        ds::cursor::Cursor::from_icon(self.cursor).kind()
     }
 
     /// Band pixels per point for a band `h` pixels high at the current UI scale.
@@ -98,7 +112,8 @@ impl Gui {
         input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
         self.ctx.set_style(style.clone());
         let out = self.ctx.run(input, page);
-        self.hand = out.platform_output.cursor_icon == egui::CursorIcon::PointingHand;
+        self.cursor = out.platform_output.cursor_icon;
+        self.hand = self.cursor == egui::CursorIcon::PointingHand;
         let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
         let mut textures = out.textures_delta;
         // A frame not painted (no surface texture) still uploads its textures with the next one.
@@ -138,25 +153,23 @@ impl Gui {
     }
 }
 
-/// A box colour (0..255) at `alpha`.
-fn boxed(c: [f32; 3], alpha: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(c[0] as u8, c[1] as u8, c[2] as u8, alpha)
-}
-
 /// A text or quad colour (0..1).
 pub fn ink(c: [f32; 3]) -> Color32 {
     Color32::from_rgb((c[0] * 255.0).round() as u8, (c[1] * 255.0).round() as u8, (c[2] * 255.0).round() as u8)
 }
 
-/// The theme as egui's style: dark glass panels in the theme's panel colour, its accent on what is on or chosen, the
-/// hover colour on what is under the pointer, rounded corners, a clear type scale.
+/// The theme as egui's style in the design kit's look (ADR 0073): deep glass windows with a rim, plate-blue buttons,
+/// the lit plate on what is on or chosen, the bright rim under the pointer, 4-point corners, the design's faces at the
+/// pages' type sizes. Sets the kit's tokens ([`ds::tokens`]) from the theme too.
 pub fn style(t: &Theme) -> egui::Style {
     use egui::{FontFamily::Proportional, FontId, TextStyle};
+    let k = ds::Tokens::from_theme(t);
+    ds::set_tokens(k);
     let mut s = egui::Style {
         text_styles: [
-            (TextStyle::Heading, FontId::new(26.0, Proportional)),
+            (TextStyle::Heading, ds::Font::HEADING.sized(26.0).id()),
             (TextStyle::Body, FontId::new(15.0, Proportional)),
-            (TextStyle::Button, FontId::new(15.0, Proportional)),
+            (TextStyle::Button, ds::Font::DATA.id()),
             (TextStyle::Small, FontId::new(12.5, Proportional)),
             (TextStyle::Monospace, FontId::new(14.0, egui::FontFamily::Monospace)),
         ]
@@ -166,74 +179,65 @@ pub fn style(t: &Theme) -> egui::Style {
     let sp = &mut s.spacing;
     (sp.item_spacing, sp.button_padding, sp.interact_size.y) = (egui::vec2(8.0, 6.0), egui::vec2(14.0, 6.0), 28.0);
     (sp.slider_width, sp.combo_width, sp.window_margin) = (190.0, 200.0, Margin::same(20));
+    sp.scroll.bar_width = 8.0;
     s.interaction.selectable_labels = false;
     let v = &mut s.visuals;
-    let (text, accent, hot) = (ink(t.text), ink(t.accent), ink(t.hot));
     v.dark_mode = true;
     v.override_text_color = None;
-    v.window_fill = boxed(t.panel, 236);
+    v.window_fill = k.glass_deep.gamma_multiply(0.88);
     v.panel_fill = v.window_fill;
-    v.window_stroke = Stroke::new(1.0f32, boxed(t.panel_edge, 200));
-    v.window_corner_radius = CornerRadius::same(16);
-    v.window_shadow = Shadow { offset: [0, 12], blur: 36, spread: 0, color: Color32::from_black_alpha(150) };
+    v.window_stroke = Stroke::new(1.0f32, k.rim);
+    v.window_corner_radius = CornerRadius::same(ds::RADIUS_PANEL);
+    v.window_shadow = Shadow { offset: [0, 0], blur: 18, spread: 0, color: Color32::from_black_alpha(153) };
     v.popup_shadow = Shadow { offset: [0, 6], blur: 18, spread: 0, color: Color32::from_black_alpha(140) };
-    v.menu_corner_radius = CornerRadius::same(10);
-    v.extreme_bg_color = ink(t.off_track);
-    v.faint_bg_color = boxed(t.tab, 160);
-    v.hyperlink_color = accent;
-    v.selection.bg_fill = ink(t.on_track);
-    v.selection.stroke = Stroke::new(1.5f32, text);
+    v.menu_corner_radius = CornerRadius::same(ds::RADIUS_PLATE);
+    v.extreme_bg_color = k.glass_deep;
+    v.faint_bg_color = k.glass.gamma_multiply(0.72);
+    v.hyperlink_color = k.info;
+    v.selection.bg_fill = k.plate_high;
+    v.selection.stroke = Stroke::new(1.5f32, k.ink);
+    v.text_cursor.stroke = Stroke::new(2.0f32, k.focus);
     v.slider_trailing_fill = true;
-    v.handle_shape = egui::style::HandleShape::Circle;
-    v.weak_text_color = Some(ink(t.dim));
+    v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.6 };
+    v.weak_text_color = Some(k.ink_muted);
     let w = &mut v.widgets;
-    let r = CornerRadius::same(8);
-    w.noninteractive.fg_stroke = Stroke::new(1.0f32, text);
-    w.noninteractive.bg_stroke = Stroke::new(1.0f32, boxed(t.panel_edge, 110));
-    w.noninteractive.bg_fill = boxed(t.panel, 255);
-    w.noninteractive.corner_radius = r;
-    w.inactive = egui::style::WidgetVisuals { bg_fill: ink(t.off_track), weak_bg_fill: boxed(t.button, 255), bg_stroke: Stroke::new(1.0f32, boxed(t.button_edge, 255)), corner_radius: r, fg_stroke: Stroke::new(1.0f32, text), expansion: 0.0 };
-    w.hovered = egui::style::WidgetVisuals { bg_fill: ink(t.off_track), weak_bg_fill: boxed(t.tab_on, 255), bg_stroke: Stroke::new(1.0f32, hot), corner_radius: r, fg_stroke: Stroke::new(1.5f32, hot), expansion: 1.0 };
-    w.active = egui::style::WidgetVisuals { bg_fill: ink(t.on_track), weak_bg_fill: ink(t.on_track), bg_stroke: Stroke::new(1.0f32, accent), corner_radius: r, fg_stroke: Stroke::new(2.0f32, text), expansion: 1.0 };
+    let r = CornerRadius::same(ds::RADIUS_PLATE);
+    let look = |bg_fill, weak_bg_fill, edge, fg| egui::style::WidgetVisuals { bg_fill, weak_bg_fill, bg_stroke: Stroke::new(1.0f32, edge), corner_radius: r, fg_stroke: Stroke::new(1.0f32, fg), expansion: 0.0 };
+    w.noninteractive = look(k.glass, k.glass, k.rim, k.ink);
+    w.inactive = look(k.plate, k.plate, k.rim, k.ink);
+    w.hovered = look(k.plate.lerp_to_gamma(k.plate_high, 0.5), k.plate, k.rim_bright, k.ink);
+    w.active = look(k.plate_high, k.plate_high, k.rim_bright, k.ink);
     w.open = w.active;
     s
 }
 
-/// The page's dimmed backdrop over the screen under it, and its centred glass panel `size` points big.
+/// The page's dimmed backdrop over the screen under it, and its centred deep glass panel `size` points big (fading
+/// and sliding in as it opens).
 pub fn page(ctx: &egui::Context, id: &str, size: Vec2, add: impl FnOnce(&mut egui::Ui)) {
     let screen = ctx.screen_rect();
-    ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, Color32::from_black_alpha(150));
+    ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, Color32::from_black_alpha(128));
     let size = size.min(screen.size() - egui::vec2(16.0, 16.0));
-    egui::Area::new(egui::Id::new(id)).fixed_pos(screen.center() - size / 2.0).fade_in(false).show(ctx, |ui| {
-        egui::Frame::window(ui.style()).show(ui, |ui| {
+    let t = ds::open_t(ctx, egui::Id::new(id), true);
+    egui::Area::new(egui::Id::new(id)).fixed_pos(screen.center() - size / 2.0 + egui::vec2(0.0, (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
+        ui.multiply_opacity(t);
+        let at = ui.painter().add(egui::Shape::Noop);
+        let r = egui::Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| {
             let inner = size - egui::vec2(40.0, 40.0);
             ui.set_min_size(inner);
             ui.set_max_size(inner);
             add(ui);
         });
+        let fill = ui.visuals().window_fill;
+        ds::behind(ui, at, |p| ds::glass(p, r.response.rect, fill, true));
     });
 }
 
-/// A titled card: a slightly lighter rounded box grouping settings.
+/// A titled card: a lighter glass box grouping settings, its heading in the label style ([`ds::card`]).
 pub fn card<R>(ui: &mut egui::Ui, title: Option<&str>, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let v = ui.visuals().clone();
-    egui::Frame::new()
-        .fill(v.faint_bg_color)
-        .stroke(v.widgets.noninteractive.bg_stroke)
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::symmetric(14, 10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            if let Some(t) = title {
-                ui.label(egui::RichText::new(t.to_uppercase()).small().strong().color(v.hyperlink_color));
-                ui.add_space(2.0);
-            }
-            add(ui)
-        })
-        .inner
+    ds::card(ui, title, add)
 }
 
-/// An on/off switch (the track fills with the accent when on, the knob slides).
+/// An on/off switch: a recessed well, the lit plate gliding to the right when on.
 pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     let size = egui::vec2(2.0, 1.1) * ui.spacing().interact_size.y * 0.8;
     let (rect, mut resp) = ui.allocate_exact_size(size, egui::Sense::click());
@@ -243,32 +247,34 @@ pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     }
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *on, ""));
     if ui.is_rect_visible(rect) {
-        let k = ui.ctx().animate_bool_responsive(resp.id, *on);
-        let w = ui.style().interact_selectable(&resp, *on);
-        let r = rect.height() / 2.0;
-        let track = if *on { ui.visuals().selection.bg_fill } else { ui.visuals().extreme_bg_color };
-        ui.painter().rect(rect, r, track, w.bg_stroke, egui::StrokeKind::Inside);
-        let x = egui::lerp((rect.left() + r)..=(rect.right() - r), k);
-        let knob = if ui.is_enabled() { ui.visuals().widgets.active.fg_stroke.color } else { ui.visuals().weak_text_color() };
-        ui.painter().circle(egui::pos2(x, rect.center().y), r * 0.78, knob, Stroke::NONE);
+        let k = ds::tokens();
+        let x = ui.ctx().animate_bool_with_time(resp.id, *on, ds::anim(ds::GLIDE_TIME));
+        let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && ui.is_enabled());
+        let p = ui.painter();
+        p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
+        ds::rim(p, rect, ds::RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hover));
+        let half = egui::vec2(rect.width() / 2.0 - 3.0, rect.height() - 6.0);
+        let knob = egui::Rect::from_min_size(egui::pos2(egui::lerp((rect.left() + 3.0)..=(rect.center().x), x), rect.top() + 3.0), half);
+        let fill = if !ui.is_enabled() { k.plate } else { k.plate_low.lerp_to_gamma(k.plate_high, x) };
+        p.rect_filled(knob, 3, fill);
+        ds::edge_line(p, knob, 3.0, true, k.ink_silver.gamma_multiply(0.25 + 0.35 * x));
     }
     resp
 }
 
-/// The accented button of a page's main action.
+/// The lit plate of a page's main action.
 pub fn primary(ui: &mut egui::Ui, enabled: bool, text: &str) -> egui::Response {
-    let fill = if enabled { ui.visuals().selection.bg_fill } else { ui.visuals().widgets.inactive.weak_bg_fill };
-    ui.add_enabled(enabled, egui::Button::new(egui::RichText::new(text).strong()).fill(fill).min_size(egui::vec2(120.0, 32.0)))
+    ui.add_enabled(enabled, ds::Plate::new(text).primary(enabled).width(120.0).height(32.0).font(ds::Plate::FONT.sized(15.0).tracking(0.12)))
 }
 
-/// A plain button of a page's footer.
+/// A plain plate of a page's footer.
 pub fn secondary(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.add(egui::Button::new(text).min_size(egui::vec2(120.0, 32.0)))
+    ui.add(ds::Plate::new(text).width(120.0).height(32.0).font(ds::Plate::FONT.sized(15.0).tracking(0.12)))
 }
 
-/// The keyboard's focus mark: an accent outline around `rect`.
+/// The keyboard's focus mark: the design's focus outline two points around `rect`.
 pub fn focus_ring(ui: &egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_stroke(rect.expand(2.0), 9.0, Stroke::new(1.5f32, ui.visuals().hyperlink_color), egui::StrokeKind::Outside);
+    ds::focus_mark(ui.painter(), rect, ds::RADIUS_PLATE as f32, 2.0);
 }
 
 #[cfg(test)]
@@ -298,7 +304,7 @@ mod tests {
         assert!(ctx.fonts(|f| f.has_glyphs(&id, "őűŐŰáéíóöúüÁÉäßàçèñ¿¡ìò")));
         for t in [Theme::modern(), Theme::classic(|_, _| [1.0; 3])] {
             let s = style(&t);
-            assert_eq!(s.visuals.window_corner_radius, CornerRadius::same(16));
+            assert_eq!(s.visuals.window_corner_radius, CornerRadius::same(8));
             assert_eq!(s.visuals.hyperlink_color, ink(t.accent));
         }
     }

@@ -105,4 +105,7 @@ openIG2 is free software under the [GNU Affero General Public License v3.0 only]
 (SPDX: `AGPL-3.0-only`). Forks are welcome under that license; please give them their own name
 ([`TRADEMARKS.md`](TRADEMARKS.md)).
 
+The modern UI bundles the fonts Oxanium (SIL OFL 1.1, The Oxanium Project Authors) and Share Tech Mono
+(SIL OFL 1.1, Carrois Type Design); their licences are in `engine/crates/ig2-client/fonts/`.
+
 <div align="center"><sub>Built with 🦀 for a game we still love.</sub></div>

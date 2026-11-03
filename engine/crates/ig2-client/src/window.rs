@@ -576,6 +576,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     }
     crate::battle_fx::set_enhanced(o.battle_effects || app.display.battle_effects);
     crate::render::set_smooth_glows(o.smooth_glows || app.display.smooth_glows);
+    crate::gui::ds::cursor::set_modern(app.display.modern_cursors);
     crate::gui::set_ui_scale(o.ui_scale.unwrap_or(crate::display::ui_scale(&app.settings)));
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
@@ -3858,6 +3859,7 @@ impl App {
         crate::render3d::set_lighting(d.lighting);
         crate::battle_fx::set_enhanced(d.battle_effects);
         crate::render::set_smooth_glows(d.smooth_glows);
+        crate::gui::ds::cursor::set_modern(d.modern_cursors);
         crate::gui::set_ui_scale(crate::display::ui_scale(&self.settings));
         self.bindings = crate::bindings::Bindings::from_settings(&self.settings);
         self.audio.voice_volume = crate::display::voice_volume(&self.settings);

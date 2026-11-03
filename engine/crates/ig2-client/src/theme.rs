@@ -182,15 +182,14 @@ pub fn offered() -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Modern is the Options screen's shipped look (ADR 0053's constants, to the file's 1/255).
+    /// Modern is the design kit's deep-space palette (ADR 0073, `tokens.css`): glass, the rims, the plate's shades, the
+    /// inks, info blue, the focus blue.
     #[test]
-    fn modern_is_the_options_look() {
+    fn modern_is_the_deep_space_palette() {
         let t = Theme::modern();
-        assert_eq!((t.panel, t.panel_edge, t.tab, t.tab_on, t.button), ([4.0, 12.0, 24.0], [40.0, 90.0, 130.0], [10.0, 30.0, 50.0], [20.0, 70.0, 110.0], [10.0, 40.0, 70.0]));
-        let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.5 / 255.0 + 1e-6);
-        for (a, b) in [(t.text, [0.86, 0.9, 0.96]), (t.dim, [0.5, 0.58, 0.68]), (t.accent, [0.4, 0.78, 1.0]), (t.hot, [1.0, 0.86, 0.45]), (t.on_track, [0.16, 0.5, 0.75]), (t.knob, [0.9, 0.94, 1.0])] {
-            assert!(near(a, b), "{a:?} {b:?}");
-        }
+        assert_eq!((t.panel, t.panel_edge, t.tab, t.tab_on, t.button, t.button_edge), ([9.0, 29.0, 48.0], [43.0, 93.0, 130.0], [16.0, 36.0, 60.0], [81.0, 98.0, 148.0], [29.0, 45.0, 77.0], [15.0, 47.0, 68.0]));
+        let rgb = |c: [f32; 3]| c.map(|v| (v * 255.0).round() as u8);
+        assert_eq!([rgb(t.text), rgb(t.dim), rgb(t.accent), rgb(t.hot)], [[254, 255, 255], [126, 141, 152], [73, 167, 255], [159, 211, 255]]);
         assert_eq!((t.big, t.small, t.panel_clear, t.button_clear), (4, 2, [0.0; 2], [0.0; 2]));
     }
 

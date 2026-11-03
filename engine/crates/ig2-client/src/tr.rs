@@ -157,6 +157,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.", "Az Esc játék közbeni menüje mentéssel, betöltéssel és minden beállítással, modern oldalként; kikapcsolva az eredeti."),
     ("Modern colony screen", "Modern kolónia képernyő"),
     ("Modern info screen", "Modern információs képernyő"),
+    ("Modern cursors", "Modern egérmutatók"),
+    ("Sharp pointers in the design's colours, animated, with a modern UI theme; off = the original's.", "Éles, animált egérmutatók a dizájn színeiben, modern felülettémával; kikapcsolva az eredeti."),
     ("The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.", "Az információs képernyő birodalmai, rendezhető bolygó- és flottalistája, részletei, pénzügyei, grafikonjai és csillagnaplója modern paneleken; kikapcsolva az eredeti."),
     ("Fleets", "Flották"),
     ("Name", "Név"),
