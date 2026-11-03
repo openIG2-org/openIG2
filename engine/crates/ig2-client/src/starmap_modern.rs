@@ -194,6 +194,8 @@ pub struct View {
     pub race: Color32,
     /// The long-press menus and the long info.
     pub menus: Menus,
+    /// The game's turning globe of the selected planet is rendered: the card and the long info show it.
+    pub globe: bool,
 }
 
 impl View {
@@ -227,7 +229,14 @@ pub struct State {
     research_open: bool,
     /// The long info's controls this frame (the pointer's remap).
     placed: Option<Placed>,
+    /// The game's turning globe cut into the card's and the long info's planet ([`crate::fleet_modern::pictures`]).
+    pub wells: Vec<([f32; 4], Rect, f32)>,
 }
+
+/// The info box's globe on the original's virtual screen (`render_globe`'s render target), with a margin.
+const GLOBE_SRC: [f32; 4] = [6.0, 433.5, 34.0, 34.0];
+/// How much of [`GLOBE_SRC`] the globe fills across.
+const GLOBE_FILL: f32 = 30.5 / 34.0;
 
 /// The HUD's colours this frame.
 #[derive(Debug, Clone, Copy)]
@@ -564,9 +573,10 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = Vec::new();
     let ink = bar(ctx, v, st, &mut acts);
     st.placed = None;
+    st.wells.clear();
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(GAP, -GAP)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts));
+        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(GAP, -GAP)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, &mut st.wells));
     }
     // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
@@ -583,6 +593,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         acts.push(Act::Hold(None));
     }
     menus(ctx, v, st, &ink, &mut acts);
+    // The pictures are drawn in pixels.
+    let ppp = ctx.pixels_per_point();
+    for w in &mut st.wells {
+        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
+    }
     acts
 }
 
@@ -637,12 +652,13 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
             }
             let money = v.money.replace('\u{2009}', "");
             readout(ui, &money, if money.starts_with('-') { k.enemy } else { k.lcd_ink }, 8);
-            readout(ui, &v.date, k.lcd_ink, 10);
+            readout(ui, &v.date, k.lcd_ink, 12);
             // The right part's room first; the ticker takes what is left between.
             let (main, side): (Vec<_>, Vec<_>) = v.screens.iter().partition(|s| !matches!(s.n, 1 | 10 | 13));
             let keys: f32 = [main.len(), side.len()].iter().filter(|&&n| n > 0).map(|&n| group_w(n, KEY.x) + BAR_GAP).sum();
             let free = ui.available_width() - keys - BAR_GAP;
-            let research_w = (free * 0.4).clamp(170.0, RESEARCH_W);
+            // A narrow bar (4:3 at a large UI scale) gives the ticker's room up first, then the research's.
+            let research_w = if free >= 2.0 * 170.0 { (free * 0.4).clamp(170.0, RESEARCH_W) } else { free.clamp(0.0, 170.0) };
             ticker(ui, v, &ink, vec2((free - research_w).max(0.0), LINE_H), acts);
             status = research_status(ui, v, st, &ink, research_w);
             for list in [main, side].into_iter().filter(|l| !l.is_empty()) {
@@ -838,6 +854,16 @@ fn globe(p: &egui::Painter, r: Rect, colour: Color32, planet: bool) {
     }
 }
 
+/// The card's and the long info's planet: the game's turning globe cut into `r` (a shadow under it), else the
+/// shaded globe.
+fn planet(ui: &egui::Ui, r: Rect, colour: Color32, picture: bool, is_planet: bool, wells: &mut Vec<([f32; 4], Rect, f32)>) {
+    if !picture {
+        return globe(ui.painter(), r, colour, is_planet);
+    }
+    ds::shadow(ui.painter(), r.shrink(r.width() * 0.08), 255, 0, 14, 0, Color32::from_black_alpha(200));
+    wells.push((GLOBE_SRC, Rect::from_center_size(r.center(), r.size() / GLOBE_FILL), ui.opacity()));
+}
+
 /// A side ratio of the card (`.ratio`: an icon and the value, muted): the richness (a crystal) or the habitability
 /// (a figure); the label as its tooltip.
 fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
@@ -859,7 +885,7 @@ fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
 
 /// The selection card (`.ig-panel.deep` with `.ig-card`): the globe between its ratios, the name, the original's
 /// lines, the buttons as plates (the colony or split, the details) and keys (tanks, production).
-fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
+fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>, wells: &mut Vec<([f32; 4], Rect, f32)>) {
     let k = ds::tokens();
     let at = ui.painter().add(Shape::Noop);
     let frame = egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 }).show(ui, |ui| {
@@ -874,7 +900,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
                     ratio(ui, l, val, false);
                 }
                 let (g, _) = ui.allocate_exact_size(vec2(CARD_SIDE, 84.0), Sense::hover());
-                globe(ui.painter(), Rect::from_center_size(g.center(), vec2(84.0, 84.0)), info.colour, info.planet);
+                planet(ui, Rect::from_center_size(g.center(), vec2(84.0, 84.0)), info.colour, info.planet && v.globe, info.planet, wells);
                 if let Some((l, val)) = info.stats.get(1) {
                     ratio(ui, l, val, true);
                 }
@@ -912,12 +938,18 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
         // most.
         ui.scope_builder(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            let font = Plate::FONT.sized(14.0).tracking(0.12);
+            // One type size for both plates (`.ig-plate`, 14 points, the plate's 16 aside), smaller together when
+            // the labels and the keys don't fit; a label still too long is shrunk or cut by the plate.
             let keys = info.tanks as usize + info.product as usize;
-            let plates = 1 + info.right.is_some() as usize;
-            let room = ((main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (plates as f32 - 1.0)) / plates as f32).floor();
+            let labels: Vec<&str> = info.right.iter().map(|s| s.as_str()).chain([info.left.as_str()]).collect();
+            let room = main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (labels.len() as f32 - 1.0) - 2.0 * ds::SPACE[2] * labels.len() as f32;
             let ctx = ui.ctx().clone();
-            let pw = |s: &str| (Text::new(s, font).layout(&ctx, f32::INFINITY).width + 2.0 * ds::SPACE[2] + 8.0).min(room);
+            let text_w = |s: &str, f: Font| Text::new(s, f).layout(&ctx, f32::INFINITY).width;
+            let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0).tracking(0.12))).sum();
+            let font = Plate::FONT.sized((14.0 * room / natural.max(1.0)).clamp(11.0, 14.0)).tracking(0.12);
+            let share = (room / labels.len() as f32).floor() + 2.0 * ds::SPACE[2];
+            let fits = labels.iter().map(|s| text_w(s, font)).sum::<f32>() <= room + 0.5;
+            let pw = |s: &str| (text_w(s, font) + 2.0 * ds::SPACE[2]).min(if fits { f32::INFINITY } else { share });
             if let Some(r) = &info.right {
                 let pw = pw(r);
                 let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
@@ -1090,6 +1122,8 @@ pub struct InfoRow {
     pub short: bool,
     pub needed: Option<(String, String)>,
     pub special: bool,
+    /// The line's number in `StarmapPlanetInfoMod` (2 the surface, 3 the empire, 13 the special).
+    pub n: u16,
 }
 
 impl Menus {
@@ -1123,6 +1157,16 @@ fn rop_icon(n: i32) -> Icon {
         0xf => Icon::Details,
         n => Icon::Rop(n),
     }
+}
+
+/// A game label in capitals (the screen menu's) as the boards' plates write it: the first letter capital, the rest
+/// small; a label with small letters stays.
+pub(crate) fn calm(s: &str) -> String {
+    if s.chars().any(char::is_lowercase) {
+        return s.to_string();
+    }
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c.as_str().to_lowercase().chars()).collect())
 }
 
 /// The game's text in the panel's font: the font's private marks (the population's and energy's signs) dropped.
@@ -1365,15 +1409,18 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
         let back = ui.painter().add(Shape::Noop);
         ui.spacing_mut().item_spacing = Vec2::ZERO;
         ui.set_width(LI_W);
-        // The header: the globe, the name, the owner glowing in its colour, the richness and habitability.
+        // The header: the globe, the name, the owner glowing in its colour, the surface.
         let (h, _) = ui.allocate_exact_size(vec2(LI_W, LI_HEAD), Sense::hover());
         let p = ui.painter();
         ds::vgrad(p, h, CornerRadius { nw: ds::RADIUS_PANEL, ne: ds::RADIUS_PANEL, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
-        globe(p, Rect::from_min_size(h.min + vec2(LI_PAD, 16.0), vec2(LI_GLOBE, LI_GLOBE)), i.colour, true);
+        planet(ui, Rect::from_min_size(h.min + vec2(LI_PAD, 16.0), vec2(LI_GLOBE, LI_GLOBE)), i.colour, v.globe, true, &mut st.wells);
         let tx = h.left() + LI_PAD + LI_GLOBE + 16.0;
         let tw = h.right() - LI_PAD - tx;
-        let owner = card.and_then(|c| c.lines.first()).map_or("", |l| l.0.as_str());
-        let sub = card.map(|c| c.stats.iter().map(|(l, val)| format!("{l} {val}")).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
+        // The board's header: the empire and the surface lines move up from the table.
+        let row = |n: u16| i.lines.iter().find(|l| l.n == n).map(|l| clean(&l.value));
+        let owner = row(3).unwrap_or_else(|| card.and_then(|c| c.lines.first()).map_or(String::new(), |l| l.0.clone()));
+        let owner = owner.as_str();
+        let sub = row(2).unwrap_or_default();
         let lines = [owner.is_empty(), sub.is_empty()].iter().filter(|e| !**e).count() as f32;
         let mut y = h.center().y - (30.0 + 22.0 * lines) / 2.0;
         Text::new(&i.title, LI_NAME).color(k.ink).paint(ui, Rect::from_min_size(pos2(tx, y), vec2(tw, 30.0)));
@@ -1389,11 +1436,13 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
         }
         // The original's lines; the needed amount after the value. The rows close up where the screen is short.
         ui.add_space(4.0);
-        let rows = i.lines.len() + i.problems.as_ref().map_or(0, |p| p.2.len());
+        // Shown in the header, or empty (the special line of a planet without one).
+        let shown = |l: &&InfoRow| !(l.n == 2 || l.n == 3 || (l.special && l.value.trim().is_empty()));
+        let rows = i.lines.iter().filter(shown).count() + i.problems.as_ref().map_or(0, |p| p.2.len());
         let rest = 4.0 + 12.0 + if i.settings.is_some() { 14.0 + 3.0 * (LI_ROUND + 8.0) } else { 0.0 } + LI_PLATES + LI_PAD + 4.0;
         let room = ctx.screen_rect().bottom() - GAP - at.y - LI_HEAD - rest;
         let pitch = (room / rows.max(1) as f32).clamp(20.0, 26.0);
-        for l in &i.lines {
+        for l in i.lines.iter().filter(shown) {
             let c = if l.short { k.enemy } else if l.special { k.own } else { k.info };
             let value = match &l.needed {
                 Some((_, n)) => format!("{} / {}", clean(&l.value), clean(n)),
@@ -1463,15 +1512,15 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
     egui::Area::new(egui::Id::new("smh-long-info-plates")).fixed_pos(plates.min).fade_in(false).show(ctx, |ui| {
         ui.set_opacity(ease);
         ui.spacing_mut().item_spacing.x = 8.0;
-        let w = ((plates.width() - 16.0) / 3.0).floor();
+        // The board's three plates less the colony one (the original's long info has none): two across the width.
+        let w = ((plates.width() - 8.0) / 2.0).floor();
         let font = Plate::FONT.sized(15.0).tracking(0.12);
         ui.horizontal(|ui| {
-            ui.add_space(w + 8.0);
             // The original's production button (hot-spot 11) leaves the long info whatever the planet.
-            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&v.tips[9]).width(w).font(font))).clicked() {
+            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&calm(&v.tips[9])).width(w).font(font))).clicked() {
                 acts.push(Act::Panel(11));
             }
-            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&i.exit).width(w).font(font))).clicked() {
+            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&calm(&i.exit)).width(w).font(font))).clicked() {
                 acts.push(Act::Info(false));
             }
         });
@@ -1490,6 +1539,13 @@ mod tests {
         assert!((q[0] - w[0]).abs() < 1e-3 && (q[1] - w[1]).abs() < 1e-3, "{q:?} {w:?}");
         assert_eq!(mini_virtual([0.0, 0.0]), [274.0, 388.0]);
         assert_eq!(mini_virtual([2.0, -1.0]), [366.0, 388.0]);
+    }
+
+    #[test]
+    fn calm_writes_capitals_small() {
+        assert_eq!(calm("KOLÓNIA"), "Kolónia");
+        assert_eq!(calm("Részletek"), "Részletek");
+        assert_eq!(calm(""), "");
     }
 
     #[test]
@@ -1690,7 +1746,8 @@ mod tests {
         let long = "Hosszú szöveg, amely sokkal hosszabb, mint amennyi hely van rá ".repeat(4);
         let mut v = view();
         v.line = long.clone();
-        v.date = "2327-10-23".into();
+        v.date = "2327 : 10 : 23".into();
+        v.globe = true;
         v.research.current = Some((1, long.clone(), 64, 100));
         if let Some(i) = &mut v.info {
             i.title = long.clone();
@@ -1700,7 +1757,9 @@ mod tests {
             i.stats = vec![(long.clone(), long.clone()); 2];
         }
         let settings = ([long.clone(), long.clone(), long.clone()], [long.clone(), long.clone(), long.clone()], long.clone());
-        let rows = vec![InfoRow { label: long.clone(), value: long.clone(), needed: Some((long.clone(), long.clone())), ..Default::default() }; 3];
+        let mut rows = vec![InfoRow { label: long.clone(), value: long.clone(), needed: Some((long.clone(), long.clone())), ..Default::default() }; 3];
+        // The surface and the empire go up to the header.
+        (rows[0].n, rows[1].n) = (2, 3);
         let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
         let style = crate::gui::style(&crate::theme::Theme::modern());
         let mut st = State::default();
@@ -1716,6 +1775,8 @@ mod tests {
             let [bar, card, nav, li] = [rects[0], rects[1], rects[2], rects[3]];
             assert_eq!(bar.map(|r| r.size()), Some(vec2(SIZE.0 as f32, BAR_H)));
             assert_eq!(nav.map(|r| r.width()), Some(NAV_W + 20.0));
+            // One planet picture: the card's, or the long info's (the card is hidden under it).
+            assert_eq!(st.wells.len(), 1);
             if v.menus.info.is_none() {
                 assert_eq!(card.map(|r| r.width()), Some(CARD_W));
             } else {

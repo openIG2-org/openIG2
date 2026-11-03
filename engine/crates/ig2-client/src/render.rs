@@ -2466,6 +2466,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let (menus, zoom) = staged.unwrap_or_default();
         let mut mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);
         mv.bind_keys(&crate::bindings::Bindings::default());
+        mv.globe = globe.is_some();
         mv.menus = hud.modern_menus(&world.game.state, &l.tables, &menus, zoom, size, t);
         if menus.info_on() {
             mv.mini = None;
@@ -2495,6 +2496,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         }
         let mut top = crate::render::Frame::new([0.0; 4]);
         crate::fleet_modern::pictures(&mut top, &fst.wells, panel_tex, &crate::font::Virtual::new(size));
+        crate::fleet_modern::pictures(&mut top, &st.wells, globe, &crate::font::Virtual::new(size));
         if pv.is_some() {
             let thumbs = models.render_thumbs(&mut r, &l.install, &l.tables, &world.game.state, &sel, &view.camera.matrix(), size, o.ui_frames as f32);
             crate::production_modern::pictures(&mut top, &pst.wells, thumbs, &crate::font::Virtual::new(size));

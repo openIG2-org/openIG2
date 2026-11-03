@@ -6091,6 +6091,7 @@ impl App {
                         let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                         let mut m = h.modern_view(&self.world.game.state, self.tables, &self.world.ui, v, &self.world.prev, &self.world.curr, &sel, alpha, t, &self.panels, &self.menus, gates);
                         m.bind_keys(&self.bindings);
+                        m.globe = globe.is_some();
                         // Under the long info the console and the minimap are off (hot-spots 1..=7).
                         if self.menus.info_on() {
                             m.mini = None;
@@ -6193,6 +6194,7 @@ impl App {
             });
             let mut f = crate::render::Frame::new([0.0; 4]);
             crate::fleet_modern::pictures(&mut f, &self.fleet_modern.wells, panel_tex, &crate::font::Virtual::new(size));
+            crate::fleet_modern::pictures(&mut f, &self.modern.wells, globe, &crate::font::Virtual::new(size));
             if pmv.is_some() {
                 crate::production_modern::pictures(&mut f, &pst.wells, thumbs, &crate::font::Virtual::new(size));
             }

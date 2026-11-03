@@ -51,8 +51,8 @@ because the original's hot-spot code hit-tests it there.
    or shrunk to a floor); long or translated strings never resize the bar, the card, the plate or the long info.
 
 ## Consequences
-- The boards' planet pictures (the card's, the long info's header) and the radial icons' pictures stay drawn: a shaded
-  globe and the HUD's line icons on metal keys; the radar is drawn, not the game's rendered one.
+- The radial icons' pictures stay drawn (the HUD's line icons on metal keys); the radar is drawn, not the game's
+  rendered one. The planet pictures: see the amendment below.
 - The board shows a colony plate in the long info; the original's long info has no colony function (the info box's
   right button does nothing there), so there is none.
 - The production and exit plates act on the click (the release), the original's hot-spots 9 and 11 on the press: the
@@ -62,3 +62,21 @@ because the original's hot-spot code hit-tests it there.
 - Only the starmap's hot-spot code sees the remap: the drawn pointer, its tooltip's place, the replay bar and the
   multiplayer wait overlay use the real pointer.
 - Classic and every capture and replay are unchanged (the option and `--modern-hud` as in ADR 0065).
+
+## Amendment 2026-11-03: compare-and-fix pass against the boards "Starmap: default" and "Starmap: planet selected"
+- The selection card and the long info's header show the game's own turning planet globe (the original info box's
+  globe render, cut into the picture well) instead of a shaded ball in the owner's colour; a fleet keeps its mark.
+- Long info: the surface line sits in the header under the owner ("grassy · 75% production"), the empire line is the
+  header's glowing owner, both leave the data table; an empty special line is not shown; the production and exit
+  plates share the panel's width.
+- Card and plates: both plates in one type size, shrunk together when long; the game's capital-letter labels are
+  written as the boards do ("Kolónia", "Off").
+- Own Hungarian texts: "Details" is "Infó" (the boards' word), "Split" is "Felosztás".
+- Top bar: the date as the original's top bar lays it out ("2327 : 10 : 23"); on a narrow bar (4:3 at a large UI
+  scale) the message line, then the research button, give up their room so the screen keys stay on the screen.
+- Checked: HUD, fleet, vehicle and transfer panels and the select menus fit together without overlaps at 16:9, 21:9
+  and 4:3, in English, Hungarian and with long strings.
+- Still different from the boards: the radial icons are line icons on metal keys (the board uses the original's
+  radial pictures); the navigation plate keeps the original console's eight camera keys (the board shows three); the
+  long info is 500 wide (board 460) so the settings rows keep ALL and the priority row; the long info has no colony
+  plate (no original function), so two plates instead of three.

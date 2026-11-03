@@ -882,7 +882,7 @@ impl Hud {
                 tip: crate::starmap_tip::tip(&c, [1.0, 470.0]).filter(|t| t.id == 8).map(|t| dec(&t.text)).unwrap_or_default(),
                 left: dec(&self.texts.ours("Details")),
                 right: match sel.mode {
-                    1 => md.names.get(3).map(|n| dec(n)),
+                    1 => md.names.get(3).map(|n| m::calm(&dec(n))),
                     _ => own_calm.then(|| dec(&self.texts.ours("Split"))),
                 },
             }
@@ -941,7 +941,7 @@ impl Hud {
         let tip = |n: u16| dec(&self.texts.get(2, 1, n));
         let ours = |e: &str| dec(&self.texts.ours(e));
         m::View {
-            date: format!("{y}-{mo:02}-{d:02}"),
+            date: format!("{y} : {mo:02} : {d:02}"),
             money: crate::starmap_modern::money(bar.money),
             speed: self.speed,
             paused: self.paused,
@@ -1006,7 +1006,7 @@ impl Hud {
                         title = dec(&l.value);
                     } else {
                         let needed = l.needed.as_ref().map(|nd| (label(l.n + 1), dec(nd)));
-                        lines.push(m::InfoRow { label: label(l.n), value: dec(&l.value), short: l.colour == 6 && l.n != 13, needed, special: l.n == 13 });
+                        lines.push(m::InfoRow { label: label(l.n), value: dec(&l.value), short: l.colour == 6 && l.n != 13, needed, special: l.n == 13, n: l.n });
                     }
                     y += 16.0;
                 }
