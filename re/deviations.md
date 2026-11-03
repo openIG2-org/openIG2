@@ -121,6 +121,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 538 | spy, modern page | the arrows jump to the next or previous agent, with no edge scrolling of the carousel; the lists are click dropdowns instead of press, drag and release; off = the original's | yes | ADR 0076 |
 | 539 | trade, modern page | all offers in one scrolling list instead of the 8-row window with scroll bars; the destination is a click dropdown instead of the hold-drag list; the pod list (hot-spot 0x25) is replaced by the weapons line on the card; OK fires on the release; off = the original's | yes | ADR 0076 |
 | 528 | space battle, modern HUD | the camera keys keep the original's six (top view, yaw left and right, the angled view, zoom, pitch), not the board's split zoom keys; the HUD's controls answer from the previous frame's layout | yes | ADR 0077 |
+| 533 | new game page, modern | one click on a race picks it and Start runs the campaign; Esc, Back and the right button close the page at once; it opens with race 0 and Normal preselected; the exe's race choice has the 3D heads and hot-spots | yes | mainscr.md §9.2, ADR 0078 |
+| 534 | help page, modern | the search field takes the keys while it is focused (pause, speed, O and M do not act while typing; the F-keys still pass); the wheel scrolls the topic (the original ignores it); the original's tooltips on its spots are gone | yes | help.md §10, ADR 0078 |
+| 535 | match history, modern | the history table scrolls; the classic screen pages with Newer and Older | yes | game-end.md §11, ADR 0034, ADR 0078 |
 
 ## Enhanced
 

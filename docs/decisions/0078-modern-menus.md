@@ -65,9 +65,34 @@ have a small pause menu (Continue, Save, Load, Options, Help, Quit, Exit) with s
 7. **The kit** gains two small generic pieces: a menu entry's key hint (`MenuEntry::hint`) and a settings row of any
    height and label style (`option_row_in`); option rows' and segments' labels shrink before they elide.
 
+8. **The new game page** (`newgame_modern.rs`; with "Modern main menu"): the campaign's race choice (Mode_Fajvalasztas,
+   mainscr.md §9.2) as an egui page: Campaign and Scenarios at the left with a hint, the three races (Solarian, Shinari,
+   Kra'hen = races 1, 3, 5) as round portraits (the diplomacy screen's 128 × 128 heads), the race's panel (the empire's
+   name, the fajinfo blurb, Difficulty as large segments Easy / Normal / Hard = the exe's levels 0 / 2 / 1), Back and
+   Start. One click picks, Start runs the campaign start, Esc, Back and the right button close at once; the 3D heads and
+   the blurb are not drawn under it. The kit's `ds::segmented_plates` draws lit plates of a given height.
+9. **The help page** (`help_modern.rs`; with "Modern in-game menu"): the Help screen (AktKep 1) as a page under the top
+   bar: the topics of helpmain.txt with a search field (it types while focused; the F-keys pass), the open topic's
+   sub-topics (a click scrolls to the section), Back; the topic file's markup read into title, paragraphs, framed
+   pictures (2.22 × up to 766 wide), term lists and section headings, with a scroll track; the wheel scrolls (the
+   original ignores it); the original's opening and closing frame fades it; the original's tooltips are gone.
+10. **The end-of-game page** (`stats_screen/modern.rs`; with "Modern main menu"): the statistics screen (ADR 0034) as a
+   page: the outcome title (own, enemy, silver), mode, days and end date, the empires table (colour stripe from the
+   palette, race head, LCD values, score in LCD yellow, your row lit, a beaten empire muted), the graph with segment
+   tabs, grid, day marks and line names; the match history as a table that scrolls instead of Newer and Older pages.
+11. **The name prompt**: the multiplayer name entry (game question 15/3/2) is a modern prompt with a field, Back and OK.
+12. **Alignment with the boards**: the main menu's entries at the board's 52-point spacing; the pause menu's "Resume"
+   and last-save line; the save and load page 12 points lower (below the top bar); settings cards' headings 18 high,
+   wide rows 80 high, the boards' row order inside cards (UI scale, language, theme, autosave cadence, WASD first;
+   texture upscaling and sharp UI last); the global keys split into "Everywhere: screens" and "Everywhere: time and
+   saving"; volume rows with mute buttons and longer tracks (`slider_sized`, `Icon::Speaker`, `Icon::SpeakerOff`);
+   multiplayer panel titles as written; the help topic list scrolls; the new game and end pages fit a large UI scale.
+   Staying different: the race traits table (the game has no such data), the classic top bar on help and statistics,
+   the room's name "<name>'s galaxy" in English (shared over the network), the mods line under the galaxy settings,
+   the load list's scroll bar, the autosave toggle beside the cadence row.
+
 ## Consequences
 - The Options page and the in-game menu look as the boards at 1920 × 1080 and keep their functions, keys and storage;
   the classic screens are unchanged (their capture comparisons don't move).
 - The per-row descriptions move into the footer's status line.
-- Not drawn yet: the boards' mute buttons beside the volumes, the colour-blind preview strip, the new game board (race
-  rings and the race's panel), the help and end-of-game boards.
+- Not drawn yet: the colour-blind preview strip.

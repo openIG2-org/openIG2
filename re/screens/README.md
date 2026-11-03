@@ -150,7 +150,7 @@ Smaller per-screen differences are rows in `re/deviations.md`; each spec's last 
 | Tutorial overlay | [`tutorial.md`](tutorial.md); interpreter `rules/tutorial.md` (`ig2_sim::tutorial`) | `tutorial_ui` | partial: the tutorial's input locks (deviations 141, 174, 198) are missing |
 | Video (title, intros, messages, story, endings, credits) | [`video.md`](video.md) | `video/` | done |
 | Audio (music, UI/world sounds, voices, speech) | [`audio.md`](audio.md), [`sound.md`](sound.md) | `audio/` | done |
-| Game statistics and match history (ours, no exe screen; main menu "History") | `rules/game-end.md` §11, ADR 0034 | `stats_screen` | done (enhanced) |
+| Game statistics and match history (ours, no exe screen; main menu "History") | `rules/game-end.md` §11, ADR 0034 | `stats_screen` (`modern.rs`: the page with the modern main menu, ADR 0078 §10) | done (enhanced) |
 | Self-playing demo | `mainscr.md` §9.5 | — | unreachable in the GOG build (`demomode` check returns false, `demo.tut` not shipped); nothing to port |
 
 ## 5. Shared specs
