@@ -18,6 +18,20 @@ pub struct Draw2d<'a> {
     pub t: &'a SpyTexts,
     /// The game's language is Hungarian (`Lang == 4` [inf]): dialogs 0x12/0x13 name the race + "i".
     pub hungarian: bool,
+    /// Ours (ADR 0076): the texts are recorded here instead of drawn (the modern page lays them out).
+    pub capture: Option<&'a std::cell::RefCell<Vec<Piece>>>,
+}
+
+/// Ours (ADR 0076): a text the 2D pass would draw: its bytes, virtual place (`KiirStr`'s x, y), cells, flags,
+/// colour and brightness (per cent).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Piece {
+    pub text: Vec<u8>,
+    pub at: [i32; 2],
+    pub len: usize,
+    pub flags: u32,
+    pub col: usize,
+    pub mult: f32,
 }
 
 impl Draw2d<'_> {
@@ -29,6 +43,10 @@ impl Draw2d<'_> {
     /// virtual screen).
     #[allow(clippy::too_many_arguments)]
     fn text(&self, f: &mut Frame, s: &[u8], x: i32, y: i32, len: usize, size: usize, flags: u32, col: usize, mult: f32) {
+        if let Some(c) = self.capture {
+            c.borrow_mut().push(Piece { text: s.to_vec(), at: [x, y], len, flags, col, mult });
+            return;
+        }
         let a = match flags & 3 {
             0 => Align::Left,
             1 => Align::Field,
@@ -96,6 +114,16 @@ impl SpyScreen {
             }
         }
         self.tooltip_box(f, g);
+    }
+
+    /// Ours (ADR 0076): the pedestals' names and the panels' texts as [`Piece`]s (`g.capture` set), while the 2D
+    /// passes would draw.
+    pub fn capture(&self, d: &SpyData, g: &Draw2d, spots: &[Spot; 12]) {
+        let mut f = Frame::new([0.0; 4]);
+        if self.opened && !self.closing {
+            self.names(&mut f, d, g, spots);
+            self.texts(&mut f, d, g);
+        }
     }
 
     /// The tooltip (`GFX_DateMoneyScrollFade` ELF 0x66d160: the box in fader pass 3; `UpdateFrame` ELF 0x578e40:

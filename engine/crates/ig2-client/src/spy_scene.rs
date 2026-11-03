@@ -93,6 +93,9 @@ pub struct Pose {
     pub selected: Option<usize>,
     /// The head video's frame on the disc.
     pub head: Option<TexId>,
+    /// Ours (ADR 0076): under the modern page, no panels of the frame and no wire sphere (the telescopes still open
+    /// and close the screen).
+    pub bare: bool,
 }
 
 /// A part of the frame `spybck2`: its look and whether it belongs to the telescopes (child 1, `Group18`).
@@ -313,7 +316,7 @@ impl SpyScene {
         let telescopes = (!p.opened && p.frame < 25.0) || p.closing;
         if let (Some(a), Some(c)) = (self.frame.get(f0), self.frame.get(f1)) {
             for (x, y) in a.iter().zip(c) {
-                if x.telescope && !telescopes {
+                if (x.telescope && !telescopes) || (p.bare && !x.telescope) {
                     continue;
                 }
                 let look = if x.glass >= 0.0 { Look::Glass(1.0 - x.glass) } else { Look::Lit(0) };
@@ -336,7 +339,7 @@ impl SpyScene {
             (self.gomb, scene::create_matrix(0.0, 0.0, 0.0))
         };
         let tr = if p.frame <= 25.0 { (1.35 - p.frame * 2.0 / 50.0).clamp(1e-6, 0.9999999) } else { 1e-6 };
-        if let (Some(a), Some(c)) = (self.wire.get(w0), self.wire.get(w1)) {
+        if let (Some(a), Some(c), false) = (self.wire.get(w0), self.wire.get(w1), p.bare) {
             // Transparent, the lines are the texture's colour × the opacity in the frame's gamma space [obs: closing
             // frame 20, opacity 0.45: (4, 45, 59) on a line, (6, 71, 92) where two cross; opening frame 12: (2, 24,
             // 32) at crossings]; opaque, ambient-lit.

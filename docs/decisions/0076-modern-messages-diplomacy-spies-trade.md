@@ -45,3 +45,28 @@ card beside it, the text wrapped in a wide panel under them, the "full text" and
 - The original's frame animation (opening, closing) isn't drawn; the screen's timing (`mesframe`) still runs, so
   the text appears at the same moment.
 - No exe capture exists for the new look: snapshots go with the change.
+
+## Amendment: the diplomacy, spy and trade screens, the info detail
+Each has an option on by default (Remake page, Interface): `ModernDiplomacy`, `ModernSpy`, `ModernTrade`; off = the
+original's screen. Snapshots draw the original's unless `--modern-diplomacy`, `--modern-spy` or `--modern-trade` is
+given (`--dip-pick M,R;...` replays menu picks first).
+- **Kept 3D**: the diplomacy ring with the leader's video, raised to the board's centre (`DiplomacyScene::modern`: no
+  background picture, grid or head cages); the spy agents turning on their pedestals (`Pose::bare`: no frame panels or
+  wire sphere); the trade screen's chosen hull turning in a well (`TradeScene::set_modern`, 1.3 times the size).
+- **Diplomacy**: contacts as cards (leader, empire, relation; a green blink while a message waits), the selected
+  empire's card, the proposal menus as a click-opened cascade of panels, the dialogue panel with each side's lines under
+  its empire's name and the one-level answer menus as buttons, an Exit plate.
+- **Spy**: names on the plates, round arrows, the agent card (skills with + buttons and tooltips, skill points, spies
+  count), the planner, mission and report panel built from the original's own 2D texts, recorded instead of drawn
+  (`Draw2d::capture`, `SpyView::capture`); its lists are dropdowns of the original's pick lists.
+- **Trade**: all offers in a scrolling list, the hull's card, the order bar (item, quantity with right-button repeat,
+  destination dropdown with days, total, order), the "build a trade port" line, the deliveries under way.
+- **Same functions**: a pick replays the original's press, held drag and release on the classic menu rows
+  (`diplomacy::Open::pick`, `select`; `SpyView::modern_press`, `modern_select`; `Trade::modern_pick`, `modern_qty`,
+  `modern_destination`, `modern_buy`), so proposals, answers, orders and story hand-offs stay the original's.
+- **Kit**: `ds::select`, a select field in the boards' look (dark glass box, chevron, rows panel, either button, greyed
+  rows), also used by the info detail's planet settings (tax, auto-build, priority), shown as info-blue text, with
+  an em dash for an empty row.
+- **Info detail**: a Colony button under the globe of the human's own planets opens its colony screen.
+- **Differences**: menus and lists open by click instead of press, drag and release; the trade list shows every offer
+  and replaces the pod list by the weapons line; see `re/deviations.md`. Three new remake labels in `tr.rs`.

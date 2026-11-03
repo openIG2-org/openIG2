@@ -419,6 +419,7 @@ Per rendered frame (not per tick): hull spin 0.03 (`ForgatTradeAlap`), `trawiref
 - Which submesh of `tozs1bck.xvb` is which (wire sphere = submesh 0, parts 2 and 4, button pairs) was not checked against the xvb file.
 
 ## 13. Client status
+A modern page (`trade_modern.rs`, option `ModernTrade`, on by default) acts through this screen's code (ADR 0076); off = the classic screen described below.
 Modules: `ig2-client/src/trade.rs` (screen state, 2D passes, input, hull file choice `hull_file`, the order) and
 `trade_scene.rs` (tozs1bck frame, wire sphere, hull model, lights). F8 opens it (`DoKeyboard`), F2 closes it with
 the closing (scrn19ki), Esc goes to the options screen at once; Options "back" re-enters as `Trade_Belep` with

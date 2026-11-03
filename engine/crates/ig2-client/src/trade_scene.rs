@@ -38,11 +38,15 @@ pub struct TradeScene {
     textures: HashMap<String, Tex>,
     white: TexId,
     target: Option<Target>,
+    modern: Option<[f32; 2]>,
 }
+
+/// Ours (ADR 0076): the hull's size in the modern page's well against the original's card.
+const MODERN_GROW: f32 = 1.3;
 
 impl TradeScene {
     pub fn new(r: &mut Renderer) -> Self {
-        Self { models: HashMap::new(), textures: HashMap::new(), white: r.add_texture(&Image::white()), target: None }
+        Self { models: HashMap::new(), textures: HashMap::new(), white: r.add_texture(&Image::white()), target: None, modern: None }
     }
 
     fn model(&mut self, r: &mut Renderer, install: &Install, frame: usize) -> Option<Model> {
@@ -101,6 +105,12 @@ impl TradeScene {
         self.models.get(&key).cloned().flatten()
     }
 
+    /// Ours (ADR 0076): the modern page's model well, its centre on the original's 640 × 480 screen: only the hull
+    /// is drawn, there.
+    pub fn set_modern(&mut self, at: Option<[f32; 2]>) {
+        self.modern = at;
+    }
+
     /// Draw the scene behind the 2D layer: the wire sphere, then the frame and the chosen offer's hull (offscreen,
     /// depth-tested).
     pub fn draw(&mut self, f: &mut Frame, r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, s: &Trade, size: [f32; 2]) {
@@ -126,7 +136,7 @@ impl TradeScene {
         // Part 4 is hidden while the info screen is the neighbour (`Trade3DUpdate` step 7 overrides step 3); part 2
         // shows from frame 35 on.
         let hide_early = s.hides_early();
-        if let Some(m) = self.frame_model(r, install, s.frame) {
+        if let Some(m) = self.frame_model(r, install, s.frame).filter(|_| self.modern.is_none()) {
             let t = Placement::add_to_scene(m.origin, 1.15).world((0.0, 0.0, 0.0), at);
             for p in &m.parts {
                 let i = &p.index;
@@ -154,8 +164,14 @@ impl TradeScene {
         if let Some((base, race)) = s.hull_model.filter(|_| s.hull_shown() && clear > 0.0) {
             if let Some((name, vdir, tdir, k)) = crate::trade::hull_file(rules, base, race) {
                 if let Some(m) = self.hull(r, install, vdir, &name, tdir) {
-                    let pl = Placement::add_to_scene(m.origin, k * 0.08);
-                    let t = scene::Transform { matrix: scene::mul(&s.hull_turn, &pl.matrix).map(|x| x * 1024.0), translation: [s.hull_x, 145.0, -650.0] };
+                    // Ours (ADR 0076): under the modern page the hull turns in the board's well, larger, sliding as
+                    // the original's.
+                    let (grow, at) = match self.modern {
+                        Some([x, y]) => (MODERN_GROW, [(x - 320.0) * 650.0 / 600.0 + s.hull_slide(), (y - 240.0) * 650.0 / 600.0, -650.0]),
+                        None => (1.0, [s.hull_x, 145.0, -650.0]),
+                    };
+                    let pl = Placement::add_to_scene(m.origin, k * 0.08 * grow);
+                    let t = scene::Transform { matrix: scene::mul(&s.hull_turn, &pl.matrix).map(|x| x * 1024.0), translation: at };
                     for p in &m.parts {
                         let id = p.texture.clone().and_then(|t| self.texture(r, install, &t).map(|x| x.id)).unwrap_or(self.white);
                         bake(p, &t, &lights, id, clear, 1.0, &mut dynamic, &mut draws);
@@ -175,7 +191,7 @@ impl TradeScene {
         // `(0, x·200, 200 − x·1000)` and turned by `(sin(2x)·3, sin(2.1x)·2, 0)` (`x = 1 − f/50`), else at
         // (0, 0, 200) unturned; transparency `1.35 − 2f/50` up to frame 25 (clamped 1e-6..0.9999999), else 1e-6.
         let v = s.wire_transparency();
-        if v < 1.0 {
+        if v < 1.0 && self.modern.is_none() {
             if let Some(mut m) = self.frame_model(r, install, s.frame + s.wire) {
                 let (to, rot) = s.wire_pose();
                 m.move_child(&[WIRE], Some(to.map(|c| c / 1024.0)), Some(&rot));

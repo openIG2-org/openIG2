@@ -14,7 +14,7 @@ use ig2_sim::spy::{self, Spies, Spy};
 use crate::render::{Frame, TexId};
 use crate::spy_scene::{Pose, Spot};
 
-mod draw;
+pub mod draw;
 pub use draw::Draw2d;
 
 /// The texts the screen uses: `GetString(7, …)` in the game's language, the name tables `StringReadAll` fills
@@ -163,7 +163,7 @@ impl<'a> SpyData<'a> {
     fn spy(&self, k: usize) -> Spy {
         self.spies.roster.get(self.en).and_then(|r| r.get(k)).copied().unwrap_or_default()
     }
-    fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.spies.count.get(self.en).copied().unwrap_or(0).clamp(0, spy::MAX_SPIES) as usize
     }
     fn mission(&self, m: i32) -> spy::MissionRule {
@@ -557,6 +557,7 @@ impl SpyScreen {
             slots: std::array::from_fn(|i| peds[i].map(|k| (d.spy(k).race, d.spy(k).state))),
             selected: self.selected_pedestal(d),
             head,
+            bare: false,
         }
     }
 
@@ -1185,6 +1186,8 @@ pub struct SpyView {
     head_start: f32,
     /// The remaster's clock in seconds (`sg3d_time`: the head video's scan lines), when pinned (`--acttime`).
     pub acttime: Option<f32>,
+    /// Ours (ADR 0076): the modern page draws the 2D layer.
+    pub modern: bool,
 }
 
 impl SpyView {
@@ -1202,6 +1205,7 @@ impl SpyView {
             head_race: None,
             head_start: 0.0,
             acttime: None,
+            modern: false,
         })
     }
 
@@ -1228,19 +1232,118 @@ impl SpyView {
         }
     }
 
-    /// The screen's frame: the 3D pass, then the 2D layers.
+    pub fn texts(&self) -> &SpyTexts {
+        &self.texts
+    }
+
+    /// Ours (ADR 0076): the pedestals' names and the panels' texts the 2D pass would draw this frame, and where the
+    /// pedestals stand.
+    pub fn capture(&self, hud: &crate::ui::Hud, d: &SpyData, size: [f32; 2], hungarian: bool) -> (Vec<draw::Piece>, [crate::spy_scene::Spot; 12]) {
+        let pose = self.screen.pose(d, None);
+        let spots = self.scene.spots(&pose);
+        let out = std::cell::RefCell::new(Vec::new());
+        if let Some(font) = &hud.font {
+            let g = Draw2d { font, white: hud.white, v: crate::font::Virtual::new(size), palette: &hud.palette, ui: &hud.texts, t: &self.texts, hungarian, capture: Some(&out) };
+            self.screen.capture(d, &g, &spots);
+        }
+        (out.into_inner(), spots)
+    }
+
+    /// The screen's frame: the 3D pass, then the 2D layers (none under the modern page).
     pub fn build(&self, hud: &crate::ui::Hud, d: &SpyData, size: [f32; 2], hungarian: bool) -> Frame {
-        let pose = self.screen.pose(d, self.head.as_ref().filter(|_| self.screen.disc).map(|_| self.scene.head_tex));
+        let mut pose = self.screen.pose(d, self.head.as_ref().filter(|_| self.screen.disc).map(|_| self.scene.head_tex));
+        pose.bare = self.modern;
         let spots = self.scene.spots(&pose);
         let mut f = Frame::new([0.0, 0.0, 0.0, 1.0]);
         let mut scene = self.scene.build(&pose, size);
         scene.uniforms.eye[3] = self.acttime.unwrap_or(0.0);
         f.scene = Some(scene);
-        if let Some(font) = &hud.font {
-            let g = Draw2d { font, white: hud.white, v: crate::font::Virtual::new(size), palette: &hud.palette, ui: &hud.texts, t: &self.texts, hungarian };
+        if let (Some(font), false) = (&hud.font, self.modern) {
+            let g = Draw2d { font, white: hud.white, v: crate::font::Virtual::new(size), palette: &hud.palette, ui: &hud.texts, t: &self.texts, hungarian, capture: None };
             self.screen.draw(&mut f, d, &g, &spots);
         }
         f
+    }
+
+    /// Ours (ADR 0076): the modern page's press on button `id`, or its pick of `value` from the list field `id`
+    /// opens (a row's value as `rows` gives it): the original's press on the hot-spot, then for a list its release
+    /// on that row (`Spy_Main`'s branches, `choose`).
+    pub fn modern_press(&mut self, d: &SpyData, id: u32, value: Option<i32>) -> Vec<Command> {
+        let mut out = Vec::new();
+        let s = &mut self.screen;
+        let Some((_, r)) = s.hot_spots(d).into_iter().find(|&(i, _)| i == id) else { return out };
+        if s.popup.is_some() {
+            return out;
+        }
+        s.mouse = [(r[0] + r[2] / 2) as f32, (r[1] + r[3] / 2) as f32];
+        s.icon(d, &self.texts, id, &mut out);
+        if let Some(p) = s.popup.take() {
+            if let Some(v) = value {
+                let selected = match p.list {
+                    List::Target { mode, .. } if mode != 5 => v + 1,
+                    _ => v,
+                };
+                s.choose(d, &self.texts, Popup { selected, ..p }, &mut out);
+            }
+        }
+        s.after(d, &mut out);
+        out
+    }
+
+    /// Ours (ADR 0076): the modern page's press on pedestal `i` (`BeallitKemekAtlatszosaga`'s pick, then the
+    /// press's follow-up `after`).
+    pub fn modern_select(&mut self, d: &SpyData, i: usize) -> Vec<Command> {
+        let mut out = Vec::new();
+        let s = &mut self.screen;
+        let Some(k) = SpyScreen::pedestals(d).get(i).copied().flatten() else { return out };
+        if s.popup.is_some() || s.frame < 50.0 || s.dialog != 0 || d.spy(k).state == 0 {
+            return out;
+        }
+        s.sounds.push(crate::audio::CLICK);
+        s.akt = k;
+        if d.spy(k).state == 1 {
+            s.plan = Plan::init();
+        }
+        s.after(d, &mut out);
+        out
+    }
+
+    /// Ours (ADR 0076): a press that only clicks (a dropdown opening, `Spy_Main`'s press on a list field).
+    pub fn click(&mut self) {
+        self.screen.sounds.push(crate::audio::CLICK);
+    }
+
+    /// Ours (ADR 0076): the report's orders are on their way (multiplayer): its buttons wait.
+    pub fn awaiting(&self) -> bool {
+        self.screen.awaiting.is_some()
+    }
+
+    /// Ours (ADR 0076): the list field `id` opens (`Spy_Main`'s 3, 0x10..0x13) and its rows: value, text, greyed
+    /// (forbidden by the tutorial, dearer than the treasury, a race not to be targeted, the kill list's question).
+    pub fn modern_rows(&self, d: &SpyData, id: u32) -> Vec<(i32, Vec<u8>, bool)> {
+        let s = &self.screen;
+        let list = match id {
+            0x10 => List::Mission,
+            3 => List::Kill,
+            0x11 => List::Race,
+            0x12 => List::Target { mode: d.mission(s.plan.mission).kind, second: false },
+            0x13 => List::Target { mode: 2, second: true },
+            _ => return Vec::new(),
+        };
+        s.rows(d, &self.texts, list)
+            .into_iter()
+            .map(|(v, text, _)| {
+                let off = match list {
+                    // Dearer than the treasury stays pickable: `choose` says why it is refused.
+                    List::Mission => d.tutorial_forbids(v),
+                    List::Race => d.rules.ai.design.race_role(d.races[v.clamp(0, 18) as usize]) == 5,
+                    List::Target { mode: 5, .. } => d.money < d.cost(s.plan.mission, v) as f64,
+                    List::Kill => v == 0,
+                    List::Target { .. } => false,
+                };
+                (v, text, off)
+            })
+            .collect()
     }
 
     pub fn press(&mut self, d: &SpyData, at: [f32; 2]) -> Vec<Command> {
@@ -1299,10 +1402,20 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     v.acttime = o.acttime;
     v.advance(r, &l.install, &d, o.ui_frames.max(1) as u64, t);
     let size = [o.size.0 as f32, o.size.1 as f32];
+    v.modern = o.modern_spy;
+    hud.modern_bar = o.modern_spy;
     let mut frame = v.build(hud, &d, size, l.install.lang() == ig2_formats::text::Lang::Hu);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Spy, t);
-    hud.snapshot_pointer(&mut frame, size, o.mouse);
-    let rgba = r.draw_to_image(&frame, o.size, t);
+    let rgba = if o.modern_spy {
+        let page = crate::spy_modern::view(hud, &world.game.state, &l.tables, &world.ui, &v, &d, size, None, t);
+        let mut st = crate::spy_modern::State::default();
+        crate::render::page_over(o, &l.install, r, &frame, hud, t, |ctx| {
+            crate::spy_modern::show(ctx, &page, &mut st);
+        })
+    } else {
+        hud.snapshot_pointer(&mut frame, size, o.mouse);
+        r.draw_to_image(&frame, o.size, t)
+    };
     crate::assets::write_snapshot(out, o, &rgba)?;
     let s = &v.screen;
     println!(

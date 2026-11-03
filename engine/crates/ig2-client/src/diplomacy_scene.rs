@@ -44,6 +44,9 @@ pub struct DiplomacyScene {
     pub acttime: Option<f32>,
     /// `ycenter` (`250 − 10·dipframe/80` when the screen animates, §3.1).
     yc: f32,
+    /// Ours (ADR 0076): under the modern panels only the ring and the leader, raised to the board's centre (virtual
+    /// y 194); no background picture, grid or head cages (the contacts are a list).
+    pub modern: bool,
 }
 
 impl DiplomacyScene {
@@ -58,6 +61,7 @@ impl DiplomacyScene {
             spin0: [[0.0; 3]; HEADS],
             acttime: None,
             yc: 240.0,
+            modern: false,
         };
         let mut seed = 0x2545_f491u32;
         for o in &mut s.spin0 {
@@ -165,9 +169,10 @@ impl DiplomacyScene {
         let s = 1.0 - fr / 80.0;
         let moving = (scr.animated && !scr.opened) || scr.closing;
         let lift = if moving { (s * 29.0).trunc() } else { 0.0 };
-        self.yc = if scr.animated { 250.0 - fr * 10.0 / 80.0 } else { 240.0 };
+        self.yc = if scr.animated { 250.0 - fr * 10.0 / 80.0 } else { 240.0 } - if self.modern { 46.0 } else { 0.0 };
         // `Copy3hatterkep(0x34, grey 255 − 128·dipframe/80)`: the picture over the viewport (half bright once open).
-        if let Some(bg) = self.background {
+        let modern = self.modern;
+        if let Some(bg) = self.background.filter(|_| !modern) {
             let w = 640.0 * vv.k;
             let g = (255 - (fr / 80.0 * 128.0) as i32) as f32 / 255.0;
             f.push(bg, Blend::GammaAlpha, Instance::new(kind::SPRITE, vv.px(320.0, 240.0), [w.max(size[0]) / 2.0, size[1] / 2.0], [g, g, g, 1.0]));
@@ -193,7 +198,7 @@ impl DiplomacyScene {
             let alpha = if fr <= 40.0 { 1.0 - (1.35 - fr * 2.0 / 80.0).clamp(0.0, 1.0) } else { 1.0 };
             // Only the ambient light reaches the grid [obs: a uniform `racsszin` × 0x14 on the capture].
             let from = grid.len();
-            for p in m.parts.iter().filter(|p| p.path.split('/').nth(1) == Some(first.as_str())) {
+            for p in m.parts.iter().filter(|p| !modern && p.path.split('/').nth(1) == Some(first.as_str())) {
                 self.wire(p, &t, &base, false, &mut grid);
             }
             for g in &mut grid[from..] {
@@ -225,7 +230,7 @@ impl DiplomacyScene {
             let (s, j) = (s as f64, (k / 2) as f64);
             [h[0] + ((s * 3.0 + j).sin() * 820.0 * s) as f32, h[1] + ((s * 4.0 + j).cos() * 500.0 * s) as f32, h[2]]
         };
-        for (i, h) in d.heads.iter().enumerate().take(HEADS) {
+        for (i, h) in d.heads.iter().enumerate().take(if self.modern { 0 } else { HEADS }) {
             let alive = v.alive_slot(i) || !scr.opened;
             let spin = if alive { 0.02 * frames } else { -0.005 * frames };
             let o = self.spin0[i];

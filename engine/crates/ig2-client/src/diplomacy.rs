@@ -156,6 +156,11 @@ impl Menu {
             p[0] >= x0 as f32 && p[0] < (x0 + cw) as f32 && p[1] >= (y0 - half) as f32 && p[1] < (y0 + half + fh) as f32
         })
     }
+    /// A point inside entry `i` (its text's start, half a line down): where a press on it lands.
+    pub fn row_point(&self, m: &Metrics, i: usize) -> [f32; 2] {
+        let [x, y] = self.text_at(m, i);
+        [x + 2.0, y + m.height[self.font.min(4)] as f32 / 2.0]
+    }
     /// Where entry `i`'s text starts.
     fn text_at(&self, m: &Metrics, i: usize) -> [f32; 2] {
         let per = self.per_column(m).max(1);
@@ -478,7 +483,7 @@ impl View {
         let e = self.empire(k);
         (0..19).contains(&e) && self.alive[e as usize]
     }
-    fn rel(&self, a: usize, b: usize) -> Relation {
+    pub fn rel(&self, a: usize, b: usize) -> Relation {
         self.relations.get(a).map_or_else(Relation::default, |r| r[b.min(18)])
     }
     fn raw_i32(&self, k: usize, o: usize) -> i32 {
@@ -1574,7 +1579,7 @@ fn terms_hold(v: &View, state: &SaveState, k: usize) -> bool {
 }
 
 /// `GetKnownPlanets`: the planets `e` owns that the human sees (`+0xd8 + 2·EN > 0`).
-fn known_planets(state: &SaveState, en: usize, e: usize) -> usize {
+pub fn known_planets(state: &SaveState, en: usize, e: usize) -> usize {
     let m = &state.mem;
     let n = m.i32(va::PLANET_COUNT).max(0) as usize;
     (1..=n)
@@ -1639,7 +1644,36 @@ impl Open {
         let v = View::read(state);
         let vv = Virtual::new(size);
         self.scene.draw(f, r, install, rules, &self.screen, &v, &vv, size, time);
-        self.screen.draw(f, font, hud.white, self.design, &vv, &hud.palette, &v, &self.texts, &hud.texts, &hud.empire_names, rules, state);
+        if !self.scene.modern {
+            self.screen.draw(f, font, hud.white, self.design, &vv, &hud.palette, &v, &self.texts, &hud.texts, &hud.empire_names, rules, state);
+        }
+    }
+
+    /// Ours (ADR 0076): the modern page's pick of a menu path `[(menu, row), …]` (root first), replayed as the
+    /// original's player would make it: a press on the root row, the button held over each sub-menu's row as the
+    /// cascade places it, the release on the last (`run_cascade`); a one-level menu takes the press (`run_plain`).
+    pub fn pick(&mut self, state: &SaveState, hud: &crate::ui::Hud, rules: &ig2_rules::Rules, path: &[(usize, usize)]) -> Vec<Command> {
+        let mut out = Vec::new();
+        let at = |s: &Screen, (id, row): (usize, usize)| s.menus.get(id).map_or([-1e4; 2], |m| m.row_point(&s.metrics, row));
+        let Some(&first) = path.first() else { return out };
+        // The release that went by since the last press (`LenyomasraVarni` waits for one, §7 step 5).
+        out.extend(self.input(state, hud, rules, &Input { at: [-1e4; 2], released: true, ..Default::default() }));
+        out.extend(self.input(state, hud, rules, &Input { at: at(&self.screen, first), pressed: true, held: true, ..Default::default() }));
+        for &step in &path[1..] {
+            out.extend(self.input(state, hud, rules, &Input { at: at(&self.screen, step), held: true, ..Default::default() }));
+        }
+        let last = *path.last().unwrap_or(&first);
+        out.extend(self.input(state, hud, rules, &Input { at: at(&self.screen, last), released: true, ..Default::default() }));
+        out
+    }
+
+    /// Ours (ADR 0076): the modern page's press on contact `k` (`CheckAndColorize`: at its head).
+    pub fn select(&mut self, state: &SaveState, hud: &crate::ui::Hud, rules: &ig2_rules::Rules, k: usize) -> Vec<Command> {
+        let Some(h) = rules.diplomacy_screen.heads.get(k) else { return Vec::new() };
+        let at = [h[0] + 340.0 - if k > 3 { 30.0 } else { 0.0 }, h[1] + 240.0];
+        let mut out = self.input(state, hud, rules, &Input { at, pressed: true, held: true, ..Default::default() });
+        out.extend(self.input(state, hud, rules, &Input { at, released: true, ..Default::default() }));
+        out
     }
 }
 

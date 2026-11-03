@@ -42,6 +42,8 @@ pub enum Act {
     /// The money triangle (29) at a virtual point, the spending limit (32) at a virtual x.
     Triangle([f32; 2], Press),
     Limit(f32, Press),
+    /// Ours (ADR 0076): the colony screen of the human's planet `p` (the board's Colony under the globe).
+    Colony(usize),
 }
 
 /// An empire met: its column's number, name, the relation's colour, its own colour, the original race whose leader
@@ -100,6 +102,8 @@ pub struct Detail {
     pub owner: (String, Color32),
     pub globe: u8,
     pub rows: Vec<DetailRow>,
+    /// The human's planet's number: its colony screen is a press away.
+    pub colony: Option<usize>,
 }
 
 /// The human's money: the spending limit (label, text, the bar's part) and the triangle (corner labels, shares, the
@@ -124,6 +128,7 @@ pub struct Labels {
     pub planet_cols: [String; 3],
     pub fleet_cols: [String; 3],
     pub back: String,
+    pub colony: String,
     pub exit: String,
     pub row_tip: String,
     pub charts: String,
@@ -205,7 +210,7 @@ impl Pics {
         }
     }
 
-    fn head(&self, r: usize) -> Option<&TextureHandle> {
+    pub(crate) fn head(&self, r: usize) -> Option<&TextureHandle> {
         self.heads.get(r.wrapping_sub(1)).and_then(Option::as_ref)
     }
 
@@ -731,6 +736,12 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
     let name = Rect::from_min_size(pos2(left.left(), pic.bottom() + 14.0), vec2(left.width(), 32.0));
     Text::new(&d.name.0, Font::HEADING.sized(24.0).weight(Weight::Medium)).center().shrink(16.0).color(k.ink).paint(ui, name);
     Text::new(&d.owner.0, Font::DATA.upper(true)).center().shrink(11.0).color(d.owner.1).paint(ui, name.translate(vec2(0.0, 32.0)).with_max_y(name.bottom() + 52.0));
+    if let Some(p) = d.colony {
+        let b = Rect::from_center_size(pos2(left.center().x, name.bottom() + 76.0), vec2(120.0, 34.0));
+        if either_click(&ui.put(b, ds::Plate::new(&v.labels.colony).font(ds::Plate::FONT.sized(15.0)).height(34.0).width(120.0))) {
+            acts.push(Act::Colony(p));
+        }
+    }
     let table = Rect::from_min_max(pos2(left.right() + 24.0, inner.top()), inner.right_bottom());
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(table).layout(egui::Layout::top_down(egui::Align::Min)));
     egui::ScrollArea::vertical().id_salt("imh-detail-rows").auto_shrink([false; 2]).show(&mut child, |ui| {
@@ -750,7 +761,7 @@ fn either_click(r: &egui::Response) -> bool {
 fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     const LABEL_W: f32 = 150.0;
-    let h = if r.setting.is_some() { 30.0 } else { 22.0 };
+    let h = if r.setting.is_some() { 26.0 } else { 22.0 };
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
     let base = ds::fit::baseline(rect, Font::DATA);
     Text::new(r.label.trim_end_matches([':', ' ']), Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, rect.with_max_x(rect.left() + LABEL_W - 12.0));
@@ -759,16 +770,18 @@ fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
         Some(s) => {
             let cur = s.items.iter().find(|i| i.0 == s.current).map_or(String::new(), |i| i.1.clone());
             let mut c = ui.new_child(egui::UiBuilder::new().max_rect(vals));
-            ds::dropdown(&mut c, ("imh-setting", s.hot), &cur, vals.width() - 8.0, |ui| {
-                for (i, n) in &s.items {
-                    if ui.selectable_label(*i == s.current, n).clicked() && *i != s.current {
-                        acts.push(Act::Setting(s.hot, *i));
-                    }
+            let rows: Vec<(i32, String, bool)> = s.items.iter().map(|(i, n)| (*i, n.clone(), false)).collect();
+            if let (_, Some(Some(i))) = ds::select(&mut c, ("imh-setting", s.hot), &cur, &rows, vec2(vals.width() - 8.0, 24.0), Font::DATA.sized(15.0), k.info) {
+                if i != s.current {
+                    acts.push(Act::Setting(s.hot, i));
                 }
-            });
+            }
         }
         None => {
-            // The values side by side, each as wide as it needs, the last cut to what is left.
+            // The values side by side, each as wide as it needs, the last cut to what is left; none: the board's dash.
+            if r.values.iter().all(|v| v.0.trim().is_empty()) {
+                Text::new("—", Font::DATA).baseline(base).color(k.ink_muted).paint(ui, vals);
+            }
             let mut x = vals.left();
             for (t, c) in &r.values {
                 let fit = Text::new(t, Font::DATA).baseline(base).color(*c).paint(ui, Rect::from_min_max(pos2(x, rect.top()), rect.right_bottom()));
@@ -1052,7 +1065,11 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
             Some(Entry::Fleet(i)) if d.fleets[i].owner as usize == en => (owner.0, ds::tokens().own),
             _ => owner,
         };
-        Detail { name, owner, globe, rows }
+        let colony = match ui.detail_entry(d, en) {
+            Some(Entry::Planet(i)) if d.planets[i].owner as usize == en => Some(i + 1),
+            _ => None,
+        };
+        Detail { name, owner, globe, rows, colony }
     });
     let series = (1..=8)
         .filter(|&k| s.known[k])
@@ -1085,6 +1102,7 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
             planet_cols: [ours("Population"), ours("Morale"), ours("Alerts")],
             fleet_cols: [ours("Ships"), ours("Orders"), ours("Speed")],
             back: ours("Back"),
+            colony: ours("Colony"),
             exit: ours("Exit"),
             unknown: "—".into(),
             row_tip: tip(1),

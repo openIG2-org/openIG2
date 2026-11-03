@@ -952,3 +952,61 @@ pub fn confirm_box(ui: &mut Ui, width: f32, title: &str, body: &str, yes: &str, 
     });
     answer
 }
+
+/// A select field (the boards' dropdowns): the value in a dark glass box with a chevron; a press (either button)
+/// opens its rows under it in a deep panel, greyed rows take no pick, a press elsewhere closes it. Gives
+/// `Some(None)` when it opens and `Some(Some(value))` for a row picked.
+pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, String, bool)], size: Vec2, font: Font, ink: Color32) -> (Response, Option<Option<i32>>) {
+    let k = tokens();
+    let id = ui.id().with(id);
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let open = ui.memory(|m| m.data.get_temp::<bool>(id).unwrap_or(false));
+    let live = ui.is_enabled();
+    let hot = hover_t(ui.ctx(), resp.id, live && resp.hovered()).max(open as u8 as f32);
+    let p = ui.painter();
+    p.rect_filled(r, RADIUS_PLATE, k.glass_deep);
+    rim(p, r, RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hot));
+    Text::new(value, font).shrink(font.size * 0.7).color(if live { ink } else { k.ink_muted }).paint(ui, Rect::from_min_max(r.min + egui::vec2(12.0, 0.0), r.max - egui::vec2(32.0, 0.0)));
+    let c = egui::pos2(r.right() - 18.0, r.center().y);
+    let d = if open { -3.0 } else { 3.0 };
+    ui.painter().line(vec![c + egui::vec2(-5.0, -d * 0.5), c + egui::vec2(0.0, d * 0.5), c + egui::vec2(5.0, -d * 0.5)], Stroke::new(1.5f32, k.ink_silver));
+    let resp = if live { resp.on_hover_cursor(egui::CursorIcon::PointingHand) } else { resp };
+    let mut out = None;
+    let mut open = open;
+    if live && (resp.clicked() || resp.secondary_clicked()) {
+        open = !open;
+        ui.memory_mut(|m| m.data.insert_temp(id, open));
+        if open {
+            out = Some(None);
+        }
+    }
+    // The rows show in the frame the field opens (egui's first frame of an area only sizes it).
+    if !open || !live {
+        return (resp, out);
+    }
+    let rh = (size.y - 10.0).max(26.0);
+    let list = egui::Area::new(id.with("rows")).order(egui::Order::Foreground).fixed_pos(r.left_bottom() + egui::vec2(0.0, 4.0)).show(ui.ctx(), |ui| {
+        let hgt = (rows.len().max(1) as f32 * rh + 12.0).min(420.0);
+        let (frame, _) = ui.allocate_exact_size(egui::vec2(size.x, hgt), Sense::hover());
+        super::paint_panel(ui.painter(), frame, super::PanelKind::Deep, 0.97);
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(frame.shrink(6.0)).layout(egui::Layout::top_down(Align::Min)));
+        egui::ScrollArea::vertical().id_salt(id.with("scroll")).auto_shrink([false; 2]).show(&mut c, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (val, text, off) in rows {
+                let (rr, row) = ui.allocate_exact_size(egui::vec2(size.x - 24.0, rh), Sense::click());
+                let hot = hover_t(ui.ctx(), row.id, row.hovered() && !off);
+                row_back(ui, rr, hot, text == value);
+                Text::new(text, font.sized(font.size - 2.0)).shrink(font.size * 0.6).color(if *off { k.ink_muted } else { k.ink }).paint(ui, rr.shrink2(egui::vec2(8.0, 0.0)));
+                let row = row.on_hover_cursor(if *off { egui::CursorIcon::NotAllowed } else { egui::CursorIcon::PointingHand });
+                if (row.clicked() || row.secondary_clicked()) && !off {
+                    out = Some(Some(*val));
+                }
+            }
+        });
+    });
+    let at = ui.input(|i| i.pointer.interact_pos()).unwrap_or_default();
+    if matches!(out, Some(Some(_))) || (ui.input(|i| i.pointer.any_click()) && !r.contains(at) && !list.response.rect.contains(at)) {
+        ui.memory_mut(|m| m.data.insert_temp(id, false));
+    }
+    (resp, out)
+}

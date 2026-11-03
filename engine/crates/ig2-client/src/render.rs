@@ -1108,12 +1108,32 @@ fn halve(out: &mut Vec<Vec<u8>>, w: usize, h: usize) -> (usize, usize) {
     (nw, nh)
 }
 
+/// Ours (ADR 0076): a modern page's panels over `frame` (three egui frames, the pointer at `--mouse`).
+pub(crate) fn page_over(o: &crate::Options, install: &ig2_formats::Install, r: &mut Renderer, frame: &Frame, hud: &crate::ui::Hud, t: f32, mut show: impl FnMut(&egui::Context)) -> Vec<u8> {
+    let size = [o.size.0 as f32, o.size.1 as f32];
+    let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(install);
+    let style = crate::starmap_modern::style(hud, size);
+    let k = crate::gui::Gui::scale(o.size.1);
+    for _ in 0..3 {
+        if let Some(m) = o.mouse {
+            gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+        }
+        gui.run(o.size, &style, |ctx| show(ctx));
+    }
+    if o.mouse.is_some() {
+        println!("pointer kind {}", gui.pointer_kind());
+    }
+    r.draw_to_image_over(frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))
+}
+
 /// `--snapshot --screen diplomacy`: the diplomacy screen at rest (re/screens/diplomacy.md), or with `--anim-frame F`
 /// its opening held at frame F after 1000 frames (run_screendiff.py's wait, §3.1).
 fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
     let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, state);
     d.scene.acttime = o.acttime;
+    d.scene.modern = o.modern_diplomacy;
+    hud.modern_bar = o.modern_diplomacy;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     match o.spy_frame {
@@ -1125,13 +1145,30 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
             d.screen.settle();
             let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input::default());
             d.screen.settle();
+            if let Some(path) = &o.dip_pick {
+                let _ = d.pick(state, hud, &l.tables, path);
+                let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input { at: [-1e4; 2], ..Default::default() });
+                for _ in 0..200 {
+                    d.screen.ui_tick();
+                }
+                let _ = d.input(state, hud, &l.tables, &crate::diplomacy::Input { at: [-1e4; 2], ..Default::default() });
+            }
         }
     }
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     d.draw(&mut frame, r, &l.install, &l.tables, hud, state, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
-    hud.snapshot_pointer(&mut frame, size, o.mouse);
-    let rgba = r.draw_to_image(&frame, o.size, t);
+    let rgba = if o.modern_diplomacy {
+        let v = crate::diplomacy_modern::view(hud, state, &l.tables, &world.ui, &d, None, t);
+        let mut st = crate::diplomacy_modern::State::default();
+        page_over(o, &l.install, r, &frame, hud, t, |ctx| {
+            st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, &l.install));
+            crate::diplomacy_modern::show(ctx, &v, &mut st);
+        })
+    } else {
+        hud.snapshot_pointer(&mut frame, size, o.mouse);
+        r.draw_to_image(&frame, o.size, t)
+    };
     crate::assets::write_snapshot(out, o, &rgba)?;
     let v = crate::diplomacy::View::read(state);
     println!("{}: diplomacy | selected {} | contacts {:?} | menus {:?}", out.display(), d.screen.selected, v.slots.iter().map(|s| (s.empire, s.waiting, s.answered)).collect::<Vec<_>>(), d.screen.shown);
@@ -1661,6 +1698,12 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     }
     let tips = crate::trade::tips(&hud.texts);
     let mut scene = crate::trade_scene::TradeScene::new(r);
+    scene.set_modern(o.modern_trade.then_some(crate::trade_modern::WELL_AT));
+    hud.modern_bar = o.modern_trade;
+    if o.modern_trade {
+        // The modern page's first row picked, so the hull and its card show.
+        s.modern_pick(state, 0, 0);
+    }
     for _ in 0..o.ui_frames.max(1) {
         s.step(state);
         s.tooltip(&tips, s.frames as f64 * 10.0);
@@ -1669,10 +1712,20 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     scene.draw(&mut frame, r, &l.install, &l.tables, &s, size);
-    hud.draw_trade(&mut frame, &s, state, &l.tables, &tips, size, t);
+    if !o.modern_trade {
+        hud.draw_trade(&mut frame, &s, state, &l.tables, &tips, size, t);
+    }
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
-    hud.snapshot_pointer(&mut frame, size, o.mouse);
-    let rgba = r.draw_to_image(&frame, o.size, t);
+    let rgba = if o.modern_trade {
+        let v = crate::trade_modern::view(hud, state, &l.tables, &world.ui, &s, None, t);
+        let mut st = crate::trade_modern::State::default();
+        page_over(o, &l.install, r, &frame, hud, t, |ctx| {
+            crate::trade_modern::show(ctx, &v, &mut st);
+        })
+    } else {
+        hud.snapshot_pointer(&mut frame, size, o.mouse);
+        r.draw_to_image(&frame, o.size, t)
+    };
     crate::assets::write_snapshot(out, o, &rgba)?;
     println!("{}: trade | ports {:?} | which {} kind {} qty {} planet {} | traframe {} open {}", out.display(), crate::trade::ports(state), s.which, s.kind, s.qty, s.planet, s.frame, s.opened);
     Ok(())
@@ -1698,6 +1751,8 @@ fn trade_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     s.tip.moved([320.0, 240.0]);
     let tips = crate::trade::tips(&hud.texts);
     let mut scene = crate::trade_scene::TradeScene::new(r);
+    scene.set_modern(o.modern_trade.then_some(crate::trade_modern::WELL_AT));
+    hud.modern_bar = o.modern_trade;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();

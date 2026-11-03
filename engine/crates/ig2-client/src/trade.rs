@@ -98,6 +98,9 @@ fn i32_at(r: &[u8], o: usize) -> i32 {
     i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
 }
 
+/// Ours (ADR 0076): the offer as the modern page shows it: list, row, quantity, left, total, destination, days, OK.
+pub type ModernOffer = (usize, i32, i32, i32, i32, i32, i32, bool);
+
 /// The market as the screen reads it: `TradeTervek[0..=40]` (the lookups read one past the offers, as the exe's do)
 /// and `TradeHanyTradeCuccVan`.
 pub struct Market {
@@ -842,6 +845,139 @@ impl Trade {
 
     /// The trade screen's keyboard handler (exe 0x609ae0, key down only): numpad + / − step the quantity, ↑/↓ the
     /// row in the list in use (`TradeIgazit…Poz`, `TradeSelect…`), → / ← switch to the other list when it has rows.
+    /// Ours (ADR 0076): the hull's slide out of its place (`ForgatTradeAlap`'s `s`).
+    pub fn hull_slide(&self) -> f32 {
+        self.hull_x - (self.xa - 190.0)
+    }
+
+    /// Ours (ADR 0076): the modern page's offers of class `kind` (0 ships, 1 vehicles) in order: the name, the unit
+    /// price and the count on offer (`TradeDisplayVehicle`'s columns).
+    pub fn modern_rows(state: &SaveState, kind: usize) -> Vec<(Vec<u8>, i32, i32)> {
+        let m = Market::of(state);
+        let t = kind as i16 + 1;
+        let mut out = Vec::new();
+        let mut i = m.next(t, 0);
+        while i < m.n && out.len() < OFFERS {
+            if let Some(r) = m.offers.get(i) {
+                out.push((crate::design::name(r).to_vec(), m.price(i, 1), i32_at(r, 0x6c)));
+            }
+            i = m.next(t, i + 1);
+        }
+        out
+    }
+
+    /// Ours (ADR 0076): the modern page's press on row `row` of list `kind` (hot-spots 0x23/0x24: the list's window
+    /// follows, the model changes).
+    pub fn modern_pick(&mut self, state: &SaveState, kind: usize, row: i32) {
+        let m = Market::of(state);
+        let counts = m.counts();
+        if !self.opened || self.closing || counts[kind.min(1)] < 1 {
+            return;
+        }
+        self.sounds.push(CLICK);
+        let k = kind.min(1);
+        self.kind = k;
+        let mut sel = row;
+        if sel < self.pos[k] || sel >= self.pos[k] + ROWS {
+            self.pos[k] = (sel - ROWS / 2).clamp(0, (counts[k] - ROWS).max(0));
+        }
+        self.fit_row(k, &mut sel, counts[k]);
+        self.which = sel;
+        self.select(&m, counts);
+        let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * en(state) as u32);
+        self.row_change(&m, deliveries);
+    }
+
+    /// Ours (ADR 0076): the modern page's ± (hot-spots 0x19/0x1a), with their click.
+    pub fn modern_qty(&mut self, state: &SaveState, more: bool) {
+        if self.opened && !self.closing && self.which != NONE {
+            self.sounds.push(CLICK);
+            self.key(state, if more { Key::More } else { Key::Less });
+        }
+    }
+
+    /// Ours (ADR 0076): the modern page's destination pick (hot-spot 0x1b's release on a port).
+    pub fn modern_destination(&mut self, state: &SaveState, p: i32) {
+        if self.opened && !self.closing && ports(state).contains(&p) {
+            self.sounds.push(CLICK);
+            self.planet = p;
+            self.eta = state.mem.i32(va::TRADE_ETA_DAYS);
+        }
+    }
+
+    /// Ours (ADR 0076): the modern page's OK (hot-spot 0x1c), when the original's would be live.
+    pub fn modern_buy(&mut self, state: &SaveState) {
+        let m = Market::of(state);
+        if !self.opened || self.closing || self.which == NONE || !self.can_buy(state, &m) || self.pending.is_some() {
+            return;
+        }
+        self.sounds.push(SoundId::global(2));
+        let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * en(state) as u32);
+        let i = self.offer(&m);
+        let mut msg = Vec::with_capacity(DELIVERY);
+        for v in [self.planet, self.eta, i, self.qty, m.price(i.max(0) as usize, self.qty)] {
+            msg.extend(v.to_le_bytes());
+        }
+        msg.extend_from_slice(m.offers.get(i.max(0) as usize).map_or(&[0; RECORD][..], |r| &r[..]));
+        self.orders.push(msg);
+        self.pending = Some(deliveries);
+    }
+
+    /// Ours (ADR 0076): what the modern page shows of the offer: the row chosen (kind, row), the quantity and how
+    /// many are left, the total, the destination (−1 none) and its days, OK live.
+    pub fn modern_offer(&self, state: &SaveState) -> Option<ModernOffer> {
+        let m = Market::of(state);
+        (self.which != NONE).then(|| (self.kind, self.which, self.qty, self.left, self.unit_price.wrapping_mul(self.qty), self.planet, self.eta, self.can_buy(state, &m) && self.pending.is_none()))
+    }
+
+    /// Ours (ADR 0076): the shown offer's card (`card`): the hull's tech, its value, firepower and speed, the used
+    /// pods' techs.
+    pub fn card_stats(&self, state: &SaveState, rules: &ig2_rules::Rules) -> Option<(usize, i32, i32, i32, Vec<usize>)> {
+        let m = Market::of(state);
+        let r = m.offers.get(self.shown_offer.max(0) as usize)?;
+        if self.shown_offer < 0 {
+            return None;
+        }
+        let techs = state.tech();
+        let hull_tech = i32_at(r, 0x48);
+        let owner = i16_at(r, 0x40);
+        let race = rules.race_role(state.mem.u8(va::PLAYER_FAJ + owner.clamp(0, 19) as u32) as usize) as u8;
+        let price = |t: i32| ig2_sim::colony_side::price(&techs, race, t.clamp(0, 192) as usize);
+        let mut value = price(hull_tech);
+        for k in 1..=i32_at(r, 0x4c).clamp(0, 12) as usize {
+            let pt = r[0x50 + k] as i8 as i32;
+            if pt != 0 {
+                value = value.wrapping_add(price(pt).wrapping_mul(r[0x5d + k] as i32));
+            }
+        }
+        if r[0x36] != 0 {
+            value /= 5;
+        }
+        let speed = f32::from_le_bytes(r[0x3c..0x40].try_into().unwrap());
+        let pods = (1..=crate::design::pod_count(rules, owner, i32_at(r, 0x44)).min(12)).map(|k| r[0x50 + k] as usize).filter(|&t| t != 0).collect();
+        Some((hull_tech.max(0) as usize, value, i32_at(r, 0x2c), ((speed * 100.0) as f64 + 0.5) as i32, pods))
+    }
+
+    /// Ours (ADR 0076): the human's deliveries under way: the planet's name, the days left, the offer's name, the
+    /// amount (`TradeGfx2D_2`'s block B).
+    pub fn deliveries(state: &SaveState) -> Vec<(Vec<u8>, i32, Vec<u8>, i32)> {
+        let e = en(state);
+        let count = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * e as u32).clamp(0, 50);
+        let base = va::TRADE_DELIVERIES + e as u32 * ig2_sim::save::TRADE_EMPIRE_STRIDE;
+        (0..count as usize)
+            .map(|i| {
+                let at = base + (i * DELIVERY) as u32;
+                let rec = state.mem.read(at + 0x14, RECORD);
+                (planet_name(state, state.mem.i32(at)), state.mem.i32(at + 4), crate::design::name(&rec).to_vec(), state.mem.i32(at + 0xc))
+            })
+            .collect()
+    }
+
+    /// Ours (ADR 0076): the ports a delivery can go to, with their names (hot-spot 0x1b's list).
+    pub fn destinations(state: &SaveState) -> Vec<(i32, Vec<u8>)> {
+        ports(state).into_iter().map(|p| (p, planet_name(state, p))).collect()
+    }
+
     pub fn key(&mut self, state: &SaveState, k: Key) {
         let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * en(state) as u32);
         self.market_key(&Market::of(state), deliveries, k);

@@ -79,6 +79,9 @@ mod hud;
 mod icon;
 mod info_modern;
 mod messages_modern;
+mod diplomacy_modern;
+mod spy_modern;
+mod trade_modern;
 mod info_screen;
 mod kit;
 mod lighting;
@@ -244,6 +247,11 @@ pub struct Options {
     /// `--modern-design [--design-edit K]`: the design screen's modern panels (ADR 0075), modifying the chosen design
     /// with pod K's tech list open.
     pub modern_design: bool,
+    pub modern_diplomacy: bool,
+    /// `--dip-pick M,R;M,R…`: the diplomacy snapshot picks this menu path first (the modern page's replayed press).
+    pub dip_pick: Option<Vec<(usize, usize)>>,
+    pub modern_spy: bool,
+    pub modern_trade: bool,
     pub design_edit: Option<usize>,
     /// `--design-row N`: the list's row chosen first.
     pub design_row: Option<usize>,
@@ -397,6 +405,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
         stage_win: None,
         stage_queue: false,
         modern_design: false,
+        modern_diplomacy: false,
+        dip_pick: None,
+        modern_spy: false,
+        modern_trade: false,
         design_edit: None,
         design_row: None,
         watch: None,
@@ -534,6 +546,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--watch" => o.watch = Some(PathBuf::from(val()?)),
             "--stage-queue" => o.stage_queue = true,
             "--modern-design" => o.modern_design = true,
+            "--modern-diplomacy" => o.modern_diplomacy = true,
+            "--dip-pick" => {
+                let steps = val()?.split(';').map(|s| s.split_once(',').and_then(|(m, r)| Some((m.trim().parse().ok()?, r.trim().parse().ok()?)))).collect::<Option<Vec<_>>>();
+                o.dip_pick = Some(steps.ok_or("--dip-pick M,R;M,R")?);
+            }
+            "--modern-spy" => o.modern_spy = true,
+            "--modern-trade" => o.modern_trade = true,
             "--design-row" => o.design_row = Some(val()?.parse().map_err(|e| format!("--design-row: {e}"))?),
             "--design-edit" => o.design_edit = Some(val()?.parse().map_err(|e| format!("--design-edit: {e}"))?),
             "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),

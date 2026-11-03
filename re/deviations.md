@@ -36,6 +36,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 507 | colony, info mode under the modern panels | open-fix: the settings drop-downs open on a click and pick on a second click; the exe opens on the press and the held item picks on the release | yes | colony.md §12.2 |
 | 508 | colony, modern radar | open: on-screen zoom keys (held = numpad +/-) and a starmap key the exe lacks | no | colony.md §11.9 |
 | 509 | colony, info mode under the modern panels | open: a press anywhere off the modern panels is hot-spot 0x20; the exe's 0x20 is the whole screen under its panel's dead 0x1f | no | colony.md §12.2 |
+| 540 | trade, modern offer rows | open: no hold-and-drag re-pick on the offer rows (the original re-picks with the button held, hot-spots 0x23 and 0x24) | yes | ADR 0076 |
 
 ## Keep
 
@@ -116,6 +117,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 518 | modern main menu, entries | an entry acts when the button is released over it (either button); the original's rings and the classic panel act on the press frame (`IG2_gameUpdate`, exe 0x4e0440) | no | ADR 0078 |
 | 520 | starmap, modern long info's settings menus | the tax, autobuild and priority lists open over their field with the current value marked; the original's drop under the field with no mark; the choice made is the same | yes | ADR 0077 |
 | 523 | research and design, modern exit plates | the exit plate is the top bar's starmap pick (client only); the exe has no exit button on these screens (the top bar's keys, F-keys, Esc) | no | research.md §7, design.md §14 |
+| 537 | diplomacy, modern page | an Exit plate and scrolling contact cards (the original has neither); the menus open by click instead of press, drag and release (the pick is replayed as the original's press, drag and release); off = the original's | yes | ADR 0076 |
+| 538 | spy, modern page | the arrows jump to the next or previous agent, with no edge scrolling of the carousel; the lists are click dropdowns instead of press, drag and release; off = the original's | yes | ADR 0076 |
+| 539 | trade, modern page | all offers in one scrolling list instead of the 8-row window with scroll bars; the destination is a click dropdown instead of the hold-drag list; the pod list (hot-spot 0x25) is replaced by the weapons line on the card; OK fires on the release; off = the original's | yes | ADR 0076 |
 | 528 | space battle, modern HUD | the camera keys keep the original's six (top view, yaw left and right, the angled view, zoom, pitch), not the board's split zoom keys; the HUD's controls answer from the previous frame's layout | yes | ADR 0077 |
 
 ## Enhanced

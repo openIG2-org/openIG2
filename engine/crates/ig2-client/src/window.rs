@@ -288,6 +288,12 @@ struct App {
     info_acts: Vec<crate::info_modern::Act>,
     messages_modern: crate::messages_modern::State,
     messages_acts: Vec<crate::messages_modern::Act>,
+    diplomacy_modern: crate::diplomacy_modern::State,
+    diplomacy_acts: Vec<crate::diplomacy_modern::Act>,
+    spy_modern: crate::spy_modern::State,
+    spy_acts: Vec<crate::spy_modern::Act>,
+    trade_modern: crate::trade_modern::State,
+    trade_acts: Vec<crate::trade_modern::Act>,
     /// Ours (ADR 0071): the modern production view's and research screen's state, the acts of their last frame and the
     /// count button held (line, slot, plus).
     production_modern: crate::production_modern::State,
@@ -844,6 +850,12 @@ impl App {
             info_acts: Vec::new(),
             messages_modern: Default::default(),
             messages_acts: Vec::new(),
+            diplomacy_modern: Default::default(),
+            diplomacy_acts: Vec::new(),
+            spy_modern: Default::default(),
+            spy_acts: Vec::new(),
+            trade_modern: Default::default(),
+            trade_acts: Vec::new(),
             colony_acts: Vec::new(),
             production_modern: Default::default(),
             production_acts: Vec::new(),
@@ -1877,6 +1889,10 @@ impl App {
                 self.bar_act(b);
                 continue;
             }
+            if let Act::Colony(p) = a {
+                self.show_colony_screen(p);
+                continue;
+            }
             let Some(h) = &mut self.hud else { return };
             let (s, human) = (&self.world.ui, self.world.ui.human);
             let (d, ui) = (&s.info, &mut h.info);
@@ -1950,6 +1966,116 @@ impl App {
         }
     }
 
+    /// Ours (ADR 0076): the modern diplomacy screen is up (its option on, the screen shown with nothing over it).
+    fn diplomacy_modern_up(&self) -> bool {
+        self.display.modern_diplomacy && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Diplomacy) && self.diplomacy.is_some() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+    }
+
+    /// Ours (ADR 0076): one of the modern diplomacy, spy or trade screens is up; their panels own the whole screen.
+    fn pages_modern_up(&self) -> bool {
+        self.diplomacy_modern_up() || self.spy_modern_up() || self.trade_modern_up()
+    }
+
+    /// Ours (ADR 0076): the modern trade screen is up (its option on, the screen shown with nothing over it).
+    fn trade_modern_up(&self) -> bool {
+        self.display.modern_trade && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Trade) && self.trade.is_some() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+    }
+
+    /// The modern trade screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the
+    /// original's hot-spots' code (`Trade::modern_*`); OK's order leaves with the screen's next step.
+    fn trade_modern_apply(&mut self) {
+        use crate::trade_modern::Act;
+        if !self.trade_modern_up() {
+            self.trade_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.trade_acts) {
+            let state = &self.world.game.state;
+            match (a, &mut self.trade) {
+                (Act::Bar(b), _) => self.bar_act(b),
+                (Act::Row(k, row), Some(tr)) => tr.modern_pick(state, k, row),
+                (Act::Qty(more), Some(tr)) => tr.modern_qty(state, more),
+                (Act::Dest(p), Some(tr)) => tr.modern_destination(state, p),
+                (Act::Buy, Some(tr)) => tr.modern_buy(state),
+                (Act::Click, Some(tr)) => tr.sounds.push(crate::audio::CLICK),
+                _ => {}
+            }
+        }
+    }
+
+    /// Ours (ADR 0076): the modern spy screen is up (its option on, the screen shown with nothing over it).
+    fn spy_modern_up(&self) -> bool {
+        self.display.modern_spy && self.spy.is_some() && self.front.is_none() && self.spacewar.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+    }
+
+    /// The modern spy screen's acts of its last frame: the bar's as the starmap HUD's, the arrows as the keys, the
+    /// rest as the original's presses (`SpyView::modern_press`, `modern_select`).
+    fn spy_modern_apply(&mut self) {
+        use crate::spy_modern::Act;
+        if !self.spy_modern_up() {
+            self.spy_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.spy_acts) {
+            if let Act::Bar(b) = a {
+                self.bar_act(b);
+                continue;
+            }
+            let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
+            let Some(spy) = &mut self.spy else { return };
+            let orders = match a {
+                Act::Key(left) => {
+                    spy.key(&d, left);
+                    Vec::new()
+                }
+                Act::Pedestal(i) => spy.modern_select(&d, i),
+                Act::Click => {
+                    spy.click();
+                    Vec::new()
+                }
+                Act::Press(id) => spy.modern_press(&d, id, None),
+                Act::Pick(id, v) => spy.modern_press(&d, id, Some(v)),
+                Act::Bar(_) => Vec::new(),
+            };
+            drop(d);
+            let errors = spy.take_errors();
+            for c in orders {
+                self.world.send(c);
+            }
+            if let Some(e) = errors.into_iter().last() {
+                self.scroll_error(e);
+            }
+        }
+    }
+
+    /// The modern diplomacy screen's acts of its last frame: the bar's as the starmap HUD's, a contact and a menu
+    /// path as the original's presses on them (`diplomacy::Open::select`, `pick`).
+    fn diplomacy_modern_apply(&mut self) {
+        use crate::diplomacy_modern::Act;
+        if !self.diplomacy_modern_up() {
+            self.diplomacy_acts.clear();
+            return;
+        }
+        for a in std::mem::take(&mut self.diplomacy_acts) {
+            let cmds = match (a, &mut self.diplomacy, &self.hud) {
+                (Act::Bar(b), ..) => {
+                    self.bar_act(b);
+                    continue;
+                }
+                (Act::Select(k), Some(d), Some(h)) => d.select(&self.world.game.state, h, self.tables, k),
+                (Act::Pick(path), Some(d), Some(h)) => d.pick(&self.world.game.state, h, self.tables, &path),
+                (Act::Click, Some(d), _) => {
+                    d.screen.sounds.push(crate::audio::CLICK);
+                    continue;
+                }
+                _ => continue,
+            };
+            for c in cmds {
+                self.world.send(c);
+            }
+        }
+    }
+
     /// Ours (ADR 0071): the modern research screen is up (its option on, the screen shown with nothing over it).
     fn research_modern_up(&self) -> bool {
         self.display.modern_research && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some() && self.front.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none()
@@ -1967,7 +2093,7 @@ impl App {
 
     /// The pointer is over one of the modern HUD's panels (its last frame's).
     fn over_gui(&self) -> bool {
-        (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.research_modern_up() || self.design_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
+        (self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up()) && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area())
     }
 
     /// The pointer is over the modern colony's card (its last frame's).
@@ -5600,6 +5726,11 @@ impl App {
         let mut imv = None;
         let messages_modern = self.messages_modern_up();
         let mut mmv = None;
+        let mut dipv = None;
+        let dip_modern = self.diplomacy_modern_up();
+        let spy_modern = self.spy_modern_up();
+        let trade_modern = self.trade_modern_up();
+        let mut tmv = None;
         // Ours (ADR 0071): the production view's and the research screen's modern panels; the original's production
         // view (its 3D buttons, faders and texts) is not drawn under them.
         let production_modern = self.production_modern_up();
@@ -5713,15 +5844,30 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
+            spy.modern = spy_modern;
+            h.modern_bar = spy_modern;
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             frame.backdrop = backdrop;
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Spy, t);
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, 7);
             }
-            ov.draw(&mut frame, h, size);
+            let mut top = None;
+            if spy_modern {
+                let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                let mut v = crate::spy_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, spy, &d, size, gates, t);
+                v.bar.bind_keys(&self.bindings);
+                let style = crate::starmap_modern::style(h, size);
+                let (st, acts, band) = (&mut self.spy_modern, &mut self.spy_acts, g.band());
+                g.gui.run(band, &style, |ctx| acts.extend(crate::spy_modern::show(ctx, &v, st)));
+                let mut f = crate::render::Frame::new([0.0; 4]);
+                ov.draw(&mut f, h, size);
+                top = Some(f);
+            } else {
+                ov.draw(&mut frame, h, size);
+            }
             if let Ok(out) = g.surface.get_current_texture() {
-                self.backdrop.last = Some((g.present(frame, &out.texture, t), t));
+                self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
                 g.window.pre_present_notify();
                 out.present();
             }
@@ -5749,6 +5895,11 @@ impl App {
             }
             let vv = crate::font::Virtual::new(size);
             self.dip_input.at = vv.virtual_of(self.cursor);
+            // Ours (ADR 0076): under the modern page no pointer reaches the hidden menus and heads.
+            d.scene.modern = dip_modern;
+            if dip_modern {
+                self.dip_input = crate::diplomacy::Input { at: [-1e4; 2], ..Default::default() };
+            }
             for c in d.input(&self.world.game.state, h, self.tables, &self.dip_input) {
                 self.world.send(c);
             }
@@ -5796,7 +5947,7 @@ impl App {
             h.speed = (self.world.game.speed_level() - 1).clamp(0, 2) as usize;
             h.turbo = self.turbo;
             h.paused = paused;
-            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony) || (info_modern && screen == crate::ui::Screen::Info) || (messages_modern && screen == crate::ui::Screen::Messages) || (research_modern && screen == crate::ui::Screen::Research) || (design_modern && screen == crate::ui::Screen::Design);
+            h.modern_bar = (modern_bar && screen == crate::ui::Screen::Starmap) || (colony_modern && screen == crate::ui::Screen::Colony) || (info_modern && screen == crate::ui::Screen::Info) || (messages_modern && screen == crate::ui::Screen::Messages) || (dip_modern && screen == crate::ui::Screen::Diplomacy) || (trade_modern && screen == crate::ui::Screen::Trade) || (research_modern && screen == crate::ui::Screen::Research) || (design_modern && screen == crate::ui::Screen::Design);
             h.modern_info = info_modern && screen == crate::ui::Screen::Info;
             h.modern_messages = messages_modern && screen == crate::ui::Screen::Messages;
             if h.modern_messages {
@@ -5805,6 +5956,12 @@ impl App {
                 let mut m = crate::messages_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, gates, t, arrows);
                 m.bar.bind_keys(&self.bindings);
                 mmv = Some(m);
+            }
+            if let (true, crate::ui::Screen::Diplomacy, Some(d)) = (dip_modern, screen, &self.diplomacy) {
+                let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                let mut m = crate::diplomacy_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, d, gates, t);
+                m.bar.bind_keys(&self.bindings);
+                dipv = Some(m);
             }
             if h.modern_info {
                 let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
@@ -5877,8 +6034,16 @@ impl App {
                 (crate::ui::Screen::Trade, ..) => {
                     if let Some(tr) = &self.trade {
                         let sc = self.trade_scene.get_or_insert_with(|| crate::trade_scene::TradeScene::new(&mut g.renderer));
+                        sc.set_modern(trade_modern.then_some(crate::trade_modern::WELL_AT));
                         sc.draw(&mut frame, &mut g.renderer, &self.install, self.tables, tr, size);
-                        h.draw_trade(&mut frame, tr, &self.world.game.state, self.tables, &self.trade_tips, size, t);
+                        if trade_modern {
+                            let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
+                            let mut m = crate::trade_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, tr, gates, t);
+                            m.bar.bind_keys(&self.bindings);
+                            tmv = Some(m);
+                        } else {
+                            h.draw_trade(&mut frame, tr, &self.world.game.state, self.tables, &self.trade_tips, size, t);
+                        }
                     }
                 }
                 (crate::ui::Screen::Research, ..) if research_modern => {
@@ -5909,7 +6074,7 @@ impl App {
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, kep);
             }
-            if mv.is_none() && cmv.is_none() && imv.is_none() && rmv.is_none() && dmv.is_none() {
+            if mv.is_none() && cmv.is_none() && imv.is_none() && rmv.is_none() && dmv.is_none() && dipv.is_none() && tmv.is_none() {
                 ov.draw(&mut frame, h, size);
             }
         }
@@ -5955,6 +6120,25 @@ impl App {
             g.gui.run(band, &style, |ctx| {
                 st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, install));
                 acts.extend(crate::info_modern::show(ctx, iv, st));
+            });
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
+        if let (Some(tv), Some(h)) = (&tmv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band) = (&mut self.trade_modern, &mut self.trade_acts, g.band());
+            g.gui.run(band, &style, |ctx| acts.extend(crate::trade_modern::show(ctx, tv, st)));
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        }
+        if let (Some(dv), Some(h)) = (&dipv, &self.hud) {
+            let style = crate::starmap_modern::style(h, size);
+            let (st, acts, band, install) = (&mut self.diplomacy_modern, &mut self.diplomacy_acts, g.band(), &self.install);
+            g.gui.run(band, &style, |ctx| {
+                st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, install));
+                acts.extend(crate::diplomacy_modern::show(ctx, dv, st));
             });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
@@ -6032,6 +6216,9 @@ impl App {
         self.design_modern_apply();
         self.info_modern_apply();
         self.messages_modern_apply();
+        self.diplomacy_modern_apply();
+        self.spy_modern_apply();
+        self.trade_modern_apply();
     }
 }
 
@@ -6280,7 +6467,7 @@ impl ApplicationHandler for App {
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
-        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6816,6 +7003,8 @@ impl App {
     fn cursor_moved(&mut self, p: [f32; 2]) {
         if let Some(at) = self.spy_virtual(p) {
             let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
+            // Ours (ADR 0076): under the modern page the hidden screen sees a resting pointer (no edge scrolling).
+            let at = if self.spy_modern_up() { [320.0, 400.0] } else { at };
             if let Some(spy) = &mut self.spy {
                 spy.hover(&d, at);
             }
@@ -7008,7 +7197,7 @@ impl App {
             }
             return;
         }
-        let modern = self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.research_modern_up() || self.design_modern_up();
+        let modern = self.modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up();
         if !modern && self.top_menus_button(button, pressed) {
             return;
         }
@@ -7018,7 +7207,7 @@ impl App {
             return;
         }
         // Ours (ADR 0072): the modern info screen's panels own the whole screen; no press reaches the hidden hot-spots.
-        if self.info_modern_up() || self.messages_modern_up() {
+        if self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() {
             return;
         }
         if self.spy.is_some() && (bit == 0 || self.mouse_held & !bit != 0) {

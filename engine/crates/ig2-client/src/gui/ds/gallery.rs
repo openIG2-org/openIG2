@@ -94,6 +94,9 @@ pub fn page(ctx: &egui::Context, cursors: &[(Cursor, Vec<egui::TextureHandle>)])
                 ui.label("Drop-down");
                 dropdown(ui, "g-dd", "Modern", 180.0, |ui| ui.label("Klasszikus"));
             });
+            ui.add_space(SPACE[1]);
+            let rows = [(1, "Birodalominfo szerzés".to_string(), false), (2, "Nagyon hosszú küldetés neve, ami nem fér ki".to_string(), true)];
+            select(ui, "g-select", "Birodalominfo szerzés", &rows, egui::vec2(ui.available_width().min(360.0), 40.0), Font::BODY.sized(18.0), tokens().ink);
         });
         ui.add_space(SPACE[2]);
         card(ui, Some("Text that fits"), |ui| {
