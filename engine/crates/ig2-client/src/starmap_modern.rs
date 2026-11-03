@@ -10,7 +10,8 @@
 //! The look is a ship's console: small dark plates with cut corners, a hairline edge and corner marks in the player's
 //! colour, drawn icons with their keys in the tooltips. It is laid out in points and follows the shared UI scale.
 
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, Sense, Shadow, Shape, Stroke};
+use crate::gui::ds::{self, Font, IconKey, Plate, Text, Weight};
+use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Margin, Pos2, Rect, Sense, Shadow, Shape, Stroke, Vec2};
 
 /// The classic minimap's inside (`GFX_StarmapRadar`'s `HatarX1..Y2`, crate::starmap_hud::MINIMAP): its corner and size.
 const MINI: [f32; 4] = [274.0, 388.0, 92.0, 65.0];
@@ -224,6 +225,8 @@ impl View {
 #[derive(Debug, Clone, Default)]
 pub struct State {
     research_open: bool,
+    /// The long info's controls this frame (the pointer's remap).
+    placed: Option<Placed>,
 }
 
 /// The HUD's colours this frame.
@@ -257,8 +260,6 @@ pub(crate) fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
 /// The vector icons the HUD's buttons draw.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Icon {
-    Pause,
-    Play(u8),
     RotateLeft,
     RotateRight,
     ZoomIn,
@@ -298,22 +299,7 @@ pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
     let s = Stroke::new(1.4f32, c);
     let m = r.center();
     let k = r.height().min(r.width()) * 0.3;
-    let tri = |at: Pos2, w: f32| vec![pos2(at.x - w * 0.5, at.y - k), pos2(at.x + w * 0.5, at.y), pos2(at.x - w * 0.5, at.y + k)];
     match i {
-        Icon::Pause => {
-            for dx in [-0.45, 0.45] {
-                p.rect_filled(Rect::from_center_size(pos2(m.x + dx * k, m.y), vec2(k * 0.45, k * 1.9)), 0.0, c);
-            }
-        }
-        Icon::Play(n) => {
-            let w = k * 1.15;
-            let n = n.max(1) as f32;
-            let step = w * 0.62;
-            let x0 = m.x - (n - 1.0) * step / 2.0;
-            for j in 0..n as usize {
-                p.add(Shape::convex_polygon(tri(pos2(x0 + j as f32 * step, m.y), w), c, Stroke::NONE));
-            }
-        }
         Icon::RotateLeft | Icon::RotateRight => {
             let dir = if i == Icon::RotateLeft { -1.0 } else { 1.0 };
             let pts: Vec<Pos2> = (0..=16).map(|j| {
@@ -603,50 +589,84 @@ pub(crate) fn rule(ui: &mut egui::Ui, ink: &Ink, h: f32) {
     ui.painter().line_segment([pos2(r.center().x, r.top() + 2.0), pos2(r.center().x, r.bottom() - 2.0)], Stroke::new(1.0f32, ink.edge));
 }
 
-/// The HUD's points: the gap to the screen's edges, the top plates' buttons and inside margin.
+/// The HUD's points: the other screens' gap to the screen's edges.
 pub(crate) const EDGE: f32 = 8.0;
-pub(crate) const BUTTON: f32 = 20.0;
-pub(crate) const TOP: Margin = Margin { left: 9, right: 9, top: 5, bottom: 5 };
-/// The minimap's width (its height keeps the classic window's ratio), the camera buttons under it.
-const MAP_W: f32 = 168.0;
-const CAM: f32 = 19.0;
-const CAM_GAP: f32 = 2.0;
-const NAV: Margin = Margin::same(7);
-/// The message line's widest.
-const LINE_W: f32 = 520.0;
-/// The selection panel's inside width.
-const INFO_W: f32 = 228.0;
+/// The boards' gap of the corner panels to the screen's edges (`left: 24px; bottom: 24px`).
+const GAP: f32 = 24.0;
+/// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).
+const BAR_H: f32 = 44.0;
+const BAR_PAD: Vec2 = vec2(12.0, 4.0);
+const BAR_GAP: f32 = 10.0;
+/// A metal key (`.ig-key`) and a key group's width for `n` keys of `w` (2 apart, 2 inside).
+const KEY: Vec2 = vec2(34.0, 28.0);
+fn group_w(n: usize, w: f32) -> f32 {
+    n as f32 * w + (n.max(1) - 1) as f32 * 2.0 + 4.0
+}
+/// The research button's width (board: 300) and the readouts' and the ticker's height.
+const RESEARCH_W: f32 = 300.0;
+const LINE_H: f32 = 30.0;
+/// The selection card (`.ig-panel.deep`, 380 wide, 14 × 16 inside; the globe's column 96, 16 to the text).
+const CARD_W: f32 = 380.0;
+const CARD_SIDE: f32 = 96.0;
+/// The navigation plate (300 wide, 10 inside): the radar 280 wide in the classic window's ratio, the camera's keys.
+const NAV_W: f32 = 280.0;
+const CAM_KEY: Vec2 = vec2(32.0, 28.0);
+
+/// The ticker's and the research button's type (`15px/30px`, 0.06 em; `500 14px`, 0.08 em).
+const TICKER: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
+const BUTTON_TEXT: Font = Font { size: 14.0, line: 18.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+/// The card's name (22) and lines (`.ig-card .line`: 15, 0.12 em, upper case), its side ratios (500 12, 0.08 em).
+const CARD_NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: false };
+const CARD_LINE: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.12, upper: true, lcd: false };
+const RATIO: Font = Font { size: 12.0, line: 14.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+
+/// The hand over what a click works.
+fn hand(r: egui::Response) -> egui::Response {
+    if r.enabled() { r.on_hover_cursor(egui::CursorIcon::PointingHand) } else { r }
+}
 
 /// One frame of the HUD over the starmap; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = Vec::new();
     let ink = bar(ctx, v, st, &mut acts);
-    // The selection, bottom left.
-    if let Some(info) = &v.info {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(10, 8), |ui| info_card(ui, info, v, &ink, &mut acts));
-        });
+    st.placed = None;
+    // The selection, bottom left (the long info shows the planet itself).
+    if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
+        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(GAP, -GAP)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts));
     }
-    // The minimap with the camera's buttons under it, bottom right.
+    // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
-        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, NAV, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
+        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-GAP, -GAP)).fade_in(false).show(ctx, |ui| {
+            let at = ui.painter().add(Shape::Noop);
+            let r = egui::Frame::new().inner_margin(10).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
                 minimap(ui, mini, v, &ink, &mut acts);
                 camera_buttons(ui, v, &ink, &mut acts);
             });
+            ds::behind(ui, at, |p| metal_plate(p, r.response.rect, 18));
         });
     } else {
         acts.push(Act::Hold(None));
     }
-    menus(ctx, &v.menus, &ink);
+    menus(ctx, v, st, &ink, &mut acts);
     acts
 }
 
-/// The top bar's plates (time, date and money; the message line; the research and the screens), shared with the
-/// modern colony screen (ADR 0070); the frame's colours.
+/// The cast-metal plate (the navigation's: `radial-gradient(ellipse at 50% 0%, metal-light, metal 35 %, metal-dark)`
+/// with the relief).
+fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
+    let k = ds::tokens();
+    ds::shadow(p, r.translate(vec2(0.0, 3.0)), radius, 0, 8, 0, Color32::from_black_alpha(204));
+    ds::radial(p, r, radius, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
+    ds::relief(p, r, radius);
+}
+
+/// The top bar (`.ig-topbar` across the screen: the speed keys, money and date readouts, the message ticker, the
+/// research under way, the screens' keys), shared with the modern colony, info and research screens (ADR 0070–0072),
+/// who place themselves under the `smh-left` area; the frame's colours.
 pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<Act>) -> Ink {
     let ink = Ink::new(ctx, v.race);
+    let k = ds::tokens();
     ctx.style_mut(|s| {
         s.visuals.window_stroke = Stroke::new(1.0f32, ink.edge);
         s.visuals.window_fill = Color32::from_rgba_unmultiplied(ink.fill.r(), ink.fill.g(), ink.fill.b(), 240);
@@ -654,157 +674,168 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
         s.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0f32, ink.accent.gamma_multiply(0.7));
         s.visuals.selection.bg_fill = ink.accent.gamma_multiply(0.3);
     });
-    // Top left: pause and the speeds, the date, the money.
-    let left = egui::Area::new(egui::Id::new("smh-left")).fixed_pos(pos2(EDGE, EDGE)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, TOP, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.set_height(BUTTON);
-                ui.spacing_mut().item_spacing.x = 1.0;
-                let r = icon_button(ui, &ink, Icon::Pause, v.paused, true, BUTTON);
-                if either(&tip(r, &v.labels.pause, &v.keys.pause, &ink)) {
+    let screen = ctx.screen_rect();
+    let mut status = Rect::NOTHING;
+    egui::Area::new(egui::Id::new("smh-left")).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(screen.width(), BAR_H), Sense::hover());
+        let p = ui.painter();
+        ds::shadow(p, rect, 0, 3, 8, 0, Color32::from_black_alpha(204));
+        ds::vgrad(p, rect, 0, &[(0.0, k.metal_light), (0.3, k.metal_dark), (1.0, k.metal_shadow)]);
+        ds::relief(p, rect, 0);
+        let inner = rect.shrink2(BAR_PAD);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = BAR_GAP;
+            // Pause and the speeds: one key block, the running one lit.
+            ds::key_group(ui, |ui| {
+                let r = ui.add(IconKey::icon(ds::Icon::Pause).on(v.paused));
+                if either(&hand(tip(r, &v.labels.pause, &v.keys.pause, &ink))) {
                     acts.push(Act::Pause);
                 }
-                for n in 1..=3u8 {
-                    let on = !v.paused && v.speed + 1 == n as usize;
-                    let r = icon_button(ui, &ink, Icon::Play(n), on, true, BUTTON);
-                    if either(&tip(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n as usize - 1], &ink)) {
+                for (n, i) in [(1, ds::Icon::Play), (2, ds::Icon::Fast), (3, ds::Icon::Fastest)] {
+                    let r = ui.add(IconKey::icon(i).on(!v.paused && v.speed + 1 == n));
+                    if either(&hand(tip(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n - 1], &ink))) {
                         acts.push(Act::Speed(n as i32));
                     }
                 }
-                if v.turbo > 1 {
-                    ui.add_space(3.0);
-                    ui.label(egui::RichText::new(format!("×{}", v.turbo)).size(11.0).strong().color(ink.accent));
-                }
-                ui.spacing_mut().item_spacing.x = 4.0;
-                rule(ui, &ink, BUTTON);
-                ui.label(egui::RichText::new(&v.date).size(12.5).color(ink.text.gamma_multiply(0.85)));
-                rule(ui, &ink, BUTTON);
-                let broke = v.money.starts_with('-');
-                ui.label(egui::RichText::new(&v.money).size(15.0).strong().color(if broke { Color32::from_rgb(235, 96, 84) } else { Color32::WHITE }));
             });
-        });
-    });
-    let left = left.response.rect;
-    // Top right: the research under way and the screens.
-    let mut status = Rect::NOTHING;
-    let right = egui::Area::new(egui::Id::new("smh-right")).anchor(Align2::RIGHT_TOP, vec2(-EDGE, EDGE)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, TOP, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.set_height(BUTTON);
-                status = research_status(ui, v, st, &ink);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                rule(ui, &ink, BUTTON);
-                ui.spacing_mut().item_spacing.x = 1.0;
-                for s in &v.screens {
-                    let r = icon_button(ui, &ink, Icon::Screen(s.n), s.current, s.on, BUTTON);
-                    if tip(r, &s.name, &s.key, &ink).clicked() && !s.current {
-                        acts.push(Act::Screen(s.n));
-                        st.research_open = false;
+            if v.turbo > 1 {
+                Text::new(&format!("×{}", v.turbo), Font::LABEL).color(k.lcd_ink).show(ui, vec2(26.0, LINE_H));
+            }
+            let money = v.money.replace('\u{2009}', "");
+            readout(ui, &money, if money.starts_with('-') { k.enemy } else { k.lcd_ink }, 8);
+            readout(ui, &v.date, k.lcd_ink, 10);
+            // The right part's room first; the ticker takes what is left between.
+            let (main, side): (Vec<_>, Vec<_>) = v.screens.iter().partition(|s| !matches!(s.n, 1 | 10 | 13));
+            let keys: f32 = [main.len(), side.len()].iter().filter(|&&n| n > 0).map(|&n| group_w(n, KEY.x) + BAR_GAP).sum();
+            let free = ui.available_width() - keys - BAR_GAP;
+            let research_w = (free * 0.4).clamp(170.0, RESEARCH_W);
+            ticker(ui, v, &ink, vec2((free - research_w).max(0.0), LINE_H), acts);
+            status = research_status(ui, v, st, &ink, research_w);
+            for list in [main, side].into_iter().filter(|l| !l.is_empty()) {
+                ds::key_group(ui, |ui| {
+                    for s in list {
+                        let n = s.n;
+                        let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, Icon::Screen(n), c);
+                        let r = ui.add_enabled(s.on, IconKey::new(ds::Glyph::Custom(&draw)).on(s.current));
+                        // New mail waiting: a lit dot on the messages key.
+                        if n == 10 && v.waiting {
+                            let c = r.rect.right_top() + vec2(-6.0, 6.0);
+                            ds::shadow(ui.painter(), Rect::from_center_size(c, vec2(7.0, 7.0)), 255, 0, 6, 0, k.lcd_ink.gamma_multiply(0.6));
+                            ui.painter().circle_filled(c, 3.5, k.lcd_ink);
+                        }
+                        if hand(tip(r, &s.name, &s.key, &ink)).clicked() && !s.current {
+                            acts.push(Act::Screen(n));
+                            st.research_open = false;
+                        }
                     }
-                }
-            });
+                });
+            }
         });
     });
-    let right = right.response.rect;
-    // The message line beside the top left plate (left: the messages screen, right held: the history).
-    // (On the first frame the right plate has no place yet: its usual width.)
-    let right_x = if right.is_positive() { right.left() } else { ctx.screen_rect().right() - 480.0 };
-    let room = right_x - left.right() - 2.0 * EDGE;
-    if room > BUTTON + 20.0 {
-        message_line(ctx, v, &ink, pos2(left.right() + EDGE * 0.75, left.top()), room.min(LINE_W), left.height(), acts);
-    }
+    // The quick-research menu drops from the research button, sliding and fading in.
+    let open = ds::open_t(ctx, egui::Id::new("smh-research"), st.research_open);
     if st.research_open {
-        let r = egui::Area::new(egui::Id::new("smh-research")).pivot(Align2::RIGHT_TOP).fixed_pos(pos2(right.right(), right.bottom() + 4.0)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::same(10), |ui| research_menu(ui, v, st, &ink, acts));
+        let r = egui::Area::new(egui::Id::new("smh-research")).pivot(Align2::RIGHT_TOP).fixed_pos(pos2(status.right(), BAR_H + 6.0 - 12.0 * (1.0 - open))).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
+            ui.set_opacity(open);
+            ds::panel(ui, ds::PanelKind::Deep, 0.96, 16.0, |ui| research_menu(ui, v, st, &ink, acts))
         });
         close_outside(ctx, st, &[r.response.rect, status]);
     }
     ink
 }
 
-/// The running research's name, per cent and progress, or the idle text; a click opens the quick-research menu.
-fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink) -> Rect {
+/// An LCD readout (`.ig-lcd`, 22 points) at least `min_chars` wide, so the bar doesn't move as the digits change.
+fn readout(ui: &mut egui::Ui, text: &str, colour: Color32, min_chars: usize) {
+    let f = Font::READOUT.sized(22.0);
+    let digit = Text::new("0", f).layout(ui.ctx(), f32::INFINITY).width + f.spacing();
+    let w = Text::new(text, f).layout(ui.ctx(), f32::INFINITY).width.max(digit * min_chars as f32) + 2.0 * ds::SPACE[1] + f.size * 0.3;
+    let (rect, _) = ui.allocate_exact_size(vec2(w, LINE_H + 2.0), Sense::hover());
+    ds::lcd_window(ui.painter(), rect);
+    Text::new(text, f).color(colour).paint(ui, rect.shrink2(vec2(ds::SPACE[1], 0.0)));
+}
+
+/// The research button (black, a metal rim; the flask, the project's name, its progress and per cent, or the idle
+/// text); a click opens the quick-research menu.
+fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width: f32) -> Rect {
+    let k = ds::tokens();
     let r = &v.research;
-    let (rect, resp) = ui.allocate_exact_size(vec2(196.0, BUTTON), Sense::click());
-    let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::click());
+    let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered()).max(st.research_open as u8 as f32);
     let p = ui.painter();
-    if st.research_open || hot > 0.0 {
-        let k = if st.research_open { 1.0 } else { hot };
-        p.rect_filled(rect, 2.0, Color32::from_white_alpha((14.0 * k) as u8));
-        p.rect_stroke(rect, 2.0, Stroke::new(1.0f32, ink.accent.gamma_multiply(0.7 * k)), egui::StrokeKind::Inside);
+    p.rect_filled(rect, ds::RADIUS_PLATE, Color32::BLACK);
+    ds::rim(p, rect, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
+    let inner = rect.shrink2(vec2(10.0, 0.0));
+    let on = r.current.is_some() || r.researchable;
+    icon(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(17.0, 17.0)), Icon::Screen(4), if on { k.ink_silver } else { k.ink_muted });
+    let text = Rect::from_min_max(pos2(inner.left() + 26.0, rect.top()), inner.max);
+    match &r.current {
+        Some((_, name, pct, _)) => {
+            let f = Font::READOUT.sized(14.0);
+            let num = format!("{pct}%");
+            let pw = Text::new("100%", f).layout(ui.ctx(), f32::INFINITY).width;
+            let (rest, pct_r) = text.split_left_right_at_x(text.right() - pw);
+            Text::new(&num, f).color(k.lcd_ink).right().paint(ui, pct_r);
+            // The name as wide as it needs up to 60 % of the room, the progress in the rest (`flex: 1`).
+            let room = rest.width() - 10.0;
+            let nw = Text::new(name, BUTTON_TEXT).layout(ui.ctx(), f32::INFINITY).width.min(room * 0.6);
+            Text::new(name, BUTTON_TEXT).color(k.ink_silver).paint(ui, Rect::from_min_size(rest.min, vec2(nw, rest.height())));
+            let track = Rect::from_min_max(pos2(rest.left() + nw + 10.0, rect.center().y - 3.0), pos2(rest.right() - 8.0, rect.center().y + 3.0));
+            if track.width() > 8.0 {
+                let f = ui.ctx().animate_value_with_time(resp.id.with("pct"), *pct as f32 / 100.0, ds::anim(ds::GLIDE_TIME)).clamp(0.0, 1.0);
+                p.rect_filled(track, 3, k.glass_deep);
+                if f > 0.0 {
+                    p.rect_filled(track.with_max_x(track.left() + (track.width() * f).max(6.0)), 3, k.lcd_ink);
+                }
+                ds::rim(p, track, 3, k.rim);
+            }
+        }
+        None => _ = Text::new(&v.labels.idle, BUTTON_TEXT).color(if on { k.ink_silver } else { k.ink_muted }).paint(ui, text),
     }
-    let colour = if r.current.is_some() { ink.accent } else if r.researchable { ink.text.gamma_multiply(0.85) } else { ink.dim };
-    icon(p, Rect::from_min_size(rect.min + vec2(1.0, 2.0), vec2(16.0, 16.0)), Icon::Bolt, colour);
-    let (name, pct) = match &r.current {
-        Some((_, name, pct, _)) => (name.clone(), Some(*pct)),
-        None => (v.labels.idle.clone(), None),
-    };
-    let text_x = rect.left() + 21.0;
-    let mut text_r = rect.right() - 4.0;
-    if let Some(pct) = pct {
-        let g = p.layout_no_wrap(format!("{pct}%"), FontId::proportional(12.0), ink.text);
-        text_r -= g.size().x + 6.0;
-        p.galley(pos2(rect.right() - 4.0 - g.size().x, rect.top() + 1.0), g, ink.text);
-        // The progress under the name.
-        let track = Rect::from_min_max(pos2(text_x, rect.bottom() - 4.0), pos2(rect.right() - 4.0, rect.bottom() - 2.0));
-        p.rect_filled(track, 0.0, ink.edge.gamma_multiply(0.6));
-        p.rect_filled(Rect::from_min_max(track.min, pos2(track.left() + track.width() * (pct.clamp(0, 100) as f32 / 100.0), track.bottom())), 0.0, ink.accent);
-    }
-    let g = p.layout_no_wrap(name, FontId::proportional(12.5), colour);
-    let y = if pct.is_some() { rect.top() + 1.0 } else { rect.center().y - g.size().y / 2.0 };
-    p.with_clip_rect(Rect::from_min_max(pos2(text_x, rect.top()), pos2(text_r, rect.bottom()))).galley(pos2(text_x, y), g, colour);
-    if tip(resp, &v.labels.research, "", ink).clicked() {
+    if hand(tip(resp, &v.labels.research, "", ink)).clicked() {
         st.research_open = !st.research_open;
     }
     rect
 }
 
-/// The message line: the original's scrolling message (or the chat entry, the error, the waiting text), else the
-/// latest of the history, dim.
-fn message_line(ctx: &egui::Context, v: &View, ink: &Ink, at: Pos2, width: f32, height: f32, acts: &mut Vec<Act>) {
+/// The message ticker (black, a metal rim): the original's scrolling message (or the chat entry, the error, the
+/// waiting text pulsing in LCD ink), else "Pause" while paused, else the latest of the history, dim. Left button: the
+/// messages screen; right button held: the history.
+fn ticker(ui: &mut egui::Ui, v: &View, ink: &Ink, size: Vec2, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+    let p = ui.painter();
+    p.rect_filled(r, ds::RADIUS_PLATE, Color32::BLACK);
+    ds::rim(p, r, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
     let (text, colour) = match (v.line.is_empty(), v.history.last()) {
-        (false, _) if v.waiting => (v.line.as_str(), ink.accent.gamma_multiply(if v.blink { 1.0 } else { 0.55 })),
-        (false, _) => (v.line.as_str(), ink.text),
-        (true, Some(h)) => (h.as_str(), ink.dim),
-        (true, None) => ("", ink.dim),
+        (false, _) if v.waiting => (v.line.as_str(), k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.55 })),
+        (false, _) => (v.line.as_str(), k.ink),
+        (true, _) if v.paused => (v.labels.pause.as_str(), k.lcd_ink),
+        (true, Some(h)) => (h.as_str(), k.ink_muted),
+        (true, None) => ("", k.ink_muted),
     };
-    // Only the mail icon when there is nothing to show or no room for text.
-    let inner = vec2(if text.is_empty() || width < 120.0 { BUTTON } else { width - (TOP.left + TOP.right) as f32 }, height - (TOP.top + TOP.bottom) as f32);
-    egui::Area::new(egui::Id::new("smh-line")).fixed_pos(at).fade_in(false).show(ctx, |ui| {
-        plate(ui, ink, TOP, |ui| {
-            let (r, resp) = ui.allocate_exact_size(inner, Sense::click());
-            let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-            let mail = Rect::from_min_size(r.min, vec2(BUTTON, BUTTON));
-            icon(ui.painter(), mail.shrink(1.0), Icon::Mail, lerp(if v.waiting { ink.accent } else { ink.text.gamma_multiply(0.8) }, ink.text, hot));
-            let g = ui.painter().layout_no_wrap(text.to_string(), FontId::proportional(12.5), colour);
-            let clip = Rect::from_min_max(pos2(mail.right() + 6.0, r.top()), r.max);
-            ui.painter().with_clip_rect(clip).galley(pos2(clip.left(), r.center().y - g.size().y / 2.0), g, colour);
-            if hot > 0.0 {
-                ui.painter().rect_stroke(r.expand2(vec2(4.0, 2.0)), 2.0, Stroke::new(1.0f32, ink.accent.gamma_multiply(0.6 * hot)), egui::StrokeKind::Inside);
-            }
-            let name = v.screens.iter().find(|s| s.n == 10);
-            let resp = tip(resp, name.map_or("", |s| s.name.as_str()), name.map_or("", |s| s.key.as_str()), ink);
-            let right_held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
-            if right_held != v.history_open {
-                acts.push(Act::History(right_held));
-            }
-            // The left button held over the line asks every frame (`MOUSE_SelectScreens`, `top_bar_frame`).
-            if resp.contains_pointer() && ui.input(|i| i.pointer.primary_down()) && resp.is_pointer_button_down_on() {
-                acts.push(Act::Messages);
-            }
-            if v.history_open && !v.history.is_empty() {
-                egui::Area::new(egui::Id::new("smh-history")).fixed_pos(pos2(at.x, at.y + height + 4.0)).order(egui::Order::Foreground).fade_in(false).show(ui.ctx(), |ui| {
-                    plate(ui, ink, Margin::symmetric(10, 7), |ui| {
-                        ui.set_width(width.max(300.0) - 20.0);
-                        ui.spacing_mut().item_spacing.y = 3.0;
-                        for h in &v.history {
-                            ui.label(egui::RichText::new(h).size(12.5).color(ink.text));
-                        }
-                    });
-                });
-            }
+    let upper = text == v.labels.pause && v.paused;
+    Text::new(text, TICKER.upper(upper)).color(colour).paint_only(ui, r.shrink2(vec2(ds::SPACE[1], 0.0)));
+    let name = v.screens.iter().find(|s| s.n == 10);
+    let resp = hand(tip(resp, name.map_or("", |s| s.name.as_str()), name.map_or("", |s| s.key.as_str()), ink));
+    let right_held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+    if right_held != v.history_open {
+        acts.push(Act::History(right_held));
+    }
+    // The left button held over the line asks every frame (`MOUSE_SelectScreens`, `top_bar_frame`).
+    if resp.contains_pointer() && ui.input(|i| i.pointer.primary_down()) && resp.is_pointer_button_down_on() {
+        acts.push(Act::Messages);
+    }
+    if v.history_open && !v.history.is_empty() {
+        egui::Area::new(egui::Id::new("smh-history")).fixed_pos(pos2(r.left(), r.bottom() + 8.0)).order(egui::Order::Foreground).fade_in(false).show(ui.ctx(), |ui| {
+            ds::panel(ui, ds::PanelKind::Deep, 0.96, 12.0, |ui| {
+                let w = r.width().max(320.0) - 24.0;
+                for h in &v.history {
+                    Text::new(h, TICKER).color(k.ink_silver).show(ui, vec2(w, 22.0));
+                }
+            });
         });
-    });
+    }
 }
 
 /// A click anywhere but the menu and its button closes the menu.
@@ -815,183 +846,235 @@ fn close_outside(ctx: &egui::Context, st: &mut State, keep: &[Rect]) {
     }
 }
 
-fn research_menu(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, acts: &mut Vec<Act>) {
+/// The quick-research menu: the startable techs by column (their cost as the tooltip), the running project's
+/// progress, STOP and the money left.
+fn research_menu(ui: &mut egui::Ui, v: &View, st: &mut State, _ink: &Ink, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
     let r = &v.research;
     let cols = r.headers.len().max(1);
-    egui::Grid::new("smh-research-grid").num_columns(cols).spacing(vec2(12.0, 1.0)).show(ui, |ui| {
-        for h in &r.headers {
-            ui.label(egui::RichText::new(h.to_uppercase()).size(11.0).strong().color(ink.accent));
-        }
-        ui.end_row();
-        let rows = (0..cols).map(|c| r.items.iter().filter(|i| i.2 == c).count()).max().unwrap_or(0);
-        for row in 0..rows {
-            for c in 0..cols {
-                match r.items.iter().filter(|i| i.2 == c).nth(row) {
-                    Some((t, name, _, ok, short, cost)) => {
-                        let colour = if *short || r.current.is_some() { ink.dim } else { ink.text };
-                        let b = egui::Button::new(egui::RichText::new(name).color(colour)).frame_when_inactive(false).min_size(vec2(124.0, 19.0));
-                        let resp = ui.add_enabled(*ok, b);
-                        let resp = if *ok { resp.on_hover_text(format!("{}: {cost}", r.footer[3])) } else { resp };
-                        if resp.clicked() {
-                            acts.push(Act::Start(*t));
-                            st.research_open = false;
-                        }
-                    }
-                    None => {
-                        ui.label("");
+    const COL: f32 = 190.0;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 2.0);
+        for c in 0..cols {
+            ui.vertical(|ui| {
+                ui.set_width(COL);
+                Text::new(r.headers.get(c).map_or("", |h| h.as_str()), Font::LABEL).color(k.info).show(ui, vec2(COL, 24.0));
+                for (t, name, _, ok, short, cost) in r.items.iter().filter(|i| i.2 == c) {
+                    let off = *short || r.current.is_some();
+                    let resp = ui.add_enabled(*ok, ds::ListRow::new(name).off(off).height(24.0).font(Font::DATA));
+                    let resp = if *ok { hand(resp).on_hover_text(format!("{}: {}", r.footer[3], money(*cost as f64))) } else { resp };
+                    if resp.clicked() {
+                        acts.push(Act::Start(*t));
+                        st.research_open = false;
                     }
                 }
-            }
-            ui.end_row();
+            });
         }
     });
     if let Some((t, name, pct, left)) = &r.current {
-        ui.add_space(4.0);
-        let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-        ui.painter().rect_filled(line, 0.0, ink.edge);
-        ui.add_space(3.0);
+        ds::separator(ui, 6.0);
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(format!("{}: {name}", r.footer[0])).color(ink.text));
-            ui.add(egui::ProgressBar::new(*pct as f32 / 100.0).desired_width(90.0).desired_height(12.0).fill(ink.accent.gamma_multiply(0.7)).text(egui::RichText::new(format!("{pct}%")).size(11.0)));
-            if ui.button(&r.footer[1]).clicked() {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let w = (ui.available_width() - 240.0).max(120.0);
+            Text::new(&format!("{}: {name}", r.footer[0]), Font::DATA).color(k.ink).show(ui, vec2(w, 32.0));
+            ds::bar(ui, 90.0, 6.0, *pct as f32 / 100.0, k.lcd_ink);
+            Text::new(&format!("{pct}%"), Font::READOUT.sized(15.0)).color(k.lcd_ink).show(ui, vec2(44.0, 32.0));
+            if hand(ui.add(Plate::new(&r.footer[1]).height(32.0).width(80.0).font(Plate::FONT.sized(14.0)))).clicked() {
                 acts.push(Act::Stop(*t));
                 st.research_open = false;
             }
         });
-        ui.label(egui::RichText::new(format!("{}: {left}", r.footer[2])).size(11.0).color(ink.dim));
+        Text::new(&format!("{}: {}", r.footer[2], money(*left as f64)), Font::LABEL.upper(false)).color(k.ink_muted).show(ui, vec2(ui.available_width(), 20.0));
     }
 }
 
+/// A shaded globe (the card's and the long info's planet; no turning model) in `colour`, or a fleet's mark.
+fn globe(p: &egui::Painter, r: Rect, colour: Color32, planet: bool) {
+    let k = ds::tokens();
+    let c = r.center();
+    if planet {
+        ds::shadow(p, r.shrink(r.width() * 0.08), 255, 0, 14, 0, colour.gamma_multiply(0.35));
+        ds::radial(p, r, 255, [0.34, 0.28], &[(0.0, lerp(colour, Color32::WHITE, 0.3).gamma_multiply(0.85)), (0.4, colour.gamma_multiply(0.42)), (0.8, colour.gamma_multiply(0.12)), (1.0, Color32::from_black_alpha(250))]);
+        p.circle_stroke(c, r.width() / 2.0 - 0.5, Stroke::new(1.0f32, colour.gamma_multiply(0.5)));
+    } else {
+        p.circle_filled(c, r.width() / 2.0, k.glass_deep);
+        p.circle_stroke(c, r.width() / 2.0 - 0.5, Stroke::new(1.0f32, k.rim_bright));
+        let s = r.width() * 0.3;
+        p.add(Shape::convex_polygon(vec![pos2(c.x + s, c.y), pos2(c.x - s * 0.85, c.y - s * 0.75), pos2(c.x - s * 0.4, c.y), pos2(c.x - s * 0.85, c.y + s * 0.75)], colour, Stroke::NONE));
+    }
+}
+
+/// A side ratio of the card (`.ratio`: an icon and the value, muted): the richness (a crystal) or the habitability
+/// (a figure); the label as its tooltip.
+fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
+    let k = ds::tokens();
+    let (r, resp) = ui.allocate_exact_size(vec2(CARD_SIDE, 16.0), Sense::hover());
+    let w = Text::new(value, RATIO).layout(ui.ctx(), CARD_SIDE).width + 15.0;
+    let i = Rect::from_center_size(pos2(r.center().x - w / 2.0 + 6.0, r.center().y), vec2(12.0, 12.0));
+    let (p, s, c) = (ui.painter(), Stroke::new(1.3f32, k.ink_muted), i.center());
+    if habitability {
+        p.circle_stroke(pos2(c.x, c.y - 3.0), 2.6, s);
+        p.add(Shape::line(arc(pos2(c.x, c.y + 6.0), 5.0, 5.0, std::f32::consts::PI, std::f32::consts::TAU), s));
+    } else {
+        p.add(Shape::closed_line(vec![pos2(c.x, c.y - 6.0), pos2(c.x + 5.0, c.y - 1.5), pos2(c.x, c.y + 6.0), pos2(c.x - 5.0, c.y - 1.5)], s));
+        p.line_segment([pos2(c.x - 5.0, c.y - 1.5), pos2(c.x + 5.0, c.y - 1.5)], s);
+    }
+    Text::new(value, RATIO).color(k.ink_muted).paint_only(ui, Rect::from_min_max(pos2(i.right() + 3.0, r.top()), r.max));
+    resp.on_hover_text(label);
+}
+
+/// The selection card (`.ig-panel.deep` with `.ig-card`): the globe between its ratios, the name, the original's
+/// lines, the buttons as plates (the colony or split, the details) and keys (tanks, production).
 fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.set_width(INFO_W);
-    let body = ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.y = 1.0;
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(14.0, 18.0), Sense::hover());
-            let c = r.center();
-            if info.planet {
-                ui.painter().circle_filled(c, 5.0, info.colour);
-                ui.painter().circle_stroke(c, 7.0, Stroke::new(1.0f32, info.colour.gamma_multiply(0.55)));
-            } else {
-                ui.painter().add(Shape::convex_polygon(vec![pos2(c.x + 7.0, c.y), pos2(c.x - 6.0, c.y - 5.5), pos2(c.x - 3.0, c.y), pos2(c.x - 6.0, c.y + 5.5)], info.colour, Stroke::NONE));
-            }
-            ui.add(egui::Label::new(egui::RichText::new(&info.title).size(15.0).strong().color(Color32::WHITE)).truncate());
-        });
-        if let Some((l, c)) = info.lines.first() {
-            ui.horizontal(|ui| {
-                ui.add_space(18.0);
-                ui.add(egui::Label::new(egui::RichText::new(l).size(11.5).color(*c)).truncate());
-            });
-        }
-        ui.add_space(4.0);
-        let (line, _) = ui.allocate_exact_size(vec2(INFO_W, 1.0), Sense::hover());
-        ui.painter().rect_filled(line, 0.0, ink.edge);
-        ui.add_space(4.0);
-        for (l, c) in info.lines.iter().skip(1) {
-            ui.add(egui::Label::new(egui::RichText::new(l).size(12.0).color(*c)).truncate());
-        }
-        if !info.stats.is_empty() {
-            ui.add_space(3.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                for (k, val) in &info.stats {
-                    ui.label(egui::RichText::new(k).size(11.0).color(ink.dim));
-                    ui.label(egui::RichText::new(val).size(12.5).strong().color(ink.text));
-                    ui.add_space(8.0);
+    let k = ds::tokens();
+    let at = ui.painter().add(Shape::Noop);
+    let frame = egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 }).show(ui, |ui| {
+        let inner = CARD_W - 32.0;
+        ui.set_width(inner);
+        let main_w = inner - CARD_SIDE - 16.0;
+        let body = ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = vec2(16.0, 2.0);
+            ui.vertical(|ui| {
+                ui.set_width(CARD_SIDE);
+                if let Some((l, val)) = info.stats.first() {
+                    ratio(ui, l, val, false);
+                }
+                let (g, _) = ui.allocate_exact_size(vec2(CARD_SIDE, 84.0), Sense::hover());
+                globe(ui.painter(), Rect::from_center_size(g.center(), vec2(84.0, 84.0)), info.colour, info.planet);
+                if let Some((l, val)) = info.stats.get(1) {
+                    ratio(ui, l, val, true);
                 }
             });
+            ui.vertical(|ui| {
+                ui.set_width(main_w);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                Text::new(&info.title, CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0));
+                for (l, c) in info.lines.iter().take(6) {
+                    Text::new(l, CARD_LINE).color(*c).show(ui, vec2(main_w, 20.0));
+                }
+                if info.redirect {
+                    Text::new(&v.labels.redirect, Font::LABEL).color(k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.45 })).show(ui, vec2(main_w, 20.0));
+                }
+                ui.add_space(6.0);
+                ui.allocate_exact_size(vec2(main_w, 32.0), Sense::hover()).0
+            })
+            .inner
+        });
+        let buttons = body.inner;
+        // The card itself is the info box (hot-spot 8): left and right click as the original's.
+        let card = ui.interact(body.response.rect, ui.id().with("smh-info-card"), Sense::click());
+        let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
+        if hot > 0.0 {
+            ds::rim(ui.painter(), body.response.rect.expand(6.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
         }
-    });
-    // The panel itself is the info box (hot-spot 8): left and right click as the original's.
-    let card = ui.interact(body.response.rect, ui.id().with("smh-info-card"), Sense::click()).on_hover_text(&info.tip);
-    if card.clicked() {
-        acts.push(Act::Info(false));
-    }
-    if card.secondary_clicked() {
-        acts.push(Act::Info(true));
-    }
-    ui.add_space(5.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        let size = 22.0;
-        if tip(icon_button(ui, ink, Icon::Details, false, true, size), &info.left, "", ink).clicked() {
+        let card = hand(card).on_hover_text(&info.tip);
+        if card.clicked() {
             acts.push(Act::Info(false));
         }
-        if let Some(r) = &info.right {
-            let i = if info.planet { Icon::Screen(3) } else { Icon::Split };
-            let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
-            if tip(icon_button(ui, ink, i, false, true, size), r, key, ink).clicked() {
-                acts.push(Act::Info(true));
+        if card.secondary_clicked() {
+            acts.push(Act::Info(true));
+        }
+        // The buttons over the card (they win its click): the plates as wide as their labels, a share of the room at
+        // most.
+        ui.scope_builder(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            let font = Plate::FONT.sized(14.0).tracking(0.12);
+            let keys = info.tanks as usize + info.product as usize;
+            let plates = 1 + info.right.is_some() as usize;
+            let room = ((main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (plates as f32 - 1.0)) / plates as f32).floor();
+            let ctx = ui.ctx().clone();
+            let pw = |s: &str| (Text::new(s, font).layout(&ctx, f32::INFINITY).width + 2.0 * ds::SPACE[2] + 8.0).min(room);
+            if let Some(r) = &info.right {
+                let pw = pw(r);
+                let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
+                if hand(tip(ui.add_sized(vec2(pw, 32.0), Plate::new(r).height(32.0).width(pw).font(font)), r, key, ink)).clicked() {
+                    acts.push(Act::Info(true));
+                }
             }
-        }
-        if info.tanks && tip(icon_button(ui, ink, Icon::Tanks, false, true, size), &v.tips[8], "", ink).clicked() {
-            acts.push(Act::Panel(10));
-        }
-        if info.product && tip(icon_button(ui, ink, Icon::Factory, false, true, size), &v.tips[9], "", ink).clicked() {
-            acts.push(Act::Panel(11));
-        }
-        if info.redirect {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new(v.labels.redirect.to_uppercase()).size(11.0).strong().color(ink.accent.gamma_multiply(if v.blink { 1.0 } else { 0.45 })));
-            });
-        }
+            let lw = pw(&info.left);
+            if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
+                acts.push(Act::Info(false));
+            }
+            for (on, i, n, id) in [(info.tanks, Icon::Tanks, 8, 10), (info.product, Icon::Factory, 9, 11)] {
+                if on {
+                    let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
+                    if hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[n], "", ink)).clicked() {
+                        acts.push(Act::Panel(id));
+                    }
+                }
+            }
+        });
     });
+    ds::behind(ui, at, |p| ds::paint_panel(p, frame.response.rect, ds::PanelKind::Deep, 0.88));
 }
 
-/// The camera's buttons in a strip under the minimap: rotate, zoom and tilt held (the left button's way, the right
-/// button the other way as on the console), the top and side views clicked.
+/// The camera's keys under the radar: rotate, zoom and tilt held (the left button's way, the right button the other
+/// way as on the console), the top and side views clicked.
 fn camera_buttons(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
     let mut held = None;
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = CAM_GAP;
-        ui.add_space((MAP_W - 8.0 * CAM - 7.0 * CAM_GAP) / 2.0);
+        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.add_space(((NAV_W - group_w(6, CAM_KEY.x) - group_w(2, CAM_KEY.x) - 4.0) / 2.0).max(0.0));
         let none = String::new();
-        let buttons = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
-        for (i, spot, left, key) in buttons {
-            let r = tip(icon_button(ui, ink, i, false, true, CAM), &v.tips[spot as usize], key, ink);
-            if r.is_pointer_button_down_on() && r.contains_pointer() {
-                let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
-                held = Some((spot, left != right));
+        ds::key_group(ui, |ui| {
+            let buttons = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
+            for (i, spot, left, key) in buttons {
+                let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
+                let r = hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], key, ink));
+                if r.is_pointer_button_down_on() && r.contains_pointer() {
+                    let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
+                    held = Some((spot, left != right));
+                }
             }
-        }
-        for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
-            if either(&tip(icon_button(ui, ink, i, false, true, CAM), &v.tips[spot as usize], "", ink)) {
-                acts.push(Act::View(spot));
+        });
+        ds::key_group(ui, |ui| {
+            for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
+                let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
+                if either(&hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
+                    acts.push(Act::View(spot));
+                }
             }
-        }
+        });
     });
     acts.push(Act::Hold(held));
 }
 
+/// The radar (a black window sunk into the metal): the planets and fleets, the view's outline; press or drag moves
+/// the camera there (the target pointer).
 fn minimap(ui: &mut egui::Ui, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    let size = vec2(MAP_W, MAP_W * MINI[3] / MINI[2]);
+    let k = ds::tokens();
+    let size = vec2(NAV_W, (NAV_W * MINI[3] / MINI[2]).round());
     let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let p = ui.painter().with_clip_rect(r);
-    p.rect_filled(r, 0.0, Color32::from_black_alpha(150));
+    let back = ui.painter();
+    ds::shadow(back, r, 10, 0, 0, 1, k.metal_shadow);
+    back.rect_filled(r, 10, Color32::BLACK);
+    ds::vgrad(back, r, 10, &[(0.0, Color32::from_black_alpha(255)), (6.0 / r.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    let p = ui.painter().with_clip_rect(r.shrink(2.0));
     // A faint grid: the console's screen.
-    for j in 1..4 {
-        let (x, y) = (r.left() + r.width() * j as f32 / 4.0, r.top() + r.height() * j as f32 / 4.0);
-        p.line_segment([pos2(x, r.top()), pos2(x, r.bottom())], Stroke::new(1.0f32, ink.edge.gamma_multiply(0.35)));
-        p.line_segment([pos2(r.left(), y), pos2(r.right(), y)], Stroke::new(1.0f32, ink.edge.gamma_multiply(0.35)));
+    for j in 1..6 {
+        let (x, y) = (r.left() + r.width() * j as f32 / 6.0, r.top() + r.height() * j as f32 / 6.0);
+        p.vline(x, r.y_range(), Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
+        p.hline(r.x_range(), y, Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
     }
     let at = |u: [f32; 2]| pos2(r.left() + u[0] * r.width(), r.top() + u[1] * r.height());
     for &(u, c, sel) in &mini.fleets {
         let c = if sel && !v.blink { c.gamma_multiply(0.3) } else { c };
-        p.rect_filled(Rect::from_center_size(at(u), vec2(2.6, 1.4)), 0.0, c);
+        p.rect_filled(Rect::from_center_size(at(u), vec2(3.4, 1.8)), 0.0, c);
     }
     for &(u, c, sel) in &mini.planets {
         let q = at(u);
-        p.circle_filled(q, 1.6, c);
+        p.circle_filled(q, 2.1, c);
         if sel {
-            p.circle_stroke(q, 4.0, Stroke::new(1.0f32, if v.blink { c } else { c.gamma_multiply(0.4) }));
+            p.circle_stroke(q, 5.5, Stroke::new(1.2f32, if v.blink { c } else { c.gamma_multiply(0.4) }));
         }
     }
     let outline: Vec<Pos2> = [0, 1, 3, 2].iter().filter_map(|&i| mini.view[i].map(at)).collect();
     if outline.len() == 4 {
-        p.add(Shape::closed_line(outline, Stroke::new(1.0f32, ink.accent)));
+        p.add(Shape::convex_polygon(outline.clone(), k.focus.gamma_multiply(0.06), Stroke::NONE));
+        p.add(Shape::closed_line(outline, Stroke::new(1.2f32, k.focus)));
     }
-    p.rect_stroke(r, 0.0, Stroke::new(1.0f32, ink.edge), egui::StrokeKind::Inside);
-    let resp = tip(resp, &v.tips[7], "", ink);
+    ds::rim(back, r, 10, Color32::from_white_alpha(10));
+    let resp = tip(resp, &v.tips[7], "", ink).on_hover_cursor(egui::CursorIcon::Crosshair);
     let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
     if let (true, Some(q)) = (resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
         acts.push(Act::Minimap(mini_virtual([(q.x - r.left()) / r.width(), (q.y - r.top()) / r.height()]), first));
@@ -1064,21 +1147,16 @@ pub struct LongInfo {
 /// The long info's PROBLEMS row: its label, virtual y and each problem's per cent and name.
 pub type Problems = (String, f32, Vec<(i32, String)>);
 
-/// A line of the long info at virtual y: label, value, the shortage colour, the NEEDED label and value, the
+/// A line of the long info: label, value, the shortage colour, the NEEDED label and value, the
 /// SPECIAL row.
 #[derive(Debug, Clone, Default)]
 pub struct InfoRow {
-    pub y: f32,
     pub label: String,
     pub value: String,
     pub short: bool,
     pub needed: Option<(String, String)>,
     pub special: bool,
 }
-
-/// The long info's panel (`KirakFader(319, 33, 302, 326)`) and the exit button's row (hot-spot 9's top).
-const INFO_PANEL: [f32; 4] = [319.0, 33.0, 302.0, 326.0];
-const EXIT: [f32; 4] = [445.0, 380.0, 164.0, 30.0];
 
 impl Menus {
     fn at(&self, x: f32, y: f32) -> Pos2 {
@@ -1118,210 +1196,336 @@ fn clean(s: &str) -> String {
     s.chars().filter(|c| !c.is_control()).collect()
 }
 
-fn menus(ctx: &egui::Context, m: &Menus, ink: &Ink) {
-    if let Some(i) = &m.info {
-        long_info(&ctx.layer_painter(egui::LayerId::new(egui::Order::Background, egui::Id::new("smh-long-info"))), m, i, ink);
-    }
-    let top = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("smh-menus")));
-    if let Some(s) = &m.select {
-        select(&top, m, s, ink);
-    }
-    if let Some(r) = &m.radial {
-        radial(&top, m, r, ink);
+/// The long info's panel (the board's: 460 wide, right, under the bar) and its parts' sizes.
+const LI_W: f32 = 460.0;
+const LI_PAD: f32 = 18.0;
+const LI_HEAD: f32 = 144.0;
+const LI_GLOBE: f32 = 112.0;
+const LI_LABEL: f32 = 130.0;
+/// A settings row: the label's column, the ALL chip, the round − and + (`.ig-round.small` in its ring: 42).
+const LI_SET_LABEL: f32 = 120.0;
+const LI_ALL: f32 = 44.0;
+const LI_ROUND: f32 = 42.0;
+const LI_PLATES: f32 = 44.0;
+const LI_NAME: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
+const LI_OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
+
+/// Where the modern long info put the original's hot-spots this frame (points), so the pointer reaches them there.
+#[derive(Debug, Clone)]
+pub struct Placed {
+    map: [f32; 3],
+    panel: Rect,
+    spots: Vec<(u32, Rect)>,
+    /// An open select menu of the long info: its shift (virtual) and its rows' bounds (points).
+    menu: Option<([f32; 2], Rect)>,
+}
+
+/// A point inside the original's long info that is none of its controls (hot-spot 100: the panel takes the press).
+const NEUTRAL: [f32; 2] = [330.0, 40.0];
+
+/// The middle of the original's long-info hot-spot `id` (virtual).
+fn spot_centre(id: u32) -> Option<[f32; 2]> {
+    crate::starmap_menus::INFO_SPOTS.iter().find(|s| s.0 == id).map(|s| [(s.1[0] as f32 + s.1[2] as f32 / 2.0), (s.1[1] as f32 + s.1[3] as f32 / 2.0)])
+}
+
+impl State {
+    /// The pointer `at` (virtual) as the original's long-info hot-spots should see it under the modern panel: over one
+    /// of its controls, the middle of the original's spot; over the panel (or where the original's controls were),
+    /// the original panel's empty part; over an open settings menu, its original place. Elsewhere unchanged.
+    pub fn info_pointer(&self, at: [f32; 2]) -> [f32; 2] {
+        let Some(pl) = &self.placed else { return at };
+        let m = pl.map;
+        let p = pos2(m[0] + at[0] * m[2], m[1] + at[1] * m[2]);
+        if let Some((shift, r)) = pl.menu {
+            // Off the drawn menu nothing of the original's may answer, its rows at their old place included.
+            return if r.contains(p) { [at[0] - shift[0], at[1] - shift[1]] } else { NEUTRAL };
+        }
+        if let Some(c) = pl.spots.iter().find(|s| s.1.contains(p)).and_then(|s| spot_centre(s.0)) {
+            return c;
+        }
+        let classic = crate::starmap_menus::INFO_SPOTS.iter().any(|s| s.0 != 100 && crate::kit::inside(s.1, at)) || crate::starmap_menus::exit_spot(at);
+        if pl.panel.contains(p) || classic { NEUTRAL } else { at }
     }
 }
 
-/// The radial menu: a hub at the press point, a hairline to each icon, the icons on small plates that come out of the
-/// hub; armed (from frame 50) their edges light, the one under the pointer fills and shows its name.
-fn radial(p: &egui::Painter, m: &Menus, r: &Radial, ink: &Ink) {
+fn menus(ctx: &egui::Context, v: &View, st: &mut State, ink: &Ink, acts: &mut Vec<Act>) {
+    let m = &v.menus;
+    if let Some(i) = &m.info {
+        long_info(ctx, m, i, v, st, acts);
+    }
+    if m.select.is_none() && m.radial.is_none() {
+        return;
+    }
+    egui::Area::new(egui::Id::new("smh-menus")).order(egui::Order::Foreground).interactable(false).fixed_pos(ctx.screen_rect().min).fade_in(false).show(ctx, |ui| {
+        if let Some(s) = &m.select {
+            let shift = select_shift(m, s, st, ui.ctx().screen_rect());
+            let bounds = select(ui, m, s, shift);
+            if let Some(pl) = &mut st.placed {
+                pl.menu = (shift != [0.0; 2]).then_some((shift, bounds));
+            }
+        }
+        if let Some(r) = &m.radial {
+            radial(ui, m, r, ink);
+        }
+    });
+}
+
+/// A settings menu of the long info drops from its modern field (under it, or over it where the screen ends): moved
+/// by as much from where the original opened it at the press (virtual).
+fn select_shift(m: &Menus, s: &Select, st: &State, screen: Rect) -> [f32; 2] {
+    let (Some(pl), Some(first)) = (&st.placed, s.rows.first()) else { return [0.0; 2] };
+    let dist = |c: [f32; 2]| (c[0] - first.rect[0]).abs() + (c[1] - first.rect[1]).abs();
+    let near = pl.spots.iter().filter(|sp| matches!(sp.0, 0x5a | 0x5e | 0x60)).filter_map(|sp| spot_centre(sp.0).map(|c| (sp.1, dist(c)))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let Some((field, _)) = near.filter(|n| n.1 < 60.0) else { return [0.0; 2] };
+    let k = m.map[2];
+    let (x0, y0) = s.rows.iter().fold((f32::MAX, f32::MAX), |a, r| (a.0.min(r.rect[0]), a.1.min(r.rect[1])));
+    let (x1, y1) = s.rows.iter().fold((f32::MIN, f32::MIN), |a, r| (a.0.max(r.rect[0] + r.rect[2]), a.1.max(r.rect[1] + r.rect[3])));
+    let (w, h) = ((x1 - x0) * k, (y1 - y0) * k);
+    let left = field.left().min(screen.right() - 16.0 - w);
+    let top = if field.bottom() + 8.0 + h <= screen.bottom() - 8.0 { field.bottom() + 8.0 } else { field.top() - 8.0 - h };
+    [(left - m.map[0]) / k - x0, (top - m.map[1]) / k - y0]
+}
+
+/// The radial menu: a hub at the press point, a hairline to each icon, the icons on metal keys that come out of the
+/// hub; armed (from frame 50) they brighten, the one under the pointer lights in LCD ink and shows its name on a
+/// plate.
+fn radial(ui: &egui::Ui, m: &Menus, r: &Radial, ink: &Ink) {
+    let k = ds::tokens();
+    let p = ui.painter();
     let t = radial_in(r.frame);
     let armed = r.frame >= 50;
     let hub = m.at(r.at[0], r.at[1]);
     // About the 30-pixel circle each icon answers in.
-    let side = m.k(42.0);
+    let d = m.k(36.0);
     p.circle_stroke(hub, m.k(3.0), Stroke::new(1.5f32, ink.accent.gamma_multiply(t)));
     let mut label = None;
-    for k in 0..4 {
-        if r.icons[k] <= 0 {
+    for n in 0..4 {
+        if r.icons[n] <= 0 {
             continue;
         }
-        let c = m.at(r.centres[k][0], r.centres[k][1]);
+        let c = m.at(r.centres[n][0], r.centres[n][1]);
         let c = hub + (c - hub) * t;
-        let hot = armed && r.hover == r.icons[k];
+        let hot = armed && r.hover == r.icons[n];
         let dir = (c - hub).normalized();
-        p.line_segment([hub + dir * m.k(5.0), c - dir * side * 0.62], Stroke::new(1.0f32, ink.accent.gamma_multiply(0.45 * t)));
-        let rect = Rect::from_center_size(c, vec2(side, side));
-        let mut plate = plate_shape(rect, ink);
-        if let Shape::Vec(v) = &mut plate {
-            // The edge: the accent once armed, lit under the pointer.
-            if let Some(Shape::Path(path)) = v.get_mut(1) {
-                path.stroke.width = if hot { 2.0 } else { 1.0 };
-                path.stroke.color = egui::epaint::ColorMode::Solid(if hot { lerp(ink.accent, Color32::WHITE, 0.3) } else if armed { ink.accent.gamma_multiply(0.75) } else { ink.edge });
-                if hot {
-                    path.fill = lerp(ink.fill, ink.accent, 0.35);
-                }
-            }
+        p.line_segment([hub + dir * m.k(5.0), c - dir * d * 0.6], Stroke::new(1.0f32, ink.accent.gamma_multiply(0.45 * t)));
+        let rect = Rect::from_center_size(c, vec2(d, d));
+        let mut f = p.clone();
+        f.multiply_opacity(t);
+        ds::shadow(&f, rect.translate(vec2(0.0, 3.0)), 255, 0, 8, 0, Color32::from_black_alpha(200));
+        f.circle_filled(c, d / 2.0 + 1.0, k.metal_shadow);
+        ds::radial(&f, rect, 255, [0.4, 0.2], &[(0.0, k.metal_shine), (0.45, k.metal_light), (1.0, k.metal_dark)]);
+        ds::relief(&f, rect, 255);
+        let face = rect.shrink(d * 0.13);
+        f.circle_filled(c, face.width() / 2.0 + 1.0, k.metal_shadow);
+        if hot {
+            ds::shadow(&f, rect, 255, 0, 14, 0, k.lcd_ink.gamma_multiply(0.5));
+            ds::radial(&f, face, 255, [0.5, 0.4], &[(0.0, k.lcd), (1.0, k.metal_shadow)]);
+        } else {
+            ds::radial(&f, face, 255, [0.45, 0.3], &[(0.0, k.metal_dark), (1.0, k.metal_shadow)]);
         }
-        let mut faded = p.clone();
-        faded.multiply_opacity(t);
-        faded.add(plate);
-        let fg = if hot { Color32::WHITE } else { lerp(ink.text.gamma_multiply(0.8), ink.text, if armed { 1.0 } else { 0.0 }) };
-        icon(&faded, rect.shrink(side * 0.06), rop_icon(r.icons[k]), fg);
-        if hot && !r.names[k].is_empty() {
-            label = Some((k, rect));
+        ds::vgrad(&f, face, 255, &[(0.0, Color32::from_black_alpha(160)), (0.25, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+        let fg = if hot { k.lcd_ink } else if armed { k.ink_silver } else { k.ink_muted };
+        icon(&f, face.shrink(d * 0.1), rop_icon(r.icons[n]), fg);
+        if hot && !r.names[n].is_empty() {
+            label = Some((n, rect));
         }
     }
-    // The name out beside the icon under the pointer, away from the hub, over the other icons.
-    if let Some((k, rect)) = label {
-        let g = p.layout_no_wrap(r.names[k].clone(), FontId::proportional(m.k(6.2).max(11.0)), ink.text);
-        let pad = vec2(8.0, 4.0);
-        let size = g.size() + pad * 2.0;
-        let gap = 4.0;
-        let at = match k {
+    // The name out beside the icon under the pointer, away from the hub, over the other icons (`.ig-plate`, 13 / 0.16 em).
+    if let Some((n, rect)) = label {
+        let font = Font { size: 13.0, line: 16.0, weight: Weight::Medium, tracking: 0.16, upper: true, lcd: false };
+        let w = Text::new(&r.names[n], font).layout(ui.ctx(), 260.0).width + 28.0;
+        let size = vec2(w, 28.0);
+        let gap = 8.0;
+        let at = match n {
             0 => pos2(rect.left() - gap - size.x, rect.center().y - size.y / 2.0),
             1 => pos2(rect.center().x - size.x / 2.0, rect.bottom() + gap),
             2 => pos2(rect.right() + gap, rect.center().y - size.y / 2.0),
             _ => pos2(rect.center().x - size.x / 2.0, rect.top() - gap - size.y),
         };
         let at = Rect::from_min_size(at, size);
-        p.add(plate_shape(at, &Ink { fill: ink.fill.to_opaque(), ..*ink }));
-        p.galley(at.min + pad, g, ink.text);
+        ds::plate_fill(p, at, ds::RADIUS_PANEL, false);
+        Text::new(&r.names[n], font).center().color(k.ink).paint_only(ui, at.shrink2(vec2(14.0, 0.0)));
     }
 }
 
-/// A select menu: a plate around the rows, the row under the pointer filled in the accent.
-fn select(p: &egui::Painter, m: &Menus, s: &Select, ink: &Ink) {
-    let Some(first) = s.rows.first() else { return };
-    let mut b = m.rect(first.rect);
+/// A select menu (moved by `shift`, virtual): a deep glass panel around the rows, the row under the pointer in the
+/// list's selected look. Its bounds in points.
+fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2]) -> Rect {
+    let k = ds::tokens();
+    let p = ui.painter();
+    let rect = |r: [f32; 4]| m.rect([r[0] + shift[0], r[1] + shift[1], r[2], r[3]]);
+    let Some(first) = s.rows.first() else { return Rect::NOTHING };
+    let mut b = rect(first.rect);
     for r in &s.rows {
-        b = b.union(m.rect(r.rect));
+        b = b.union(rect(r.rect));
     }
-    let font = FontId::proportional(m.k(6.0).max(11.0));
-    let sub = FontId::proportional(m.k(5.0).max(10.0));
+    let row_h = b.height() / s.rows.len().max(1) as f32;
+    let font = Font::DATA.sized((row_h * 0.55).clamp(11.0, 15.0));
+    let sub = Font::LABEL.upper(false).sized((row_h * 0.45).clamp(10.0, 13.0));
     // Room for the texts (the sale's line is wider than its row).
-    let widest = s.rows.iter().map(|r| p.layout_no_wrap(r.text.clone(), font.clone(), ink.text).size().x + if r.sub.is_empty() { 0.0 } else { p.layout_no_wrap(r.sub.clone(), sub.clone(), ink.dim).size().x + m.k(4.0) }).fold(0.0, f32::max);
-    b.max.x = b.max.x.max(b.min.x + widest + m.k(4.0));
-    // Opaque: it opens over the long info's own fields.
-    let solid = Ink { fill: ink.fill.to_opaque(), ..*ink };
-    p.add(plate_shape(b.expand2(vec2(m.k(5.0), m.k(3.0))), &solid));
+    let widest = s.rows.iter().map(|r| Text::new(&r.text, font).layout(ui.ctx(), f32::INFINITY).width + if r.sub.is_empty() { 0.0 } else { Text::new(&r.sub, sub).layout(ui.ctx(), f32::INFINITY).width + 10.0 }).fold(0.0, f32::max);
+    b.max.x = b.max.x.max(b.min.x + widest + 16.0);
+    let panel = b.expand2(vec2(8.0, 6.0));
+    ds::paint_panel(p, panel, ds::PanelKind::Deep, 0.97);
     for r in &s.rows {
-        let mut rect = m.rect(r.rect);
-        if s.rows.len() == 1 {
-            rect.max.x = b.max.x;
-        }
+        let mut row = rect(r.rect);
+        row.max.x = b.max.x;
+        let row = row.expand2(vec2(4.0, 0.0));
         if r.hovered {
-            p.rect_filled(rect.expand2(vec2(m.k(3.0), 0.0)), 1.0, ink.accent.gamma_multiply(0.32));
+            ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
+            ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
         }
-        let colour = if r.hovered { Color32::WHITE } else { ink.text };
-        let g = p.layout_no_wrap(r.text.clone(), font.clone(), colour);
-        let w = g.size().x;
-        p.galley(pos2(rect.left(), rect.center().y - g.size().y / 2.0), g, colour);
+        let inner = row.shrink2(vec2(6.0, 0.0));
+        let base = crate::gui::ds::fit::baseline(inner, font);
+        let w = Text::new(&r.text, font).color(k.ink).baseline(base).paint_only(ui, inner).width;
         if !r.sub.is_empty() {
-            let g = p.layout_no_wrap(r.sub.clone(), sub.clone(), ink.dim);
-            p.galley(pos2(rect.left() + w + m.k(4.0), rect.center().y - g.size().y / 2.0), g, ink.dim);
+            Text::new(&r.sub, sub).color(k.ink_muted).baseline(base).paint_only(ui, Rect::from_min_max(pos2(inner.left() + w + 10.0, inner.top()), inner.max));
         }
     }
+    panel
 }
 
-/// The long info: a console plate over the original's box with the planet's name as its title, the rows in two
-/// columns, the problems, the settings as controls on the original's hot-spots, the exit button sliding in below.
-fn long_info(p: &egui::Painter, m: &Menus, i: &LongInfo, ink: &Ink) {
-    let mut p = p.clone();
-    p.multiply_opacity(i.q.clamp(0.0, 1.0));
-    let panel = m.rect(INFO_PANEL);
-    p.add(plate_shape(panel, ink));
-    let x0 = INFO_PANEL[0] + 1.0;
-    let label_font = FontId::proportional(m.k(5.8).max(10.0));
-    let value_font = FontId::proportional(m.k(6.6).max(11.0));
-    let warn = Color32::from_rgb(235, 96, 84);
-    let text = |s: &str, x: f32, y: f32, font: &FontId, c: Color32| {
-        let g = p.layout_no_wrap(s.to_string(), font.clone(), c);
-        let h = g.size().y;
-        p.galley(m.at(x, y) - vec2(0.0, h / 2.0), g, c);
-    };
-    // The title: the name in the owner's colour, a hairline under it.
-    text(&i.title, x0 + 10.0, 10.0 + 34.0 + 4.0, &FontId::proportional(m.k(9.0).max(14.0)), lerp(i.colour, Color32::WHITE, 0.2));
-    p.line_segment([m.at(x0 + 10.0, 34.0 + 19.0), m.at(INFO_PANEL[0] + INFO_PANEL[2] - 10.0, 34.0 + 19.0)], Stroke::new(1.0f32, ink.edge));
-    for l in &i.lines {
-        let y = l.y + 4.0;
-        text(&l.label, x0 + 10.0, y, &label_font, ink.dim);
-        let c = if l.short { warn } else if l.special { ink.accent } else { ink.text };
-        text(&clean(&l.value), x0 + 0x4e as f32, y, &value_font, c);
-        if let Some((label, value)) = &l.needed {
-            text(label, x0 + 0x8c as f32, y, &label_font, ink.dim);
-            text(&clean(value), x0 + 0xd0 as f32, y, &value_font, c);
+/// A data line of the long info (`.ig-table`: the label muted and upper case in its column, the value in the data
+/// style on the same baseline).
+fn table_row(ui: &mut egui::Ui, label: &str, value: &str, c: Color32, pitch: f32) {
+    let label = label.trim_end_matches(':');
+    let (r, _) = ui.allocate_exact_size(vec2(LI_W, pitch), Sense::hover());
+    let r = Rect::from_min_size(r.min + vec2(LI_PAD, 0.0), vec2(LI_W - 2.0 * LI_PAD, 20.0));
+    let base = crate::gui::ds::fit::baseline(r, Font::DATA);
+    let (a, b) = r.split_left_right_at_x(r.left() + LI_LABEL);
+    Text::new(label, Font::LABEL).color(ds::tokens().ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - ds::SPACE[2]));
+    Text::new(value, Font::DATA).color(c).baseline(base).paint(ui, b);
+}
+
+/// The planet's long info as the board's panel at the screen's right under the bar: the globe, name, owner and
+/// ratios on a lit header, the original's lines as a data table, the problems, the settings (a field that opens its
+/// menu, ALL, − and +), the production and exit plates. The panel takes no input itself: its controls are the
+/// original's hot-spots moved here ([`State::info_pointer`]), lit from the original's hover and held state; the plates
+/// are the card's production button and the info box's left click, which leave the long info.
+fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut State, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let q = i.q.clamp(0.0, 1.0).max(i.exit_in.clamp(0.0, 1.0));
+    let ease = 1.0 - (1.0 - q) * (1.0 - q);
+    let at = pos2(ctx.screen_rect().right() - GAP - LI_W + 24.0 * (1.0 - ease), BAR_H + 28.0);
+    let card = v.info.as_ref().filter(|c| c.planet);
+    let mut spots = Vec::new();
+    let mut plates = Rect::NOTHING;
+    let panel = egui::Area::new(egui::Id::new("smh-long-info")).order(egui::Order::Background).interactable(false).fixed_pos(at).fade_in(false).show(ctx, |ui| {
+        ui.set_opacity(ease);
+        let back = ui.painter().add(Shape::Noop);
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        ui.set_width(LI_W);
+        // The header: the globe, the name, the owner glowing in its colour, the richness and habitability.
+        let (h, _) = ui.allocate_exact_size(vec2(LI_W, LI_HEAD), Sense::hover());
+        let p = ui.painter();
+        ds::vgrad(p, h, CornerRadius { nw: ds::RADIUS_PANEL, ne: ds::RADIUS_PANEL, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
+        globe(p, Rect::from_min_size(h.min + vec2(LI_PAD, 16.0), vec2(LI_GLOBE, LI_GLOBE)), i.colour, true);
+        let tx = h.left() + LI_PAD + LI_GLOBE + 16.0;
+        let tw = h.right() - LI_PAD - tx;
+        let owner = card.and_then(|c| c.lines.first()).map_or("", |l| l.0.as_str());
+        let sub = card.map(|c| c.stats.iter().map(|(l, val)| format!("{l} {val}")).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
+        let lines = [owner.is_empty(), sub.is_empty()].iter().filter(|e| !**e).count() as f32;
+        let mut y = h.center().y - (30.0 + 22.0 * lines) / 2.0;
+        Text::new(&i.title, LI_NAME).color(k.ink).paint(ui, Rect::from_min_size(pos2(tx, y), vec2(tw, 30.0)));
+        y += 34.0;
+        if !owner.is_empty() {
+            let f = Text::new(owner, LI_OWNER).color(i.colour).layout(ui.ctx(), tw);
+            let r = Rect::from_min_size(pos2(tx, y), vec2(tw, 18.0));
+            ds::glowing_galley(ui.painter(), pos2(tx, crate::gui::ds::fit::baseline(r, LI_OWNER) - f.baseline()), &f.galley, i.colour);
+            y += 22.0;
         }
-    }
-    if let Some((label, y, problems)) = &i.problems {
-        text(label, x0 + 10.0, y + 4.0, &label_font, ink.dim);
-        for (n, (pct, name)) in problems.iter().enumerate() {
-            let y = y + 6.0 + 12.0 * n as f32;
-            let g = p.layout_no_wrap(format!("{pct}%"), label_font.clone(), warn);
-            p.galley(m.at(x0 + 0x6a as f32, y) - vec2(g.size().x, g.size().y / 2.0), g, warn);
-            text(name, x0 + 0x70 as f32, y, &label_font, ink.text);
+        if !sub.is_empty() {
+            Text::new(&sub, BUTTON_TEXT).color(k.ink_muted).paint(ui, Rect::from_min_size(pos2(tx, y), vec2(tw, 18.0)));
         }
-    }
-    if let Some((labels, values, all)) = &i.settings {
-        p.line_segment([m.at(x0 + 10.0, 280.0), m.at(INFO_PANEL[0] + INFO_PANEL[2] - 10.0, 280.0)], Stroke::new(1.0f32, ink.edge));
-        let spot = |id: u32| crate::starmap_menus::INFO_SPOTS.iter().find(|s| s.0 == id).map(|s| m.rect(s.1.map(|c| c as f32)));
-        let state = |id: u32| (i.hot == Some(id), i.hot == Some(id) && i.held);
-        for k in 0..3 {
-            let [field, all_id, minus, plus] = [[0x5a, 0x5b, 0x5c, 0x5d], [0x5e, 0x5f, 0, 0], [0x60, 0x61, 0x62, 0x63]][k];
-            let y = 34.0 + 0x104 as f32 + 22.0 * k as f32 + 3.0;
-            text(&labels[k], x0 + 10.0, y, &label_font, ink.dim);
-            // The value: an inset field that opens its menu, with a chevron.
-            if let Some(r) = spot(field) {
+        // The original's lines; the needed amount after the value. The rows close up where the screen is short.
+        ui.add_space(4.0);
+        let rows = i.lines.len() + i.problems.as_ref().map_or(0, |p| p.2.len());
+        let rest = 4.0 + 12.0 + if i.settings.is_some() { 14.0 + 3.0 * (LI_ROUND + 8.0) } else { 0.0 } + LI_PLATES + LI_PAD + 4.0;
+        let room = ctx.screen_rect().bottom() - GAP - at.y - LI_HEAD - rest;
+        let pitch = (room / rows.max(1) as f32).clamp(20.0, 26.0);
+        for l in &i.lines {
+            let c = if l.short { k.enemy } else if l.special { k.own } else { k.info };
+            let value = match &l.needed {
+                Some((_, n)) => format!("{} / {}", clean(&l.value), clean(n)),
+                None => clean(&l.value),
+            };
+            table_row(ui, &l.label, &value, c, pitch);
+        }
+        if let Some((label, _, problems)) = &i.problems {
+            for (n, (pct, name)) in problems.iter().enumerate() {
+                table_row(ui, if n == 0 { label } else { "" }, &format!("{pct}% {name}"), k.enemy, pitch);
+            }
+        }
+        ui.add_space(12.0);
+        // The settings: one row each, the original's controls on the original's hot-spots.
+        if let Some((labels, values, all)) = &i.settings {
+            let (line, _) = ui.allocate_exact_size(vec2(LI_W, 14.0), Sense::hover());
+            ui.painter().hline(line.x_range(), line.top() + 0.5, Stroke::new(1.0f32, k.rim));
+            for n in 0..3 {
+                let [field, all_id, minus, plus] = [[0x5a, 0x5b, 0x5c, 0x5d], [0x5e, 0x5f, 0, 0], [0x60, 0x61, 0x62, 0x63]][n];
+                let (row, _) = ui.allocate_exact_size(vec2(LI_W, LI_ROUND + 8.0), Sense::hover());
+                let row = Rect::from_min_size(row.min + vec2(LI_PAD, 0.0), vec2(LI_W - 2.0 * LI_PAD, LI_ROUND));
+                let state = |id: u32| (ds::hover_t(ctx, egui::Id::new(("smh-li", id)), i.hot == Some(id)), i.hot == Some(id) && i.held);
+                Text::new(labels[n].trim_end_matches(':'), Font::LABEL).color(k.ink_muted).paint(ui, row.with_max_x(row.left() + LI_SET_LABEL));
+                let fw = row.width() - LI_SET_LABEL - LI_ALL - 2.0 * LI_ROUND - 4.0 * 8.0;
+                let mut x = row.left() + LI_SET_LABEL + 8.0;
+                let mut next = |w: f32, h: f32| {
+                    let r = Rect::from_min_size(pos2(x, row.center().y - h / 2.0), vec2(w, h));
+                    x += w + 8.0;
+                    r
+                };
+                // The value: a field with a chevron that opens its menu.
+                let r = next(fw, 36.0);
                 let (hot, down) = state(field);
-                control(&p, r, ink, hot, down);
-                let g = p.layout_no_wrap(values[k].clone(), value_font.clone(), ink.text);
-                p.galley(pos2(r.left() + m.k(4.0), r.center().y - g.size().y / 2.0), g, ink.text);
-                let c = pos2(r.right() - m.k(6.0), r.center().y);
-                let s = m.k(2.0);
-                p.add(Shape::line(vec![pos2(c.x - s, c.y - s * 0.5), pos2(c.x, c.y + s * 0.5), pos2(c.x + s, c.y - s * 0.5)], Stroke::new(1.3f32, ink.accent)));
-            }
-            if let Some(r) = spot(all_id) {
+                let p = ui.painter();
+                p.rect_filled(r, ds::RADIUS_PLATE, if down { k.plate_low } else { k.glass_deep });
+                ds::rim(p, r, ds::RADIUS_PLATE, k.rim_bright.lerp_to_gamma(k.focus, hot));
+                Text::new(&values[n], Font::DATA).color(k.ink).paint_only(ui, r.shrink2(vec2(10.0, 0.0)).with_max_x(r.right() - 26.0));
+                ds::Icon::ChevronDown.paint(p, Rect::from_center_size(pos2(r.right() - 15.0, r.center().y), vec2(16.0, 16.0)), k.ink_silver.lerp_to_gamma(k.ink, hot));
+                spots.push((field, r));
+                // ALL: a small plate.
+                let r = next(LI_ALL, 36.0);
                 let (hot, down) = state(all_id);
-                control(&p, r, ink, hot, down);
-                let g = p.layout_no_wrap(all.clone(), label_font.clone(), if down { Color32::WHITE } else { ink.accent });
-                p.galley(r.center() - g.size() / 2.0, g, if down { Color32::WHITE } else { ink.accent });
-            }
-            for (id, plus) in [(minus, false), (plus, true)] {
-                if let Some(r) = spot(id).filter(|_| id != 0) {
-                    let (hot, down) = state(id);
-                    control(&p, r, ink, hot, down);
-                    let (c, s) = (r.center(), r.height() * 0.22);
-                    let st = Stroke::new(1.5f32, if hot { Color32::WHITE } else { ink.text });
-                    p.line_segment([pos2(c.x - s, c.y), pos2(c.x + s, c.y)], st);
-                    if plus {
-                        p.line_segment([pos2(c.x, c.y - s), pos2(c.x, c.y + s)], st);
+                ds::plate_fill(ui.painter(), r, ds::RADIUS_PLATE, down);
+                if hot > 0.0 {
+                    ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+                }
+                Text::new(all, Font::LABEL.tracking(0.08)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
+                spots.push((all_id, r));
+                for (id, glyph) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
+                    let r = next(LI_ROUND, LI_ROUND);
+                    if id != 0 {
+                        let (hot, down) = state(id);
+                        ds::forced(hot > 0.5, down, || ui.put(r, |ui: &mut egui::Ui| ds::round_button(ui, ds::Glyph::Icon(glyph), true, false)));
+                        spots.push((id, r));
                     }
                 }
             }
         }
-    }
-    // The exit button slides in from the right as the camera flies in.
-    if i.exit_in > 0.0 {
-        let x = ((1.0 - ((i.exit_in as f64) * std::f64::consts::FRAC_PI_2).sin()) * 200.0) as f32;
-        let r = m.rect([EXIT[0] + x, EXIT[1], EXIT[2], EXIT[3]]);
-        let hot = i.hot == Some(9);
-        p.add(plate_shape(r, ink));
-        if hot {
-            p.add(Shape::convex_polygon(cut_corners(r.shrink(1.0), 6.0), ink.accent.gamma_multiply(if i.held { 0.45 } else { 0.25 }), Stroke::NONE));
-        }
-        let g = p.layout_no_wrap(i.exit.clone(), FontId::proportional(m.k(7.0).max(12.0)), if hot { Color32::WHITE } else { ink.text });
-        p.galley(r.center() - g.size() / 2.0, g, if hot { Color32::WHITE } else { ink.text });
-    }
-}
-
-/// A small control on the long info: an inset field, lit under the pointer, pressed while held.
-fn control(p: &egui::Painter, r: Rect, ink: &Ink, hot: bool, down: bool) {
-    let fill = match () {
-        _ if down => ink.accent.gamma_multiply(0.4),
-        _ if hot => ink.accent.gamma_multiply(0.18),
-        _ => Color32::from_black_alpha(90),
-    };
-    p.rect_filled(r, 2.0, fill);
-    p.rect_stroke(r, 2.0, Stroke::new(1.0f32, if hot { ink.accent.gamma_multiply(0.8) } else { ink.edge }), egui::StrokeKind::Inside);
+        // Room for the plates (drawn on their own, they take the pointer).
+        let (r, _) = ui.allocate_exact_size(vec2(LI_W, LI_PLATES + LI_PAD + 4.0), Sense::hover());
+        plates = Rect::from_min_size(r.min + vec2(LI_PAD, 4.0), vec2(LI_W - 2.0 * LI_PAD, LI_PLATES));
+        let rect = ui.min_rect();
+        ds::behind(ui, back, |p| ds::paint_panel(p, rect, ds::PanelKind::Glass, 0.94));
+    });
+    st.placed = Some(Placed { map: m.map, panel: panel.response.rect, spots, menu: None });
+    // Production (the card's button, hot-spot 11) and the exit (the info box's left click, hot-spot 8): both leave.
+    egui::Area::new(egui::Id::new("smh-long-info-plates")).fixed_pos(plates.min).fade_in(false).show(ctx, |ui| {
+        ui.set_opacity(ease);
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let w = ((plates.width() - 16.0) / 3.0).floor();
+        let font = Plate::FONT.sized(15.0).tracking(0.12);
+        ui.horizontal(|ui| {
+            ui.add_space(w + 8.0);
+            // The original's production button (hot-spot 11) leaves the long info whatever the planet.
+            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&v.tips[9]).width(w).font(font))).clicked() {
+                acts.push(Act::Panel(11));
+            }
+            if hand(ui.add_sized(vec2(w, LI_PLATES), Plate::new(&i.exit).width(w).font(font))).clicked() {
+                acts.push(Act::Info(false));
+            }
+        });
+    });
 }
 
 #[cfg(test)]
@@ -1396,15 +1600,15 @@ mod tests {
     /// The pause button is the top left plate's first; a click on it asks for the pause, nothing else.
     #[test]
     fn pause_click() {
-        let at = |ctx: &egui::Context| area(ctx, "smh-left").left_top() + vec2(TOP.left as f32 + BUTTON / 2.0, TOP.top as f32 + BUTTON / 2.0);
+        let at = |ctx: &egui::Context| area(ctx, "smh-left").left_top() + vec2(BAR_PAD.x + 2.0 + KEY.x / 2.0, BAR_H / 2.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Pause]);
     }
 
-    /// The screens are icons on the top right plate: a click picks the screen.
+    /// The screens are keys at the bar's right end: a click picks the screen.
     #[test]
     fn screen_icon_click() {
-        let at = |ctx: &egui::Context| area(ctx, "smh-right").right_top() + vec2(-(TOP.right as f32) - BUTTON / 2.0, TOP.top as f32 + BUTTON / 2.0);
+        let at = |ctx: &egui::Context| area(ctx, "smh-left").right_top() + vec2(-BAR_PAD.x - 2.0 - KEY.x / 2.0, BAR_H / 2.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Screen(3)]);
     }
@@ -1433,8 +1637,8 @@ mod tests {
             select: Some(Select { rows: vec![SelectRow { rect: [400.0, 300.0, 121.0, 13.0], text: "Low".into(), hovered: true, ..Default::default() }] }),
             info: Some(LongInfo { q: 1.0, exit_in: 1.0, title: "Magellan 10".into(), ..Default::default() }),
         };
-        // On the select menu's row, on the long info's panel, on a radial icon.
-        for at in [pos2(240.0 + 450.0 * 2.25, 306.0 * 2.25), pos2(240.0 + 350.0 * 2.25, 100.0 * 2.25), pos2(240.0 + 370.0 * 2.25, 242.0 * 2.25)] {
+        // On the select menu's row, on the long info's panel (at the screen's right), on a radial icon.
+        for at in [pos2(240.0 + 450.0 * 2.25, 306.0 * 2.25), pos2(SIZE.0 as f32 - GAP - LI_W / 2.0, BAR_H + 28.0 + 100.0), pos2(240.0 + 370.0 * 2.25, 242.0 * 2.25)] {
             let acts = drive(&v, &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], |_| at);
             assert!(acts.is_empty(), "{acts:?}");
             let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
@@ -1465,9 +1669,9 @@ mod tests {
                 rect = area(ctx, "smh-mini");
             });
         }
-        // The strip's third button (zoom in), under the minimap.
-        let x0 = NAV.left as f32 + (MAP_W - 8.0 * CAM - 7.0 * CAM_GAP) / 2.0;
-        let p = rect.left_bottom() + vec2(x0 + 2.0 * (CAM + CAM_GAP) + CAM / 2.0, -(NAV.bottom as f32) - CAM / 2.0);
+        // The strip's third key (zoom in), under the radar.
+        let x0 = 10.0 + ((NAV_W - group_w(6, CAM_KEY.x) - group_w(2, CAM_KEY.x) - 4.0) / 2.0).max(0.0) + 2.0;
+        let p = rect.left_bottom() + vec2(x0 + 2.0 * (CAM_KEY.x + 2.0) + CAM_KEY.x / 2.0, -10.0 - 2.0 - CAM_KEY.y / 2.0);
         let mut held = Vec::new();
         for step in 0..5 {
             g.pointer(Some([p.x * k, p.y * k]), k);
@@ -1479,5 +1683,93 @@ mod tests {
             g.run(SIZE, &style, |ctx| held.extend(show(ctx, &v, &mut st).into_iter().filter_map(|a| if let Act::Hold(h) = a { Some(h) } else { None })));
         }
         assert_eq!(held, vec![None, Some((5, true)), Some((5, true)), None, None]);
+    }
+
+    /// Under the modern long info the pointer reaches the original's hot-spots where their controls are drawn: a field
+    /// is its spot's middle, the rest of the panel and the original's places are the panel's empty part, a settings
+    /// menu is moved back to where it opened; elsewhere the pointer is unchanged.
+    #[test]
+    fn long_info_pointer_reaches_the_original_spots() {
+        let mut v = view();
+        let map = [240.0, 0.0, 2.25];
+        let settings = (["Tax:".into(), "Auto build:".into(), "Priority:".into()], ["Low".into(), "Civil".into(), "Normal".into()], "ALL".into());
+        v.menus = Menus { map, info: Some(LongInfo { q: 1.0, exit_in: 1.0, title: "Magellan 10".into(), settings: Some(settings), ..Default::default() }), ..Default::default() };
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let mut st = State::default();
+        for _ in 0..3 {
+            g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
+        }
+        let pl = st.placed.clone().expect("placed");
+        let virt = |p: Pos2| [(p.x - map[0]) / map[2], (p.y - map[1]) / map[2]];
+        // Each control on its spot; the tax field (0x5a: 400, 289, 100 × 16) and the priority's plus (0x63).
+        for (id, want) in [(0x5a, [450.0, 297.0]), (0x63, [578.0, 341.0]), (0x5f, [521.0, 319.0])] {
+            let r = pl.spots.iter().find(|s| s.0 == id).expect("spot").1;
+            assert!(r.left() > SIZE.0 as f32 - GAP - LI_W, "{id:#x} {r:?}");
+            assert_eq!(st.info_pointer(virt(r.center())), want, "{id:#x}");
+        }
+        // The panel's header: the original panel's empty part, no control.
+        assert_eq!(st.info_pointer(virt(pl.panel.left_top() + vec2(40.0, 40.0))), NEUTRAL);
+        // The original's tax field and exit button, where nothing modern is: no press reaches them.
+        assert_eq!(st.info_pointer([450.0, 297.0]), NEUTRAL);
+        assert_eq!(st.info_pointer([500.0, 400.0]), NEUTRAL);
+        // The open map: unchanged.
+        assert_eq!(st.info_pointer([100.0, 200.0]), [100.0, 200.0]);
+        // A tax menu opened at the field's spot (its rows from the press point) is drawn at the modern field, and the
+        // pointer over a drawn row reaches the row.
+        v.menus.select = Some(Select { rows: vec![SelectRow { rect: [450.0, 297.0, 80.0, 13.0], text: "Low".into(), ..Default::default() }, SelectRow { rect: [450.0, 310.0, 80.0, 13.0], text: "High".into(), ..Default::default() }] });
+        for _ in 0..2 {
+            g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
+        }
+        let (shift, bounds) = st.placed.as_ref().and_then(|p| p.menu).expect("menu");
+        let field = st.placed.as_ref().unwrap().spots.iter().find(|s| s.0 == 0x5a).unwrap().1;
+        assert!((field.left() - (map[0] + (450.0 + shift[0]) * map[2])).abs() < 1.0, "{shift:?}");
+        assert!((field.bottom() + 8.0 - (map[1] + (297.0 + shift[1]) * map[2])).abs() < 1.0, "{shift:?}");
+        let row = pos2(map[0] + (470.0 + shift[0]) * map[2], map[1] + (316.0 + shift[1]) * map[2]);
+        assert!(bounds.contains(row));
+        let back = st.info_pointer(virt(row));
+        assert!((back[0] - 470.0).abs() < 0.01 && (back[1] - 316.0).abs() < 0.01, "{back:?}");
+        // Off the drawn menu, the original's rows at their old place answer nothing (no unseen pick).
+        assert_eq!(st.info_pointer([470.0, 316.0]), NEUTRAL);
+    }
+
+    /// Long texts (a long translation, a long name) never resize the panels: they are cut or shrunk inside them.
+    #[test]
+    fn long_texts_keep_the_panels_size() {
+        let long = "Hosszú szöveg, amely sokkal hosszabb, mint amennyi hely van rá ".repeat(4);
+        let mut v = view();
+        v.line = long.clone();
+        v.date = "2327-10-23".into();
+        v.research.current = Some((1, long.clone(), 64, 100));
+        if let Some(i) = &mut v.info {
+            i.title = long.clone();
+            i.lines = vec![(long.clone(), Color32::WHITE); 3];
+            i.left = long.clone();
+            i.right = Some(long.clone());
+            i.stats = vec![(long.clone(), long.clone()); 2];
+        }
+        let settings = ([long.clone(), long.clone(), long.clone()], [long.clone(), long.clone(), long.clone()], long.clone());
+        let rows = vec![InfoRow { label: long.clone(), value: long.clone(), needed: Some((long.clone(), long.clone())), ..Default::default() }; 3];
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let mut st = State::default();
+        let mut rects = Vec::new();
+        for info in [None, Some(LongInfo { q: 1.0, exit_in: 1.0, title: long.clone(), lines: rows, settings: Some(settings), exit: long.clone(), ..Default::default() })] {
+            v.menus.info = info;
+            for _ in 0..3 {
+                g.run(SIZE, &style, |ctx| {
+                    show(ctx, &v, &mut st);
+                    rects = ["smh-left", "smh-info", "smh-mini", "smh-long-info"].iter().map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id)))).collect();
+                });
+            }
+            let [bar, card, nav, li] = [rects[0], rects[1], rects[2], rects[3]];
+            assert_eq!(bar.map(|r| r.size()), Some(vec2(SIZE.0 as f32, BAR_H)));
+            assert_eq!(nav.map(|r| r.width()), Some(NAV_W + 20.0));
+            if v.menus.info.is_none() {
+                assert_eq!(card.map(|r| r.width()), Some(CARD_W));
+            } else {
+                assert_eq!(li.map(|r| r.width()), Some(LI_W));
+            }
+        }
     }
 }

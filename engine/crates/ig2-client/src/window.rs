@@ -2326,7 +2326,7 @@ impl App {
     /// A left press on the starmap (`Starmap_Main`): the long info's hot-spots, the panels', the production view's
     /// planet list, then the map: the redirect pick, or a pick that becomes the selection and opens the radial menu.
     fn starmap_press(&mut self) -> bool {
-        let at = self.virtual_cursor();
+        let at = self.starmap_virtual(self.virtual_cursor());
         let sel = self.selection();
         // The tutorial's DISABLE STARMAP: `Starmap_MouseInit2` (exe 0x5b898f) switches every hot-spot off and only
         // 1..=7 back on (the console and the minimap; not under the long info): no picks, panels or info box.
@@ -2435,6 +2435,12 @@ impl App {
     /// The pointer in virtual pixels.
     fn virtual_cursor(&self) -> [f32; 2] {
         self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor))
+    }
+
+    /// Ours (ADR 0079): under the modern HUD the long info's controls lie elsewhere; the virtual point `at` as its
+    /// hot-spots see it.
+    fn starmap_virtual(&self, at: [f32; 2]) -> [f32; 2] {
+        if self.modern_up() && self.menus.info_on() { self.modern.info_pointer(at) } else { at }
     }
 
     /// `TutorialStarmapMindenLetiltvaKiveveAKurzorMozgatoBillentyuket` (exe 0xf66ff8, DISABLE STARMAP): read only by
@@ -6556,7 +6562,7 @@ impl App {
         }
         let info_modern = self.info_modern_up();
         if let Some(v) = &self.view {
-            let at = v.camera.virtual_of(p);
+            let at = self.starmap_virtual(v.camera.virtual_of(p));
             self.panels.hover(at);
             self.menus.hover(at);
             if let Some(h) = &mut self.hud {

@@ -103,7 +103,7 @@ impl App {
             _ if self.front.is_some() => self.front.as_ref().map_or([0.0; 2], |f| f.at),
             _ if self.options.is_some() => self.options.as_ref().map_or([0.0; 2], |o| o.s.at),
             _ if self.help.is_some() => self.help.as_ref().map_or([0.0; 2], |h| h.s.at),
-            _ => self.virtual_cursor(),
+            _ => self.starmap_virtual(self.virtual_cursor()),
         }
     }
 
@@ -151,6 +151,9 @@ impl App {
         }
         let now = self.start.elapsed().as_secs_f64() * 1000.0;
         let at = self.overlay_at();
+        // Ours (ADR 0079): the pointer and its tooltip stay where the pointer is; only the hot-spots see the modern long
+        // info's remap.
+        let drawn = if self.front.is_some() || self.options.is_some() || self.help.is_some() { at } else { self.virtual_cursor() };
         let game = self.front.is_none();
         let colony = self.colony_shown().then(|| self.colony_overlay()).flatten();
         let starmap_shown = game && self.colony.is_none() && self.overlay.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.spacewar.is_none();
@@ -204,7 +207,7 @@ impl App {
                 (None, ..) if info.is_some() => info.clone().map_or((0, Vec::new()), |(id, t)| (id + 0x1e, t)),
                 _ => (0, Vec::new()),
             };
-            self.bar_tip.moved(colony.as_ref().map_or(at, |c| c.at));
+            self.bar_tip.moved(colony.as_ref().map_or(drawn, |c| c.at));
             let len = text.split(|&b| b == 0).next().map_or(0, <[u8]>::len);
             if starmap.as_ref().is_some_and(|t| t.now) {
                 self.bar_tip.update_now(now, slot, len);
@@ -237,7 +240,7 @@ impl App {
                     } else {
                         screen_kind
                     };
-                    ([at[0] as i32, at[1] as i32], kind, now as u64 / 10)
+                    ([drawn[0] as i32, drawn[1] as i32], kind, now as u64 / 10)
                 }
             });
         }

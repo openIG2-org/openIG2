@@ -102,6 +102,8 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 503 | info, modern panels | the 3D frame, its globes, heads and button animation aren't drawn in the modern info screen; off = the original's | yes | ADR 0072 |
 | 505 | production view and research screen, modern panels' buttons | the modern production view's and research screen's buttons act on the release over them (a drag off cancels), the original's on the press; the count buttons and the planet list still act on the press and the same code runs, so the orders and sounds are the same | yes | ADR 0071 |
 | 506 | production view, modern design list | a slot's design is picked with one click in a list beside the slot; the original's list is held open under the pointer and picks on the release; the order (0x1d(4)) and its checks are the release's | yes | ADR 0071, starmap.md §12.5 |
+| 510 | starmap, modern long info | under the modern HUD the long info's exit and production plates act on the release over them, the original's hot-spots 9 and 11 on the press | yes | ADR 0079 |
+| 511 | starmap, modern long info | under the modern HUD the stations' sale strips (hot-spots 0x65..) stay live at the original's place with no station list drawn | yes | ADR 0079 |
 
 ## Enhanced
 

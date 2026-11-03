@@ -334,7 +334,7 @@ mod tests {
     use super::*;
 
     fn run(v: &View, st: &mut State, events: Vec<egui::Event>) -> (egui::Context, Vec<Act>) {
-        let ctx = egui::Context::default();
+        let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
         let mut acts = Vec::new();
         for i in 0..4 {
             let ev = if i == 3 { events.clone() } else { Vec::new() };
@@ -376,7 +376,7 @@ mod tests {
         // The fourth category's row: 7 margin, 26 a row, none of the gaps before category 6.
         let at = pos2(a.left() + 40.0, a.top() + 7.0 + 26.0 * 3.0 + 13.0);
         let click = |p: egui::Pos2| vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
-        let ctx2 = egui::Context::default();
+        let ctx2 = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
         let mut acts = Vec::new();
         for ev in [Vec::new(), Vec::new(), click(at)] {
             let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0))), events: ev, ..Default::default() };

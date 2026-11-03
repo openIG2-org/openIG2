@@ -1,6 +1,6 @@
 # ADR 0065: the modern starmap HUD
 
-Date: 2026-11-01. Status: accepted (part 3 of the egui package, after ADR 0062). Implemented by
+Date: 2026-11-01. Status: accepted (part 3 of the egui package, after ADR 0062); amended by ADR 0079 (look on the design kit, the long info's place). Implemented by
 `ig2-client::starmap_modern` (the panels, their acts), `ui::Hud::modern_view` (what they show, read from the state the
 original's HUD reads) and the window (`window.rs`: `modern_up`, the pointer routing, `modern_apply`; the frame's
 `Gpu::present_over`); `--snapshot --modern-hud` draws it headless.

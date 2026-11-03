@@ -1003,7 +1003,7 @@ impl Hud {
                         title = dec(&l.value);
                     } else {
                         let needed = l.needed.as_ref().map(|nd| (label(l.n + 1), dec(nd)));
-                        lines.push(m::InfoRow { y, label: label(l.n), value: dec(&l.value), short: l.colour == 6 && l.n != 13, needed, special: l.n == 13 });
+                        lines.push(m::InfoRow { label: label(l.n), value: dec(&l.value), short: l.colour == 6 && l.n != 13, needed, special: l.n == 13 });
                     }
                     y += 16.0;
                 }
