@@ -2538,10 +2538,9 @@ impl App {
         self.display.modern_starmap && self.spacewar.is_some() && self.front.is_none() && self.options.is_none() && self.help.is_none()
     }
 
-    /// Ours (ADR 0077): the modern fleet info or transfer panel is up (under the modern starmap HUD; the vehicles'
-    /// panel stays the original's).
+    /// Ours (ADR 0077, 0074): the modern fleet info, vehicles' or transfer panel is up (under the modern starmap HUD).
     fn fleet_modern_up(&self) -> bool {
-        self.modern_up() && (self.panels.transfer.is_some() || self.panels.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet))
+        self.modern_up() && (self.panels.transfer.is_some() || self.panels.info.is_some())
     }
 
     /// `TutorialStarmapMindenLetiltvaKiveveAKurzorMozgatoBillentyuket` (exe 0xf66ff8, DISABLE STARMAP): read only by
@@ -5822,6 +5821,7 @@ impl App {
                         let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                         let mut m = h.colony_modern_view(&self.world.game.state, self.tables, &self.world.ui, self.maps, &c.view, curr, &c.ui, self.world.game.rules, gates, t);
                         m.bar.bind_keys(&self.bindings);
+                        m.radar.picture = c.scene.radar.is_some();
                         if let Some(r) = &self.menus.rename {
                             m.card.title = format!("{}_", ig2_formats::text::decode(&r.text, h.texts.lang));
                         }
@@ -5945,6 +5945,7 @@ impl App {
             g.gui.run(band, &style, |ctx| acts.extend(crate::colony_modern::show(ctx, cv, st)));
             let mut f = crate::render::Frame::new([0.0; 4]);
             crate::colony_modern::pictures(&mut f, &st.wells, colony_panel, colony_info, &crate::font::Virtual::new(size));
+            crate::colony_modern::radar_under(&mut frame, &st.wells, self.colony.as_ref().and_then(|c| c.scene.radar));
             ov.draw(&mut f, h, size);
             top = Some(f);
         }

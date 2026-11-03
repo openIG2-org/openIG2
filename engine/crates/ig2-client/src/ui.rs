@@ -1255,7 +1255,6 @@ impl Hud {
     pub fn colony_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, s: &UiSnap, maps: &[ig2_sim::ground::GroundMap], view: &crate::colony::View, curr: &crate::colony::ColonySnap, ui: &crate::colony_ui::ColonyUi, sim: &ig2_sim::game::GameRules, gates: Option<&[bool; 20]>, time: f32) -> crate::colony_modern::View {
         use crate::colony_modern as m;
         let lang = self.texts.lang;
-        let hu = lang == ig2_formats::text::Lang::Hu;
         let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
         let col = |i: usize| crate::gui::ink(self.palette.get(i).copied().unwrap_or([1.0; 3]));
         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18);
@@ -1307,7 +1306,8 @@ impl Hud {
             main.sort_by(|a, b| a.2.total_cmp(&b.2));
             card.title = main.first().map(|l| dec(&l.0)).unwrap_or_default();
             card.colour = col(if curr.owner == 0 { 12 } else { curr.owner as usize + 15 });
-            card.lines = main.iter().skip(1).map(|l| (dec(&crate::diplomacy::articles(&l.0, hu)), col(l.4))).collect();
+            // The modern panels resolve the article markers always (the classic shows them as the exe does).
+            card.lines = main.iter().skip(1).map(|l| (dec(&crate::diplomacy::a2az(&l.0)), col(l.4))).collect();
             let r = crate::starmap_menus::planet(state, curr.planet);
             let race = if r[0x20] == 0 { en as usize } else { r[0x21] as usize };
             let aff = rules.race_surface_affinity.get(race).and_then(|v| v.get(r[0x22] as usize)).copied().unwrap_or(0);
@@ -1334,25 +1334,31 @@ impl Hud {
             current: hs.build.as_ref().map(|(name, price, energy, workers)| (dec(name), crate::starmap_modern::money(*price as f64), *energy, *workers)),
             cursor: parts.cursor,
             pending: parts.pending,
-            build_tip: Some(dec(&parts.tips[6])).filter(|t| !t.is_empty()).unwrap_or_else(|| dec(&self.texts.ours("Build"))),
+            // The plate's label: the remake's text (the game's tooltip line reads "Build" in the Hungarian install too).
+            build_tip: dec(&self.texts.ours("Build")),
             cursor_tip: dec(&self.texts.ours("Build cursor")),
         });
         let war = curr.war_flag.then(|| {
             let (fighters, ships) = ui.war.charges(&w);
             let (retreat, landing) = ui.war.notices(&w);
-            let mut sides: Vec<(i32, i32)> = Vec::new();
+            // Each side's units and whether defence turrets (flag 0x4000000, ground-combat §11) are among them.
+            let mut sides: Vec<(i32, i32, bool)> = Vec::new();
             for u in curr.units.iter().filter(|u| u.flags2 & 4 == 0) {
+                let turret = u.flags & 0x4000000 != 0;
                 match sides.iter_mut().find(|s| s.0 == u.owner) {
-                    Some(s) => s.1 += 1,
-                    None => sides.push((u.owner, 1)),
+                    Some(s) => (s.1, s.2) = (s.1 + 1, s.2 || turret),
+                    None => sides.push((u.owner, 1, turret)),
                 }
             }
             sides.sort_by_key(|s| (s.0 != en, s.0));
-            let role = |o: i32| dec(&self.texts.ours(if o == curr.owner as i32 { "Defender" } else { "Attacker" }));
+            let role = |o: i32, turrets: bool| {
+                let r = dec(&self.texts.ours(if o == curr.owner as i32 { "Defender" } else { "Attacker" }));
+                format!("{r} · {}", dec(&self.texts.ours(if turrets { "Tanks and turrets" } else { "Tanks" })))
+            };
             m::War {
                 buttons: ui.war.shown_buttons(&w).into_iter().map(|(id, frame)| (id, frame, parts.war_tips.iter().find(|t| t.0 == id).map(|t| dec(&t.1)).unwrap_or_default())).collect(),
                 charge: (fighters as f32 / 200.0, ships as f32 / 300.0),
-                sides: sides.into_iter().map(|(o, n)| m::Side { colour: col((o + 0xf).max(0) as usize), name: empire(o), units: n, role: role(o) }).collect(),
+                sides: sides.into_iter().map(|(o, n, t)| m::Side { colour: col((o + 0xf).max(0) as usize), name: empire(o), units: n, role: role(o, t) }).collect(),
                 notices: [(retreat, 3u16), (landing, 4)].into_iter().filter(|x| x.0).map(|(_, n)| dec(&self.texts.get(3, 2, n))).collect(),
             }
         });
@@ -1362,7 +1368,7 @@ impl Hud {
             let weapon_name = |u: &crate::colony::UnitView| self.unit_weapon_name(state, u);
             let player_name = |e: i32| state.mem.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11).iter().copied().take_while(|&b| b != 0).collect::<Vec<u8>>();
             let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
-            ui.war.banner_text(&w, &d).map(|(t, k)| (dec(&crate::diplomacy::articles(&t, hu)), k))
+            ui.war.banner_text(&w, &d).map(|(t, k)| (dec(&crate::diplomacy::a2az(&t)), k))
         });
         let destruct = (curr.self_destruct != -1).then(|| m::Destruct {
             lines: [dec(&self.texts.get(3, 5, 1)), dec(&self.texts.get(3, 5, 2))],
@@ -1380,6 +1386,7 @@ impl Hud {
             view: hs.view.map(|q| q.map(|c| unit(c[0], c[1]))),
             tip: dec(&self.texts.get(3, 1, 4)),
             keys: Default::default(),
+            picture: false,
         };
         let starmap = bar.screens.iter().find(|s| s.n == 2).map(|s| s.name.clone()).unwrap_or_default();
         let colony = bar.screens.iter().find(|s| s.n == 3).map(|s| s.name.clone()).unwrap_or_default();

@@ -242,6 +242,8 @@ const TABLE: &[(&str, &str)] = &[
     ("Auto research", "Automatikus kutatás"),
     ("Buildings", "Épületek"),
     ("Tanks", "Tankok"),
+    ("Stationed tanks", "Állomásozó tankok"),
+    ("Tanks and turrets", "Tankok és tornyok"),
     ("Done", "Kész"),
     ("Locked", "Zárt"),
     ("Funding", "Finanszírozás"),

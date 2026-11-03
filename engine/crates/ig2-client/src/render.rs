@@ -1319,6 +1319,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let rgba = if o.modern_colony {
         let size = [o.size.0 as f32, o.size.1 as f32];
         let mut cv = hud.colony_modern_view(&world.game.state, &l.tables, &world.ui, &l.rules.ground_maps, &view, &curr, &ui, &l.rules, None, t);
+        cv.radar.picture = scene.radar.is_some();
         cv.bar.bind_keys(&crate::bindings::Bindings::default());
         let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
         let style = crate::starmap_modern::style(hud, size);
@@ -1335,6 +1336,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         }
         let mut top = crate::render::Frame::new([0.0; 4]);
         crate::colony_modern::pictures(&mut top, &st.wells, panel, info_model, &crate::font::Virtual::new(size));
+        crate::colony_modern::radar_under(&mut frame, &st.wells, scene.radar);
         r.draw_to_image_over_top(&frame, Some(top), o.size, t, |d, q, tex| gui.paint(d, q, tex))
     } else {
         r.draw_to_image(&frame, o.size, t)
@@ -2351,7 +2353,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     panels.modern = o.modern_hud && o.modern_research;
     // Ours (ADR 0077): under the modern HUD the fleet info and transfer panels are its own, the models cut into them.
-    let fleet_modern = o.modern_hud && (panels.transfer.is_some() || panels.info.as_ref().is_some_and(|i| i.kind == crate::starmap_info::Kind::Fleet));
+    let fleet_modern = o.modern_hud && (panels.transfer.is_some() || panels.info.is_some());
     let mut panel_tex = None;
     if o.panel.is_some() && !(panels.modern && panels.transfer.is_none() && panels.info.is_none()) {
         let size = [o.size.0 as f32, o.size.1 as f32];

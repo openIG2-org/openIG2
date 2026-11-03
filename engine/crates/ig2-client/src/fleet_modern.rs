@@ -40,6 +40,8 @@ pub struct Detail {
     pub pods: Vec<Option<(String, String, bool)>>,
     pub empty: String,
     pub pods_label: String,
+    /// The hull's name beside the design's (the vehicles' panel).
+    pub kind: String,
 }
 
 /// The sale menu open (`StarmapSelectDeleteMode`): its rows, the one under the pointer, its virtual box.
@@ -86,11 +88,27 @@ pub struct Transfer {
     pub exit: String,
 }
 
+/// The vehicles' panel (`StarmapTanksInfo`, re/screens/starmap.md §20): the planet's designs as rows, the selected
+/// one's model and data.
+#[derive(Debug, Clone, Default)]
+pub struct TankInfo {
+    pub title: String,
+    /// "Stationed tanks · n".
+    pub heading: String,
+    pub cards: [Option<Card>; 8],
+    pub first: i32,
+    pub total: i32,
+    pub detail: Option<Detail>,
+    pub exit: String,
+    pub sale: Option<Sale>,
+}
+
 /// What the panels show this frame.
 #[derive(Debug, Clone)]
 pub enum View {
     Fleet(FleetInfo),
     Transfer(Transfer),
+    Tanks(TankInfo),
 }
 
 /// Where the panels put the original's controls this frame (points), and the wells for [`pictures`].
@@ -209,6 +227,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
         match v {
             View::Fleet(f) => fleet(ui, f, st, screen, top, room, slide),
             View::Transfer(tr) => transfer(ui, tr, st, screen, top, room, slide),
+            View::Tanks(ti) => tanks(ui, ti, st, screen, top, slide),
         }
     });
     let o = t;
@@ -501,6 +520,134 @@ fn transfer(ui: &mut egui::Ui, t: &Transfer, st: &mut State, screen: Rect, top: 
     }
 }
 
+/// The tank info board: the list panel 560 wide, the data panel 760, 40 apart, under a title plate.
+const TANKS_LIST_W: f32 = 560.0;
+const TANKS_DATA_W: f32 = 760.0;
+const TANKS_GAP: f32 = 40.0;
+const ROW_NAME: Font = Font { size: 19.0, line: 24.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+const ROW_COUNT: Font = Font { size: 24.0, line: 28.0, weight: Weight::SemiBold, tracking: 0.0, upper: false, lcd: false };
+const TANK_NAME: Font = Font { size: 30.0, line: 34.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
+const TANK_KIND: Font = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.1, upper: false, lcd: false };
+const TANK_DATA: Font = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.1, upper: false, lcd: false };
+const TANK_POD: Font = Font { size: 17.0, line: 22.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+
+/// A vehicle row: the model's well, the name, the count; the original's highlight as the list's selected look.
+fn tank_row(ui: &egui::Ui, r: Rect, c: &Card, src: [f32; 4], st: &mut State) {
+    let k = ds::tokens();
+    let p = ui.painter();
+    let hot = ds::hover_t(ui.ctx(), ui.id().with(("fmh-row", r.min.y as i32)), hover(ui, r));
+    if c.selected {
+        ds::hgrad(p, r, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
+        ds::rim(p, r, ds::RADIUS_PLATE, k.ink_silver);
+    } else {
+        p.rect_filled(r, ds::RADIUS_PLATE, k.glass_deep);
+        if hot > 0.0 {
+            ds::hgrad(p, r, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha((20.0 * hot) as u8)), (1.0, Color32::TRANSPARENT)]);
+        }
+        ds::rim(p, r, ds::RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hot));
+    }
+    // `grid-template-columns: 220px 1fr 56px`, gap 16, padding 10 × 14.
+    let inner = r.shrink2(vec2(14.0, 10.0));
+    let well = Rect::from_min_size(inner.min, vec2(216.0, inner.height()));
+    st.wells.push((src, well, ui.opacity()));
+    let name = Rect::from_min_max(pos2(inner.left() + 220.0 + 16.0, inner.top()), pos2(inner.right() - 56.0 - 16.0, inner.bottom()));
+    let base = ds::fit::baseline(inner, ROW_NAME);
+    Text::new(&c.name, ROW_NAME).color(k.ink).shrink(14.0).baseline(base).paint(ui, name);
+    let count = Rect::from_min_max(pos2(inner.right() - 56.0, inner.top()), inner.max);
+    Text::new(&c.count.to_string(), ROW_COUNT).right().color(if c.warn { k.enemy } else { k.info }).shrink(16.0).baseline(base).paint(ui, count);
+}
+
+fn tanks(ui: &mut egui::Ui, t: &TankInfo, st: &mut State, screen: Rect, top: f32, slide: Vec2) {
+    let k = ds::tokens();
+    // The title plate 24 under the top bar, the panels 42 under it, the exit plate 28 under them, all over the
+    // selection card (about 160 high, 24 from the bottom).
+    let plate_top = top - 8.0;
+    // The board dims the starmap under the panels (`brightness(0.45)`); the HUD's own areas lie over it.
+    ui.painter().rect_filled(screen, 0, Color32::from_black_alpha((140.0 * ui.opacity()) as u8));
+    let tw = Text::new(&t.title, Font::TITLE_PLATE.upper(false)).layout(ui.ctx(), f32::INFINITY).width;
+    let pw = (tw + 2.0 * (ds::SPACE[4] + ds::SPACE[3])).clamp(320.0, (screen.width() - 2.0 * EDGE).min(900.0));
+    let pr = Rect::from_min_size(pos2(screen.center().x - pw / 2.0, plate_top), vec2(pw, 60.0)).translate(slide);
+    ds::title_plate(&mut ui.new_child(egui::UiBuilder::new().max_rect(pr)), &t.title, pw);
+    let y0 = pr.bottom() + 42.0;
+    let h = (screen.bottom() - y0 - 230.0).clamp(300.0, 680.0);
+    let total = TANKS_LIST_W + TANKS_GAP + TANKS_DATA_W;
+    let s = ((screen.width() - 2.0 * EDGE) / total).min(1.0);
+    let x0 = screen.center().x - total * s / 2.0;
+    let list = Rect::from_min_size(pos2(x0, y0), vec2((TANKS_LIST_W * s).round(), h));
+    let data = Rect::from_min_size(pos2(list.right() + (TANKS_GAP * s).round(), y0), vec2((TANKS_DATA_W * s).round(), h));
+    st.panels.extend([list, data]);
+    let p = &ui.painter().clone();
+    // The list: the heading, then the original's eight places as rows 10 apart, as high as the board's (110) while
+    // they fit.
+    ds::paint_panel(p, list, ds::PanelKind::Glass, 0.97);
+    let inner = list.shrink(18.0);
+    Text::new(&t.heading, Font::LABEL).color(k.ink_muted).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 18.0)));
+    let rows = Rect::from_min_max(inner.min + vec2(0.0, 30.0), inner.max - vec2(if t.total > 8 { 12.0 } else { 0.0 }, 0.0));
+    let n = t.cards.iter().filter(|c| c.is_some()).count().max(1) as f32;
+    let row_h = 110.0f32.min(((rows.height() - (n - 1.0) * 10.0) / n).floor());
+    for (i, c) in t.cards.iter().enumerate() {
+        let Some(c) = c else { continue };
+        let r = Rect::from_min_size(rows.min + vec2(0.0, i as f32 * (row_h + 10.0)), vec2(rows.width(), row_h));
+        // The cell's middle (the turning model without the room between the cells) fills the wide well.
+        // (the model stands in the cell's lower part: y − 8 … y + 25).
+        let (centre, [x, y, ..]) = cell(i, false);
+        tank_row(ui, r, c, [x + 8.0, y + 14.0, 80.0, 40.0], st);
+        st.spots.push((r, centre));
+    }
+    scroll(ui, rows, t.first, t.total, st);
+    // The selected design: its model in a 330-point view, the name and hull, the data table, the pods.
+    ds::paint_panel(p, data, ds::PanelKind::Glass, 0.97);
+    let pic = Rect::from_min_size(data.min, vec2(data.width(), 330.0f32.min(h * 0.49).floor()));
+    p.rect_filled(pic, egui::CornerRadius { nw: ds::RADIUS_PANEL, ne: ds::RADIUS_PANEL, sw: 0, se: 0 }, k.glass_deep);
+    ds::radial(p, pic, 0, [0.5, 0.6], &[(0.0, Color32::from_rgba_unmultiplied(43, 93, 130, 89)), (0.7, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    p.hline(pic.x_range(), pic.bottom() - 0.5, Stroke::new(1.0f32, k.rim));
+    if let Some(d) = &t.detail {
+        let wf = PREVIEW[2] / PREVIEW[3];
+        let ph = (pic.height() - 56.0).min((pic.width() - 120.0) / wf);
+        st.wells.push((PREVIEW, Rect::from_center_size(pic.center(), vec2(ph * wf, ph)), ui.opacity()));
+        let inner = Rect::from_min_max(pic.left_bottom() + vec2(28.0, 22.0), data.max - vec2(28.0, 22.0));
+        let head = Rect::from_min_size(inner.min, vec2(inner.width(), 34.0));
+        let base = ds::fit::baseline(head, TANK_NAME);
+        let kw = Text::new(&d.kind, TANK_KIND).right().color(k.ink_silver).baseline(base).paint(ui, head.with_min_x(head.center().x + 8.0)).width;
+        Text::new(&d.name, TANK_NAME).color(k.ink).shrink(20.0).baseline(base).paint(ui, head.with_max_x(head.right() - kw - 16.0));
+        let cols = Rect::from_min_max(pos2(inner.left(), head.bottom() + 18.0), inner.max);
+        let half = ((cols.width() - 28.0) / 2.0).floor();
+        for (n, (label, value)) in d.rows.iter().enumerate() {
+            let row = Rect::from_min_size(cols.min + vec2(0.0, n as f32 * 30.0), vec2(half, 20.0));
+            let base = ds::fit::baseline(row, TANK_DATA);
+            let (a, b) = row.split_left_right_at_x(row.left() + 156.0_f32.min(half * 0.6));
+            Text::new(label.trim().trim_end_matches(':'), Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
+            Text::new(value, TANK_DATA).color(k.info).baseline(base).paint(ui, b);
+        }
+        let x = cols.left() + half + 28.0;
+        Text::new(&d.pods_label, Font::LABEL).color(k.ink_muted).paint(ui, Rect::from_min_size(pos2(x, cols.top()), vec2(half, 18.0)));
+        for (n, pod) in d.pods.iter().enumerate() {
+            let row = Rect::from_min_size(pos2(x, cols.top() + 26.0 + n as f32 * 42.0), vec2(half, 42.0));
+            p.hline(row.x_range(), row.top() + 0.5, Stroke::new(1.0f32, k.rim));
+            p.hline(row.x_range(), row.bottom() - 0.5, Stroke::new(1.0f32, k.rim));
+            let base = ds::fit::baseline(row, TANK_POD);
+            match pod {
+                None => _ = Text::new(&d.empty, TANK_POD).color(k.ink_muted).baseline(base).paint(ui, row),
+                Some((name, count, full)) => {
+                    let (a, b) = row.split_left_right_at_x(row.right() - 48.0);
+                    Text::new(name, TANK_POD).color(k.lcd_ink).shrink(13.0).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
+                    Text::new(count, TANK_POD).right().color(if *full { k.info } else { k.info.gamma_multiply(0.8) }).baseline(base).paint(ui, b);
+                }
+            }
+        }
+    }
+    // The exit plate (hot-spot 9) 28 under the data panel at its right, clear of the radar.
+    let radar = ui.ctx().memory(|m| m.area_rect(egui::Id::new("smh-mini"))).map_or(f32::INFINITY, |r| r.left() - 16.0);
+    let exit = Rect::from_min_size(pos2(data.right().min(radar) - 260.0 * s, data.bottom() + 28.0), vec2(260.0 * s, 44.0));
+    plate(ui, exit, &t.exit);
+    st.spots.push((exit, [527.0, 410.0]));
+    if let Some(sl) = &t.sale {
+        sale(ui, sl, st, screen);
+    } else {
+        st.sale_at = None;
+    }
+}
+
 /// The models of the original's render target (`PanelModels::render` over the virtual 640 × 480 screen) in the wells
 /// [`show`] left, each fitted into its well.
 pub fn pictures(f: &mut crate::render::Frame, wells: &[([f32; 4], Rect, f32)], models: Option<crate::render::TexId>, v: &crate::font::Virtual) {
@@ -535,8 +682,8 @@ fn cstr(b: &[u8]) -> &[u8] {
 impl crate::ui::Hud {
     /// What the modern panels show: the fleet info panel (`Kind::Fleet`) or the transfer panel from the state the
     /// original's texts read (`FlottaInfoText2d` ELF 0x6e74b0, `StarmapGfx2D_3`'s transfer texts); `card` = the HUD's
-    /// short info of the selection (the owner and the status lines). `None` for the vehicles' panel (still the
-    /// original's) and nothing open.
+    /// short info of the selection (the owner and the status lines); the vehicles' panel (`Kind::Tanks`,
+    /// `StarmapTanksInfoSzovegKiirasok`, `DrawSpecificInfoOnTank`) as the tank info board. `None` with nothing open.
     pub fn fleet_modern_view(&self, state: &SaveState, rules: &ig2_rules::Rules, panels: &Panels, sel: &Selection, card: Option<&crate::starmap_modern::Info>) -> Option<View> {
         use crate::starmap_info::Kind;
         let lang = self.texts.lang;
@@ -585,7 +732,8 @@ impl crate::ui::Hud {
             };
             return Some(View::Transfer(Transfer { sides: [side(t.f1, false), side(t.f2, true)], first: t.first, total: rows.len() as i32, exit: dec(&self.texts.get(2, 4, 4)) }));
         }
-        let i = panels.info.as_ref().filter(|i| i.kind == Kind::Fleet)?;
+        let i = panels.info.as_ref()?;
+        let tanks = i.kind == Kind::Tanks;
         let rows = i.rows(state, sel);
         let owner = i.owner(state, sel);
         let fr = fleet(sel.fleet as i32);
@@ -593,9 +741,13 @@ impl crate::ui::Hud {
             let item = i.first as usize + k;
             let row = rows.get(item)?;
             let rec = design(owner, row.design)?;
-            Some(Card { name: suffixed(rec, 1), count: row.count, selected: item as i32 == i.selected, warn: false })
+            // The vehicles' rows carry no upgrade suffix (`StarmapTanksInfoSzovegKiirasok`).
+            let name = if tanks { dec(&rec[..0x14]) } else { suffixed(rec, 1) };
+            Some(Card { name, count: row.count, selected: item as i32 == i.selected, warn: false })
         });
-        let detail = (!rows.is_empty()).then(|| rows.get(i.selected.max(0) as usize)).flatten().and_then(|r| design(owner, r.design)).map(|rec| {
+        // The vehicles' data only while the selected one is on the page (`DrawSpecificInfoOnTank`).
+        let shown = if tanks { (0..8).contains(&(i.selected - i.first)) } else { !rows.is_empty() };
+        let detail = shown.then(|| rows.get(i.selected.max(0) as usize)).flatten().and_then(|r| design(owner, r.design)).map(|rec| {
             let race = i16_at(rec, 0x40);
             let hull = i32_at(rec, 0x44).max(0) as usize;
             let table = rules.race_pod_table.get(race.max(0) as usize).copied().unwrap_or(0) - 1;
@@ -612,20 +764,37 @@ impl crate::ui::Hud {
                 })
                 .collect();
             // `+0x3c ·f32 100 + 0.5`, a quarter for `+0x38` bit 0 (ELF 0x6e8557..0x6e85d2).
+            // The vehicles' `(int)+0x3c`, truncated (§20.3).
             let speed = ((f32_at(rec, 0x3c) * 100.0) as f64 + 0.5) as i32;
-            let speed = if rec[0x38] & 1 != 0 { speed / 4 } else { speed };
-            let mut lines = vec![
-                (dec(&self.texts.get(2, 5, 6)), dec(&crate::hud::tech_name(&self.texts, i32_at(rec, 0x48).max(0) as usize))),
+            let speed = if tanks { f32_at(rec, 0x3c) as i32 } else if rec[0x38] & 1 != 0 { speed / 4 } else { speed };
+            let hull = dec(&crate::hud::tech_name(&self.texts, i32_at(rec, 0x48).max(0) as usize));
+            let mut lines = if tanks { vec![] } else { vec![(dec(&self.texts.get(2, 5, 6)), hull.clone())] };
+            lines.extend([
                 (dec(&self.texts.get(2, 5, 7)), i32_at(rec, 0x30).to_string()),
                 (dec(&self.texts.get(2, 5, 8)), i32_at(rec, 0x2c).to_string()),
                 (dec(&self.texts.get(2, 5, 9)), speed.to_string()),
-            ];
+            ]);
             if i16_at(rec, 0x16) == 1 && rec[0x36] & 1 == 0 {
                 lines.push((dec(&self.texts.get(2, 5, 10)), rec[0x28].to_string()));
             }
-            Detail { name: suffixed(rec, 5), rows: lines, pods, empty: dec(&self.texts.get(2, 5, 5)), pods_label: dec(&self.texts.ours("Equipment")) }
+            let kind = if tanks { hull } else { String::new() };
+            Detail { name: suffixed(rec, 5), rows: lines, pods, empty: dec(&self.texts.get(2, 5, 5)), pods_label: dec(&self.texts.ours("Equipment")), kind }
         });
         let sale = i.sale.as_ref().map(|s| Sale { rows: s.rows.iter().map(|(t, ok)| (dec(t), *ok)).collect(), hovered: s.hovered, at: [s.x, s.y] });
+        if tanks {
+            let name = dec(&state.mem.read(va::PLANETS + (sel.planet * ig2_sim::save::PLANET_SIZE) as u32, 0x18));
+            let held: i32 = rows.iter().map(|r| r.count).sum();
+            return Some(View::Tanks(TankInfo {
+                title: format!("{name} · {}", dec(&self.texts.ours("Tanks"))),
+                heading: format!("{} · {held}", dec(&self.texts.ours("Stationed tanks"))),
+                cards,
+                first: i.first,
+                total: rows.len() as i32,
+                detail,
+                exit: dec(&self.texts.get(2, 4, 4)),
+                sale,
+            }));
+        }
         let (owner_name, colour) = owner_of(owner);
         let status = card.map(|c| c.lines.iter().skip(1).map(|l| l.0.clone()).filter(|l| !l.is_empty()).take(1).collect::<Vec<_>>().join(" · ")).unwrap_or_default();
         Some(View::Fleet(FleetInfo {
@@ -658,7 +827,7 @@ mod tests {
             cards: [c("Standard destroyer", 2, true), c("Colony ship", 1, false), c("A very long design name indeed", 12, false), None, None, None, None, None],
             first: 0,
             total: 3,
-            detail: Some(Detail { name: "Standard destroyer".into(), rows: vec![("Type:".into(), "Destroyer".into()), ("Armour:".into(), "10".into())], pods: vec![None, Some(("Radar".into(), "1".into(), true))], empty: "empty".into(), pods_label: String::new() }),
+            detail: Some(Detail { name: "Standard destroyer".into(), rows: vec![("Type:".into(), "Destroyer".into()), ("Armour:".into(), "10".into())], pods: vec![None, Some(("Radar".into(), "1".into(), true))], empty: "empty".into(), pods_label: String::new(), kind: String::new() }),
             cap: Some(Cap { label: "Tank capacity:".into(), value: "2/2".into(), fraction: Some(1.0), over: false }),
             exit: "Exit".into(),
             sale: None,
@@ -703,6 +872,40 @@ mod tests {
             let spot = [[28, 60, 124, 70], [152, 60, 139, 70]][k % 2];
             assert!(crate::kit::inside([spot[0], spot[1] + 70 * (k as i32 / 2), spot[2], spot[3]], c), "{want:#x}");
         }
+    }
+
+    fn tank_view(name: &str) -> View {
+        let c = |n: &str, count, selected| Some(Card { name: n.into(), count, selected, warn: false });
+        View::Tanks(TankInfo {
+            title: "Magellan 10 · Tanks".into(),
+            heading: "Stationed tanks · 12".into(),
+            cards: [c("Standard tank", 3, true), c(name, 4, false), c("Hover tank", 5, false), None, None, None, None, None],
+            first: 0,
+            total: 3,
+            detail: Some(Detail { name: "Standard tank".into(), rows: vec![("Armour:".into(), "10".into())], pods: vec![Some(("Machine gun".into(), "1".into(), true))], empty: "empty".into(), pods_label: "Equipment".into(), kind: "Wheeled tank".into() }),
+            exit: "Exit".into(),
+            sale: None,
+        })
+    }
+
+    /// The vehicles' rows reach the original's cells (hot-spots 0x43 + 2k), the exit plate hot-spot 9; each row's
+    /// well and the preview take the models; a long name leaves the rows as they were.
+    #[test]
+    fn the_tank_rows_reach_the_original_cells() {
+        let mut st = State::default();
+        run(&tank_view("Amphibious tank"), &mut st, None);
+        let virt = |p: Pos2| [(p.x - st.map[0]) / st.map[2], (p.y - st.map[1]) / st.map[2]];
+        for k in 0..3 {
+            assert_eq!(st.pointer(virt(st.spots[k].0.center())), cell(k, false).0);
+        }
+        assert_eq!(st.pointer(virt(st.spots[3].0.center())), [527.0, 410.0]);
+        assert_eq!(st.wells.len(), 4);
+        let rows: Vec<Rect> = st.spots[..3].iter().map(|s| s.0).collect();
+        let mut long = State::default();
+        run(&tank_view("An amphibious tank with a very long design name indeed"), &mut long, None);
+        assert_eq!(rows, long.spots[..3].iter().map(|s| s.0).collect::<Vec<_>>());
+        // The two panels at the board's 1920 × 1080 places.
+        assert_eq!((st.panels[0].left(), st.panels[0].width(), st.panels[1].left(), st.panels[1].width()), (280.0, 560.0, 880.0, 760.0));
     }
 
     /// Long names never widen a card: the wells keep their size whatever the text.

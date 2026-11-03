@@ -155,6 +155,8 @@ pub struct Radar {
     pub tip: String,
     /// The zoom keys' and the starmap key's tooltips.
     pub keys: [String; 3],
+    /// The terrain's picture (`radar_picture`) lies under the screen: drawn by [`radar_under`].
+    pub picture: bool,
 }
 
 /// A NEEDED block of the long info: label, the NEEDED label and value, the value, the part covered (0..1), short.
@@ -222,6 +224,8 @@ pub enum Pic {
     Building,
     /// The short info's turning model (`HandleKisInfoObject`: the building, the unit or the globe).
     Info,
+    /// The radar's terrain picture, drawn under the panels ([`radar_under`]).
+    Radar,
 }
 
 /// What stays between frames.
@@ -401,7 +405,8 @@ fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Res
         ui.spacing_mut().item_spacing.y = 4.0;
         let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
         let r = ds::round_button_sized(ui, Glyph::Custom(&g), ROUND, active);
-        let w = r.rect.width() + 40.0;
+        // Room for the game's longer labels ("Visszavonulás") before they shrink.
+        let w = r.rect.width() + 100.0;
         let f = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.14, upper: true, lcd: false };
         let fit = Text::new(label, f).layout(ui.ctx(), w - 16.0);
         let tag_w = (fit.width + 16.0).min(w);
@@ -1009,7 +1014,8 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
     }
     let rect = ui.min_rect();
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.9));
-    ui.add_space(30.0);
+    // The board's plates 12 under the panel.
+    ui.add_space(12.0);
     ui.allocate_ui_with_layout(vec2(INFO_W, 44.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         if ui.add(ds::Plate::new(&i.starmap).width(220.0)).clicked() {
@@ -1049,21 +1055,36 @@ fn menu_list(ui: &Ui, f: Rect, s: &Setting, st: &mut State) -> Option<i32> {
 fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let (outer, _) = ui.allocate_exact_size(vec2(RADAR_W, RADAR_W + 8.0 + 32.0), Sense::hover());
-    let p = ui.painter();
-    ds::shadow(p, outer.translate(vec2(0.0, 3.0)), 18, 0, 8, 0, Color32::from_black_alpha(204));
-    ds::radial(p, outer, 18, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
-    ds::relief(p, outer, 18);
     let screen = Rect::from_min_size(outer.min + vec2(10.0, 10.0), vec2(RADAR_W - 20.0, RADAR_W - 20.0));
+    // Over the terrain's picture the metal is a frame around the screen (the picture lies under the panels).
+    let parts = if r.picture {
+        let o = outer.expand(12.0);
+        vec![o.with_max_y(screen.top()), o.with_min_y(screen.bottom()), Rect::from_x_y_ranges(o.left()..=screen.left(), screen.y_range()), Rect::from_x_y_ranges(screen.right()..=o.right(), screen.y_range())]
+    } else {
+        vec![ui.clip_rect()]
+    };
+    for part in parts {
+        let p = ui.painter().with_clip_rect(part.intersect(ui.clip_rect()));
+        ds::shadow(&p, outer.translate(vec2(0.0, 3.0)), 18, 0, 8, 0, Color32::from_black_alpha(204));
+        ds::radial(&p, outer, 18, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
+        ds::relief(&p, outer, 18);
+    }
     // Hot-spot 5 is off in the planet info mode (spec §12.2).
     let resp = ui.interact(screen, ui.id().with("cmh-radar-screen"), if live { Sense::click_and_drag() } else { Sense::hover() });
     let p = ui.painter().with_clip_rect(screen);
-    p.rect_filled(screen, 10, Color32::BLACK);
-    ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, k.glass.gamma_multiply(0.9)), (1.0, Color32::BLACK)]);
-    let grid = Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18));
-    for j in 1..8 {
-        let (x, y) = (screen.left() + screen.width() * j as f32 / 8.0, screen.top() + screen.height() * j as f32 / 8.0);
-        p.vline(x, screen.y_range(), grid);
-        p.hline(screen.x_range(), y, grid);
+    if r.picture {
+        // The board's terrain picture, its edges sunk into the recess.
+        st.wells.push((Pic::Radar, screen, ui.opacity()));
+        ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, Color32::TRANSPARENT), (0.75, Color32::TRANSPARENT), (1.0, Color32::from_black_alpha(140))]);
+    } else {
+        p.rect_filled(screen, 10, Color32::BLACK);
+        ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, k.glass.gamma_multiply(0.9)), (1.0, Color32::BLACK)]);
+        let grid = Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18));
+        for j in 1..8 {
+            let (x, y) = (screen.left() + screen.width() * j as f32 / 8.0, screen.top() + screen.height() * j as f32 / 8.0);
+            p.vline(x, screen.y_range(), grid);
+            p.hline(screen.x_range(), y, grid);
+        }
     }
     let at = |u: [f32; 2]| pos2(screen.left() + u[0] * screen.width(), screen.top() + u[1] * screen.height());
     for &(u, c) in &r.buildings {
@@ -1077,7 +1098,7 @@ fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>
     if let Some(q) = r.view {
         let pts: Vec<Pos2> = [q[0], q[1], q[3], q[2]].into_iter().map(at).collect();
         p.add(Shape::convex_polygon(pts.clone(), k.lcd_ink.gamma_multiply(0.06), Stroke::NONE));
-        p.add(Shape::closed_line(pts, Stroke::new(1.5f32, k.lcd_ink)));
+        p.add(Shape::closed_line(pts, Stroke::new(1.5f32, if r.picture { k.ink } else { k.lcd_ink })));
     }
     // The recess's inner shadow and the metal's dark ring.
     ds::vgrad(ui.painter(), screen, 10, &[(0.0, Color32::from_black_alpha(220)), (6.0 / screen.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
@@ -1119,8 +1140,11 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], buildi
     let wide = crate::kit::Wide::new(v);
     for &(pic, r, alpha) in wells {
         let (tex, src) = match pic {
-            Pic::Building => (building, [28.0, 38.0, 140.0, 100.0]),
-            Pic::Info => (info, [0.0, 400.0, 50.0, 80.0]),
+            // The middle of the panel's picture (the model turns about (98, 88)), larger in the well.
+            Pic::Building => (building, [43.0, 38.0, 110.0, 100.0]),
+            // The box's model stands about (26, 446): its middle, not the box's empty edges.
+            Pic::Info => (info, [4.0, 418.0, 44.0, 56.0]),
+            Pic::Radar => continue,
         };
         let Some(tex) = tex else { continue };
         let [mut x0, mut y0, mut w0, mut h0] = src;
@@ -1135,6 +1159,16 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], buildi
         let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
         i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
         f.push(tex, crate::render::Blend::GammaPremul, i);
+    }
+}
+
+/// The radar's terrain picture (`colony::radar_picture`, the classic radar's `CopyToScreen(28)`) into its screen, in
+/// the frame under the panels: the radar's dots and outline lie over it.
+pub fn radar_under(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], radar: Option<crate::render::TexId>) {
+    let Some(tex) = radar else { return };
+    for &(_, r, alpha) in wells.iter().filter(|w| w.0 == Pic::Radar) {
+        let i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], [r.width() / 2.0, r.height() / 2.0], [1.0, 1.0, 1.0, alpha]);
+        f.push(tex, crate::render::Blend::Alpha, i);
     }
 }
 

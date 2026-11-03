@@ -61,6 +61,36 @@ plates, metal keys, rust round buttons, LCD readouts, Oxanium type, text that fi
 
 ## Consequences
 - The planet info mode no longer shows the original's panels with the option on.
-- The radar is drawn from its dots, not the original's radar picture.
-- The starmap's vehicle info panel (the tank info board) is not part of this ADR: it is a starmap panel and gets its
-  own change.
+
+## Amendment (2026-11-03)
+The modern colony screen was compared with its four design boards (building selected, ground war, planet long info,
+tank info) at 1920x1080, and the tank info board was added.
+
+1. **Tank info board.** The starmap's vehicle info panel (`StarmapTanksInfo`, re/screens/starmap.md section 20) is drawn
+   as the tank info board under the modern starmap HUD (`fleet_modern::View::Tanks`; ADR 0077's remap of the pointer
+   onto the original's hot-spots: row k = cell 0x43+2k, the exit plate = hot-spot 9, the rest of the panels = 0x58).
+   A title plate "planet · Tanks"; the list panel (560) with "Stationed tanks · n" and up to the original's eight
+   designs as rows (the turning model, name, count; the original's highlight is the selected row, hover lit); the data
+   panel (760) with the selected design's turning model in a 330-point view, its name and hull, armour, firepower,
+   speed (and the ships' row where the original shows it) and the equipment rows; the exit plate under it, kept
+   clear of the radar; the starmap dimmed under the panels.
+2. **Fixes from the comparison.**
+   - The radar shows the terrain's picture (the classic radar's) under its dots and a white view outline, the metal
+     drawn as a frame around it.
+   - The war banner and the card lines resolve the Hungarian article markers (no stray "•").
+   - The round buttons' labels get room for long game texts ("Visszavonulás be/ki").
+   - The war sides read "Attacker · Tanks" and "Defender · Tanks and turrets" (turrets = defence turrets among the
+     side's units).
+   - The "Build" plate is in the game's language.
+   - The building and short-info pictures are cropped to their models.
+   - The info mode's plates sit 12 under the panel.
+3. **Stays different.**
+   - Prices have thousands separators (the kit's money format, shared with the starmap HUD).
+   - Game texts where the board's placeholder differs: tab names in capitals, "Kereskedelmi", "Sérült", "Lebontás",
+     "Csillagtérkép", the exit button's English "OFF".
+   - The repair button shows only when the building is damaged (the original's rule).
+   - The planet info mode keeps the colony's 3D view (the original's mode is a flag over the live colony, colony.md
+     section 12); the board shows a starmap backdrop with a large globe.
+   - The attack banner sits under the top bar rather than in the ticker.
+   - The exit plate is left of the radar instead of under it.
+   - The top bar, the selection card and the starmap radar belong to the starmap HUD (ADR 0079).
