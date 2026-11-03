@@ -567,6 +567,51 @@ impl Dialogue {
         (runs, [x, y])
     }
 
+    /// Ours (ADR 0076): the text typed so far as coloured pieces for a modern page that wraps it itself: the
+    /// `|C`n and `~c` codes become colours (the `DDColor` index; −1's blink as [`code_colour`]), a line break inside a
+    /// paragraph a space, an empty line a paragraph break (a newline).
+    pub fn pieces(&self, blink: bool) -> Vec<(Vec<u8>, i32)> {
+        let end = (self.typed.max(0).min(self.length.max(0)) as usize).min(self.place.len());
+        let p = &self.place[..end];
+        let mut out: Vec<(Vec<u8>, i32)> = Vec::new();
+        let mut colour = 6;
+        let mut push = |b: u8, c: i32| match out.last_mut() {
+            Some((t, k)) if *k == c => t.push(b),
+            _ => out.push((vec![b], c)),
+        };
+        let mut i = 0;
+        while i < p.len() {
+            match p[i] {
+                b'|' => {
+                    if p.get(i + 1) == Some(&b'C') {
+                        colour = p.get(i + 2).copied().unwrap_or(2) as i8 as i32;
+                    }
+                    i += 3;
+                }
+                b'~' if p.get(i + 1).is_some_and(|&c| c != 0) => {
+                    colour = code_colour(p[i + 1], blink);
+                    i += 2;
+                }
+                b'\r' | b'\n' => {
+                    let mut breaks = 0;
+                    while i < p.len() && matches!(p[i], b'\r' | b'\n') {
+                        breaks += (p[i] == b'\n') as usize;
+                        i += 1;
+                    }
+                    if i < p.len() {
+                        push(if breaks > 1 { b'\n' } else { b' ' }, colour);
+                    }
+                }
+                0 => break,
+                b => {
+                    push(b, colour);
+                    i += 1;
+                }
+            }
+        }
+        out
+    }
+
     /// `ScanLastParbeszedColor(line)`: the colour in force at the start of line `line`.
     fn scan_colour(&self, line: i32, blink: bool) -> i32 {
         let mut c = 1;

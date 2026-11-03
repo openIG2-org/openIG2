@@ -78,6 +78,7 @@ mod help;
 mod hud;
 mod icon;
 mod info_modern;
+mod messages_modern;
 mod info_screen;
 mod kit;
 mod lighting;
@@ -197,6 +198,7 @@ pub struct Options {
     pub modern_colony: bool,
     /// `--modern-info`: the info screen snapshot with the modern panels (ADR 0072).
     pub modern_info: bool,
+    pub modern_messages: bool,
     /// `--modern-research`: the research screen and the production view as ADR 0071's modern panels.
     pub modern_research: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
@@ -372,6 +374,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_menu: false,
         modern_colony: false,
         modern_info: false,
+        modern_messages: false,
         modern_research: false,
         multiplayer: false,
         background: None,
@@ -480,6 +483,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--modern-menu" => o.modern_menu = true,
             "--modern-colony" => o.modern_colony = true,
             "--modern-info" => o.modern_info = true,
+            "--modern-messages" => o.modern_messages = true,
             "--modern-research" => o.modern_research = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),

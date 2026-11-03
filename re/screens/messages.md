@@ -231,6 +231,9 @@ moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads
 `video.md` §6, `audio.md` §7. Open rows: 4 (the side strips wider than 4:3 stay black), 309 (speech stays English, as
 the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
 messages.
+Modern page: with "Modern messages screen" on (default) the screen is the design board's egui layout (ADR 0076,
+`messages_modern.rs`): the same rows, arrows, text, answers and way out through the hot-spots' code at their virtual
+points; the clip is drawn into the head's well; `--snapshot --modern-messages`.
 
 ## 9. The event log (ours, enhanced; ADR 0040, row 454)
 Not in the original. With `EventLog` on (the default) the client records every scrolling line `Game::messages_for`

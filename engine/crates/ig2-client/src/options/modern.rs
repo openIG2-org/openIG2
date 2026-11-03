@@ -248,6 +248,7 @@ pub fn describe(key: &str) -> &'static str {
         "ModernGameMenu" => "Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.",
         "ModernResearch" => "The research screen and the starmap's production view as modern panels; off = the original's.",
         "ModernColony" => "The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.",
+        "ModernMessages" => "The messages screen's inbox, talking head, typed text and answers as modern panels; off = the original's.",
         "ModernInfo" => "The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.",
         "ModernCursors" => "Sharp pointers in the design's colours, animated, with a modern UI theme; off = the original's.",
         "ModernDesign" => "The ship and vehicle design screen as modern panels around the turning hull; off = the original's.",

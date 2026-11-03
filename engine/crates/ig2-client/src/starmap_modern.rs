@@ -233,7 +233,6 @@ pub struct State {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Ink {
     pub text: Color32,
-    pub dim: Color32,
     /// The player's colour, lifted toward the text so it reads on the dark plates.
     pub accent: Color32,
     pub fill: Color32,
@@ -248,7 +247,7 @@ impl Ink {
         let accent = lerp(base, text, 0.3);
         let [r, g, b, _] = v.window_fill.to_array();
         let fill = Color32::from_rgba_unmultiplied((r as f32 * 0.7) as u8, (g as f32 * 0.7) as u8, (b as f32 * 0.75) as u8, 214);
-        Self { text, dim: v.weak_text_color(), accent, fill, edge: accent.gamma_multiply(0.38) }
+        Self { text, accent, fill, edge: accent.gamma_multiply(0.38) }
     }
 }
 
@@ -502,35 +501,6 @@ pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
     }
 }
 
-/// A plate's outline: `rect` with its top-left and bottom-right corners cut by `cut`.
-fn cut_corners(r: Rect, cut: f32) -> Vec<Pos2> {
-    vec![pos2(r.left() + cut, r.top()), pos2(r.right(), r.top()), pos2(r.right(), r.bottom() - cut), pos2(r.right() - cut, r.bottom()), pos2(r.left(), r.bottom()), pos2(r.left(), r.top() + cut)]
-}
-
-/// The console plate under `r`: a soft shadow, the dark fill, a hairline edge and a top bevel, the cut corners marked
-/// in the accent.
-fn plate_shape(r: Rect, ink: &Ink) -> Shape {
-    let cut = 7.0f32.min(r.height() * 0.3);
-    let mark = Stroke::new(1.5f32, ink.accent);
-    let tl = (pos2(r.left(), r.top() + cut), pos2(r.left() + cut, r.top()));
-    let br = (pos2(r.right(), r.bottom() - cut), pos2(r.right() - cut, r.bottom()));
-    Shape::Vec(vec![
-        Shadow { offset: [0, 3], blur: 12, spread: 0, color: Color32::from_black_alpha(110) }.as_shape(r, CornerRadius::same(2)).into(),
-        Shape::convex_polygon(cut_corners(r, cut), ink.fill, Stroke::new(1.0f32, ink.edge)),
-        Shape::line_segment([pos2(r.left() + cut + 1.0, r.top() + 1.5), pos2(r.right() - 1.5, r.top() + 1.5)], Stroke::new(1.0f32, Color32::from_white_alpha(16))),
-        Shape::line(vec![pos2(tl.0.x, tl.0.y + 8.0), tl.0, tl.1, pos2(tl.1.x + 14.0, tl.1.y)], mark),
-        Shape::line(vec![pos2(br.0.x, br.0.y - 8.0), br.0, br.1, pos2(br.1.x - 14.0, br.1.y)], mark),
-    ])
-}
-
-/// `add` on a console plate with `margin` inside.
-pub(crate) fn plate<R>(ui: &mut egui::Ui, ink: &Ink, margin: Margin, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
-    let under = ui.painter().add(Shape::Noop);
-    let r = egui::Frame::new().inner_margin(margin).show(ui, add);
-    ui.painter().set(under, plate_shape(r.response.rect, ink));
-    r
-}
-
 /// A tooltip: the name and, when bound, its key in a small key cap.
 pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egui::Response {
     if name.is_empty() {
@@ -555,8 +525,6 @@ pub(crate) fn either(r: &egui::Response) -> bool {
     r.clicked() || r.secondary_clicked()
 }
 
-/// The HUD's points: the other screens' gap to the screen's edges.
-pub(crate) const EDGE: f32 = 8.0;
 /// The boards' gap of the corner panels to the screen's edges (`left: 24px; bottom: 24px`).
 const GAP: f32 = 24.0;
 /// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).

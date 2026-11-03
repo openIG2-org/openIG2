@@ -503,6 +503,8 @@ pub struct Hud {
     pub modern_bar: bool,
     /// Ours (ADR 0072): the modern info screen replaces the original's frame and panels this frame.
     pub modern_info: bool,
+    /// Ours (ADR 0076): the messages screen is the modern egui page; the classic frame, inbox and text aren't drawn.
+    pub modern_messages: bool,
     /// The message line stands still and isn't drawn: a message is waiting (`FRISSIT_Scroll2`/`GFX_Scroll`'s gate,
     /// set by the client each frame).
     pub line_held: bool,
@@ -584,6 +586,7 @@ impl Hud {
             history_open: false,
             modern_bar: false,
             modern_info: false,
+            modern_messages: false,
             line_held: false,
             message_waiting: false,
             story_line: None,
@@ -1507,7 +1510,7 @@ impl Hud {
         if screen == Screen::Info && !self.modern_info {
             crate::info_screen::draw_faders(f, self.white, &v, s, &self.info);
         }
-        if matches!(screen, Screen::Info | Screen::Messages) && !(screen == Screen::Info && self.modern_info) {
+        if matches!(screen, Screen::Info | Screen::Messages) && !(screen == Screen::Info && self.modern_info) && !(screen == Screen::Messages && self.modern_messages) {
             if let Some(t) = self.frame_tex {
                 crate::screen_frames::draw(f, t, &v);
             }
@@ -1515,6 +1518,7 @@ impl Hud {
         match screen {
             Screen::Info if self.modern_info => {}
             Screen::Info => draw_info(f, font, self.white, &v, s, &self.texts, &self.infostr, &self.txt17, rules, &self.palette, &self.empire_names, &self.info),
+            Screen::Messages if self.modern_messages => {}
             Screen::Messages => {
                 // The clip over the frame, the interlace over the clip: `finalinter.bmp` at x 201..533,
                 // y 204..392 (`InterlaceMover` 0), vertex colour 0x19ffffff, its texture repeated from `lmin` to

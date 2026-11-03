@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern messages screen (Options, Interface; on by default): the inbox, the talking head in a metal frame, the message's card with its answers as buttons and the text typed out in wide, readable lines with a blinking caret, a "Full text" button and Exit; the same rows, arrows, answers and keys as the original (ADR 0076).
 - Information screen in the new design: the eight empires as rings with their leaders around the money triangle, the selected empire's panel with the spending limit, the planets with turning globes, the fleets and the empires met in tabs with sortable columns, the detail mode with the planet's globe and settings, the charts on the game's own buttons with a light running along each line, and an Exit button (ADR 0072).
 - Modern main menu (Options, Interface; on by default): the main menu as a grouped list over the game's own scene (Play, Extras, Settings, Quit), Continue shows the newest save, sub-menus have Back; switch it off for the original's rings (ADR 0078).
 - Multiplayer pages in the new design: the game list as a table with status tags, the join and relay panels beside it; the room with large seats (race heads, drop-downs, ready tags), the galaxy settings in a row of steppers, the join code in an LCD window and the chat at the right (ADR 0078).

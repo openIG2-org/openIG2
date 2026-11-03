@@ -2191,9 +2191,11 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         hud.messages.hold_open();
         // Ours (ADR 0072): `--modern-info` draws the bar and the panels as egui ones.
         let modern = o.modern_info && screen == crate::ui::Screen::Info;
-        (hud.modern_info, hud.modern_bar) = (modern, modern);
+        // Ours (ADR 0076): `--modern-messages` the same for the messages screen.
+        let modern_messages = o.modern_messages && screen == crate::ui::Screen::Messages;
+        (hud.modern_info, hud.modern_bar, hud.modern_messages) = (modern, modern || modern_messages, modern_messages);
         hud.frame_tex = match screen {
-            _ if modern => None,
+            _ if modern || modern_messages => None,
             crate::ui::Screen::Info => models.render_info(&mut r, &l.install, &hud.info.frame_view(&world.ui), size),
             _ => models.render_messages(&mut r, &l.install, hud.messages.frame, size),
         };
@@ -2213,13 +2215,33 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
                     gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
                 }
                 gui.run(o.size, &style, |ctx| {
+                    st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, &l.install));
                     crate::info_modern::show(ctx, &v, &mut st);
                 });
-                    st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, &l.install));
             }
             let rgba = r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex));
             crate::assets::write_snapshot(out, o, &rgba)?;
             println!("{}: modern info, {} rows, detail {}", out.display(), v.rows.len(), v.detail.is_some());
+            return Ok(());
+        }
+        if modern_messages {
+            let mut v = crate::messages_modern::view(&hud, &world.game.state, &l.tables, &world.ui, None, t, true);
+            v.bar.bind_keys(&crate::bindings::Bindings::default());
+            let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+            let style = crate::starmap_modern::style(&hud, size);
+            let k = crate::gui::Gui::scale(o.size.1);
+            let mut st = crate::messages_modern::State::default();
+            for _ in 0..3 {
+                if let Some(m) = o.mouse {
+                    gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
+                }
+                gui.run(o.size, &style, |ctx| {
+                    crate::messages_modern::show(ctx, &v, &mut st);
+                });
+            }
+            let rgba = r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex));
+            crate::assets::write_snapshot(out, o, &rgba)?;
+            println!("{}: modern messages, {} rows, open {}", out.display(), v.rows.len(), v.open.is_some());
             return Ok(());
         }
         // The info screen's hot-spot tooltip at `--mouse` (`Info_MouseInit`'s texts), as the window's `frame_overlay`.
