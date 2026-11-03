@@ -50,6 +50,10 @@ impl StatsScreen {
         let screen = ctx.screen_rect();
         ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, Color32::from_black_alpha((173.0 * opacity) as u8));
         let margin = MARGIN.min(screen.width() * 0.073).max(16.0);
+        // A short window (a large UI scale) moves the title and table up and lowers the rows.
+        let ys = (screen.height() / 1080.0).min(1.0);
+        let (title_y, table_y) = (TITLE_Y * ys, TABLE_Y * ys);
+        let row_h = (52.0 * ys).max(40.0);
         let w = screen.width() - 2.0 * margin;
         let mut close = false;
         let shown = self.shown;
@@ -68,7 +72,7 @@ impl StatsScreen {
             }
             None => (tr("Match history"), self.error.clone().unwrap_or_else(|| if self.list.is_empty() { tr("No finished games yet.") } else { String::new() }), k.ink_silver),
         };
-        egui::Area::new(egui::Id::new("st-title")).fixed_pos(Pos2::new(screen.left() + margin, screen.top() + TITLE_Y)).fade_in(false).interactable(false).show(ctx, |ui| {
+        egui::Area::new(egui::Id::new("st-title")).fixed_pos(Pos2::new(screen.left() + margin, screen.top() + title_y)).fade_in(false).interactable(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ui.spacing_mut().item_spacing = Vec2::new(0.0, 10.0);
             Text::new(&title, Font { size: 48.0, line: 56.0, weight: Weight::SemiBold, tracking: 0.3, upper: true, lcd: false }).color(colour).shrink(28.0).show(ui, Vec2::new(w, 56.0));
@@ -78,13 +82,13 @@ impl StatsScreen {
         match self.shown() {
             Some(m) => {
                 let m = m.clone();
-                let table_h = self.modern_table(ctx, texts, palette, heads, &m, Rect::from_min_size(Pos2::new(screen.left() + margin, screen.top() + TABLE_Y), Vec2::new(w, 0.0)), opacity);
-                let top = (screen.top() + TABLE_Y + table_h + 12.0).min(foot_y - 120.0);
-                let gh = GRAPH_H.min(foot_y - 16.0 - top);
+                let table_h = self.modern_table(ctx, texts, palette, heads, &m, Rect::from_min_size(Pos2::new(screen.left() + margin, screen.top() + table_y), Vec2::new(w, row_h)), opacity);
+                let top = screen.top() + table_y + table_h + 12.0;
+                let gh = GRAPH_H.min(foot_y - 16.0 - top).max(160.0);
                 self.modern_graph(ctx, texts, palette, &m, Rect::from_min_size(Pos2::new(screen.left() + margin, top), Vec2::new(w, gh)), opacity);
             }
             None => {
-                let r = Rect::from_min_max(Pos2::new(screen.left() + margin, screen.top() + TABLE_Y), Pos2::new(screen.right() - margin, foot_y - 24.0));
+                let r = Rect::from_min_max(Pos2::new(screen.left() + margin, screen.top() + table_y), Pos2::new(screen.right() - margin, foot_y - 24.0));
                 self.list_table(ctx, texts, r, opacity);
             }
         }
@@ -104,15 +108,17 @@ impl StatsScreen {
         close
     }
 
-    /// The empires' table in `at` (its top and width); gives its height.
+    /// The empires' table in `at` (its top and width, the rows' pitch its height); gives its height.
     #[allow(clippy::too_many_arguments)]
     fn modern_table(&self, ctx: &egui::Context, texts: &UiTexts, palette: &[[f32; 3]], heads: &[Option<egui::TextureHandle>], m: &Match, at: Rect, opacity: f32) -> f32 {
         let k = ds::tokens();
         let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
         let Some(last) = m.samples.last() else { return 0.0 };
         let cols = ["Planets", "Pop.", "Credits", "Ships", "Built", "Lost", "Techs", "Wins", "Score"];
-        let h = 16.0 + 32.0 + m.empires.len() as f32 * 52.0 + 20.0;
+        let pitch = at.height();
+        let h = 16.0 + 32.0 + m.empires.len() as f32 * pitch + 20.0;
         let panel = Rect::from_min_size(at.min, Vec2::new(at.width(), h));
+        let heads_h = (pitch - 16.0).min(36.0);
         egui::Area::new(egui::Id::new("st-table")).fixed_pos(panel.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), panel, ds::PanelKind::Deep, 0.90);
@@ -132,7 +138,7 @@ impl StatsScreen {
             for (n, e) in m.empires.iter().enumerate() {
                 let i = e.empire as usize - 1;
                 let r = &last.rows[i];
-                let row = Rect::from_min_size(Pos2::new(inner.left(), head.bottom() + 4.0 + n as f32 * 52.0), Vec2::new(inner.width(), 48.0));
+                let row = Rect::from_min_size(Pos2::new(inner.left(), head.bottom() + 4.0 + n as f32 * pitch), Vec2::new(inner.width(), pitch - 4.0));
                 let me = e.empire == m.empire;
                 let out = r.planets == 0 && r.ships == 0;
                 let p = ui.painter();
@@ -143,7 +149,7 @@ impl StatsScreen {
                 let c = palette.get(15 + e.empire as usize).map_or(k.ink, |c| crate::gui::ink(*c));
                 p.rect_filled(Rect::from_min_size(row.min, Vec2::new(6.0, row.height())), egui::CornerRadius { nw: 3, sw: 3, ne: 0, se: 0 }, c);
                 if let Some(Some(t)) = heads.get(e.race.wrapping_sub(1) as usize) {
-                    let img = Rect::from_center_size(Pos2::new(row.left() + 6.0 + 12.0 + 20.0, row.center().y), Vec2::splat(36.0));
+                    let img = Rect::from_center_size(Pos2::new(row.left() + 6.0 + 12.0 + 20.0, row.center().y), Vec2::splat(heads_h));
                     p.image(t.id(), img, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                 }
                 let mut name = game_name(texts, &e.name);

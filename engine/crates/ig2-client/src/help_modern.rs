@@ -234,50 +234,49 @@ impl Page {
             // The topics and the open one's sub-topics.
             let back_h = 44.0;
             let list = Rect::from_min_max(Pos2::new(inner.left(), field.bottom() + 12.0), Pos2::new(inner.right(), inner.bottom() - back_h - 12.0));
-            let mut y = list.top();
-            let row_font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
-            let sub_font = Font { size: 15.0, line: 18.0, weight: Weight::Medium, tracking: 0.10, upper: true, lcd: false };
-            for &i in &shown {
-                let open = i == s.sel;
-                let mut rows = vec![(None, 40.0)];
-                if open {
-                    rows.extend((0..s.topics[i].subs.len()).map(|n| (Some(n), 34.0)));
-                }
-                for (sub, rh) in rows {
-                    if y + rh > list.bottom() {
-                        break;
+            // The list scrolls when the open topic's sections or a small window don't leave it room.
+            let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(egui::Layout::top_down(egui::Align::Min)));
+            egui::ScrollArea::vertical().id_salt("help-topics").auto_shrink([false; 2]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded).show(&mut rows_ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+                let row_font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+                let sub_font = Font { size: 15.0, line: 18.0, weight: Weight::Medium, tracking: 0.10, upper: true, lcd: false };
+                for &i in &shown {
+                    let open = i == s.sel;
+                    let mut rows = vec![(None, 40.0)];
+                    if open {
+                        rows.extend((0..s.topics[i].subs.len()).map(|n| (Some(n), 34.0)));
                     }
-                    let rr = Rect::from_min_size(Pos2::new(list.left(), y), Vec2::new(list.width(), rh));
-                    y += rh + 2.0;
-                    let resp = ui.interact(rr, ui.id().with(("topic", i, sub)), Sense::click());
-                    let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-                    let sel = open && sub == self.sub;
-                    let p = ui.painter();
-                    if sel {
-                        ds::hgrad(p, rr, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(41)), (1.0, Color32::from_white_alpha(5))]);
-                        ds::rim(p, rr, ds::RADIUS_PLATE, k.ink_silver);
-                    } else if hover > 0.0 {
-                        ds::rim(p, rr, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
-                    }
-                    if resp.hovered() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                    }
-                    let (label, font, x, c) = match sub {
-                        None => (names[i].clone(), if open { row_font.weight(Weight::SemiBold) } else { row_font }, 16.0, k.ink),
-                        Some(n) => (ig2_formats::text::decode(&s.topics[i].subs[n], texts.lang), sub_font, 36.0, if sel { k.ink } else { k.ink_silver }),
-                    };
-                    Text::new(&label, font).color(c).shrink(font.size - 3.0).paint(ui, Rect::from_min_max(Pos2::new(rr.left() + x, rr.top()), Pos2::new(rr.right() - 12.0, rr.bottom())));
-                    if resp.clicked() {
-                        if i != s.sel {
-                            s.sel = i;
-                            self.sub = None;
-                        } else {
-                            self.sub = sub;
+                    for (sub, rh) in rows {
+                        let (rr, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), rh), Sense::click());
+                        let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+                        let sel = open && sub == self.sub;
+                        let p = ui.painter();
+                        if sel {
+                            ds::hgrad(p, rr, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(41)), (1.0, Color32::from_white_alpha(5))]);
+                            ds::rim(p, rr, ds::RADIUS_PLATE, k.ink_silver);
+                        } else if hover > 0.0 {
+                            ds::rim(p, rr, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
                         }
-                        self.jump = true;
+                        if resp.hovered() {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                        }
+                        let (label, font, x, c) = match sub {
+                            None => (names[i].clone(), if open { row_font.weight(Weight::SemiBold) } else { row_font }, 16.0, k.ink),
+                            Some(n) => (ig2_formats::text::decode(&s.topics[i].subs[n], texts.lang), sub_font, 36.0, if sel { k.ink } else { k.ink_silver }),
+                        };
+                        Text::new(&label, font).color(c).shrink(font.size - 3.0).paint(ui, Rect::from_min_max(Pos2::new(rr.left() + x, rr.top()), Pos2::new(rr.right() - 12.0, rr.bottom())));
+                        if resp.clicked() {
+                            if i != s.sel {
+                                s.sel = i;
+                                self.sub = None;
+                            } else {
+                                self.sub = sub;
+                            }
+                            self.jump = true;
+                        }
                     }
                 }
-            }
+            });
             if shown.is_empty() {
                 Text::new(&tr("No topic found."), Font::BODY).color(k.ink_muted).paint(ui, Rect::from_min_size(Pos2::new(list.left() + 16.0, list.top()), Vec2::new(list.width() - 16.0, 26.0)));
             }

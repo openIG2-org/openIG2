@@ -559,7 +559,7 @@ impl MainScr {
     /// Ours (ADR 0059): the Back label, on the screens without a back of their own: the ring sub-sets, the race
     /// choice and the name entry (the scenario panel has Cancel, our MP screens their own).
     pub fn back_shown(&self) -> bool {
-        self.flow && !self.new_game_up() && !self.covered && (self.menu != Menu::Main || self.race.is_some() || self.name.is_some()) && self.scenario.is_none() && !self.mp
+        self.flow && !self.new_game_up() && !self.name_page_up() && !self.covered && (self.menu != Menu::Main || self.race.is_some() || self.name.is_some()) && self.scenario.is_none() && !self.mp
             && self.disconnected.is_none() && self.high_score.is_none() && self.leaving.is_none() && self.start.is_none() && self.loading.is_none()
     }
 
@@ -598,6 +598,11 @@ impl MainScr {
     /// Ours (ADR 0078): the modern new game page (the race choice drawn as egui) is up.
     pub fn new_game_up(&self) -> bool {
         self.modern && self.race.is_some() && !self.covered && self.start.is_none() && self.leaving.is_none()
+    }
+
+    /// Ours (ADR 0078): the multiplayer name entry as the modern prompt.
+    pub fn name_page_up(&self) -> bool {
+        self.modern && self.name.is_some() && !self.covered && self.start.is_none() && self.leaving.is_none()
     }
 
     /// The race choice's closing end (`Event::Closed`) at once: back to the single-player set.

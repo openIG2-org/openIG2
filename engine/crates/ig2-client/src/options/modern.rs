@@ -86,7 +86,8 @@ impl Game {
             Game::Quit => "Quit to main menu",
             Game::Exit => "Exit game",
             Game::Continue if tutorial => "Continue tutorial",
-            Game::Continue => "Continue",
+            // The board's "Folytatás": the game goes on (the main menu's Continue is "Tovább").
+            Game::Continue => "Resume",
             Game::Options => "Options",
             Game::Help => "Help",
         }
@@ -119,7 +120,7 @@ fn place(rows: &[Row], it: Item) -> (Tab, &'static str) {
         Item::Slider(2) => (Tab::Display, "Screen"),
         Item::Slider(_) => (Tab::Sound, "Volume"),
         Item::Name => (Tab::Game, "Handling"),
-        Item::Bind(b) => (Tab::Controls, crate::bindings::ACTIONS[b].ctx.title()),
+        Item::Bind(b) => (Tab::Controls, bind_card(&crate::bindings::ACTIONS[b])),
         Item::Reset => (Tab::Controls, ""),
         Item::Slot(_) | Item::Game(_) => (Tab::Saves, ""),
         Item::Row(k) => {
@@ -156,17 +157,41 @@ pub fn items(rows: &[Row], tab: Tab) -> Vec<Item> {
         return Vec::new();
     }
     let all = [Item::Slider(0), Item::Slider(1)].into_iter().chain((0..rows.len()).map(Item::Row)).chain([Item::Slider(2), Item::Name]).chain((0..crate::bindings::ACTIONS.len()).map(Item::Bind)).chain([Item::Reset]);
-    let mut v: Vec<(usize, Item)> = all.filter_map(|it| {
+    let mut v: Vec<((usize, u8), Item)> = all.filter_map(|it| {
         let (t, card) = place(rows, it);
         let order = match t {
             Tab::Controls if card.is_empty() => usize::MAX,
-            Tab::Controls => crate::bindings::ACTIONS.iter().position(|a| a.ctx.title() == card).unwrap_or(0),
+            Tab::Controls => crate::bindings::ACTIONS.iter().position(|a| bind_card(a) == card).unwrap_or(0),
             _ => tab.cards().iter().position(|&c| c == card).unwrap_or(usize::MAX),
         };
-        (t == tab).then_some((order, it))
+        (t == tab).then_some(((order, rank(rows, it)), it))
     }).collect();
     v.sort_by_key(|&(o, _)| o);
     v.into_iter().map(|(_, it)| it).collect()
+}
+
+/// A key's card: the actions of its screen; the board parts the global ones into the screens' keys and time and saving.
+fn bind_card(a: &crate::bindings::Action) -> &'static str {
+    match (a.ctx, a.id) {
+        (crate::bindings::Ctx::Global, "Pause" | "Pause2" | "Speed1" | "Speed2" | "Speed3" | "QuickSave" | "Chat") => "Everywhere: time and saving",
+        (crate::bindings::Ctx::Global, _) => "Everywhere: screens",
+        (c, _) => c.title(),
+    }
+}
+
+/// A row's place inside its card where the boards order it (the scale, the language, the theme, the autosave's
+/// cadence and the WASD camera first, the texture upscaling and the sharp UI last); the rest keep their order between.
+fn rank(rows: &[Row], it: Item) -> u8 {
+    use crate::display as d;
+    let Item::Row(k) = it else { return 50 };
+    match rows[k].key.as_str() {
+        d::UI_SCALE | d::LANGUAGE | d::UI_THEME | d::AUTOSAVE | d::WASD => 0,
+        d::SHARP_TEXT | d::STARMAP_MOUSE => 1,
+        d::SLIDER_UNDER => 2,
+        d::CLEAN_ENTRY => 3,
+        d::TEXTURE_UPSCALE | d::SHARP_UI => 99,
+        _ => 50,
+    }
 }
 
 /// The string (file 13, section 2) an exe row's key stands for: rows 7–16 show the next-but-one string in the exe
@@ -324,11 +349,13 @@ pub struct Modern {
     pub out: Option<Act>,
     /// The UI scale row's value the egui layer last showed (ADR 0062).
     previewed: Option<i32>,
+    /// The music's and the sound's values before their mute buttons silenced them.
+    muted: [Option<i32>; 2],
 }
 
 impl Modern {
     pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, hovered: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, menu: false, ask: None, out: None, previewed: None };
+        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, hovered: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, menu: false, ask: None, out: None, previewed: None, muted: [None; 2] };
         m.keep(o);
         m.previewed = scale_row(o);
         m
@@ -712,11 +739,11 @@ fn kind(r: &Row, texts: &UiTexts) -> Kind {
     Kind::Segments { wide: r.states >= 2 && letters > 12 }
 }
 
-/// A line's height (`.orow` 50, `.krow` 40, a wide row 50 + the segments' 36).
+/// A line's height (`.orow` 50, `.krow` 40, a wide row 8 + the label's 20 + 8 + the segments' 36 + 8).
 fn line_height(o: &OptionsScreen, texts: &UiTexts, it: Item) -> f32 {
     match it {
         Item::Bind(_) => 40.0,
-        Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => 92.0,
+        Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => 80.0,
         _ => 50.0,
     }
 }
@@ -796,7 +823,7 @@ impl Modern {
         let sub = last.and_then(|sl| Some(format!("{}  ·  {}", s(ago(&sl.file, texts.lang)?), s(sl.name.clone()))));
         let n_items = entries.len() as f32;
         let quits = entries.iter().filter(|g| matches!(g, Game::Quit | Game::Exit)).count();
-        let h = 28.0 + 34.0 + 4.0 + if sub.is_some() { 20.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 1.0) * 4.0 + 25.0 + 20.0;
+        let h = 28.0 + 34.0 + if sub.is_some() { 20.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 1.0) * 4.0 + 25.0 + 20.0;
         let size = egui::vec2(MENU_W, h).min(screen.size() - egui::vec2(16.0, 16.0));
         let t = ds::open_t(ctx, egui::Id::new("pause-menu"), true);
         let top = (screen.center().y - size.y / 2.0 - 50.0).max(screen.top() + 8.0);
@@ -809,7 +836,7 @@ impl Modern {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let w = ui.available_width();
                 let title = Font::PAGE_TITLE.sized(28.0).tracking(0.3);
-                Text::new(&tr("Pause"), Font { line: 34.0, ..title }).color(k.ink_silver).show(ui, egui::vec2(w, 38.0));
+                Text::new(&tr("Pause"), Font { line: 34.0, ..title }).color(k.ink_silver).show(ui, egui::vec2(w, 34.0));
                 if let Some(sub) = &sub {
                     let f = Font::DATA.sized(14.0).tracking(0.08);
                     ui.horizontal(|ui| {
@@ -995,7 +1022,7 @@ impl Modern {
             Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => {
                 // `.orow.wide`: the label, 8 points, the segments in equal columns.
                 let t = ds::tokens();
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 92.0), egui::Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 80.0), egui::Sense::click());
                 let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && live);
                 if focused {
                     ui.painter().rect_filled(rect, ds::RADIUS_PLATE, t.rim_bright.gamma_multiply(0.12));
@@ -1003,7 +1030,7 @@ impl Modern {
                 ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, t.rim_bright.gamma_multiply(if focused { 1.0 } else { hover * 0.6 }));
                 let inner = rect.shrink(8.0);
                 let f = Font { size: 16.0, line: 20.0, weight: ds::Weight::Regular, tracking: 0.05, upper: false, lcd: false };
-                Text::new(&name, f).color(if live { t.ink } else { t.ink_muted }).paint(ui, inner.with_max_y(inner.top() + 32.0));
+                Text::new(&name, f).color(if live { t.ink } else { t.ink_muted }).paint(ui, inner.with_max_y(inner.top() + 20.0));
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner.with_min_y(inner.bottom() - 36.0)).layout(egui::Layout::left_to_right(egui::Align::Center)));
                 if !live {
                     child.disable();
@@ -1071,8 +1098,27 @@ impl Modern {
                 }
             }
             Item::Slider(i) => {
+                // The volumes (the board's Sound tab): a mute button at the right, the track stretched.
+                let track = if i < 2 {
+                    let off = o.sliders[i].value == 0;
+                    let (r, resp) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::click());
+                    let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+                    let c = k.ink_muted.lerp_to_gamma(k.ink, hover);
+                    (if off { ds::Icon::SpeakerOff } else { ds::Icon::Speaker }).paint(ui.painter(), r.shrink(5.0), c);
+                    if resp.clicked() {
+                        o.sliders[i].value = if off { self.muted[i].take().filter(|&v| v > 0).unwrap_or(100) } else {
+                            self.muted[i] = Some(o.sliders[i].value);
+                            0
+                        };
+                        sound(crate::audio::CLICK);
+                    }
+                    ui.add_space(4.0);
+                    (ui.available_width() - 64.0 - 150.0).clamp(150.0, 320.0)
+                } else {
+                    150.0
+                };
                 let mut f = o.sliders[i].value as f32 / 100.0;
-                let resp = ds::slider(ui, &mut f, &format!("{}%", o.sliders[i].value));
+                let resp = ds::slider_sized(ui, &mut f, &format!("{}%", o.sliders[i].value), track);
                 if resp.changed() {
                     o.sliders[i].value = (f * 100.0).round() as i32;
                 }
@@ -1116,7 +1162,7 @@ impl Modern {
         let k = ds::tokens();
         let mut click = false;
         let items = game_items(o);
-        crate::gui::board(ctx, "saves", egui::Vec2::from(SAVES_PAGE), 0.55, |ui| {
+        crate::gui::board_at(ctx, "saves", egui::Vec2::from(SAVES_PAGE), 0.55, 12.0, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             let w = ui.available_width();
             Text::new(&tr("SAVE & LOAD"), Font::PAGE_TITLE).color(k.ink_silver).show(ui, egui::vec2(w, 36.0));
@@ -1396,7 +1442,9 @@ mod tests {
         }
         assert_eq!(items(&o.rows, Tab::Sound)[..2], [Item::Slider(0), Item::Slider(1)]);
         assert_eq!(items(&o.rows, Tab::Controls).len(), crate::bindings::ACTIONS.len() + 1);
-        assert_eq!(items(&o.rows, Tab::Game)[..2], [Item::Row(0), Item::Row(1)]);
+        // The autosave's cadence leads the battles and saving card (the board's), then the exe's rows.
+        let autosave = o.rows.iter().position(|r| r.key == crate::display::AUTOSAVE).map(Item::Row).unwrap();
+        assert_eq!(items(&o.rows, Tab::Game)[..3], [autosave, Item::Row(0), Item::Row(1)]);
     }
 
     /// Every setting has a description, and every text the screen writes is in the remake text table.
@@ -1417,7 +1465,7 @@ mod tests {
             assert!(crate::tr::has(s), "{s}");
         }
         for a in crate::bindings::ACTIONS {
-            assert!(crate::tr::has(a.name) && crate::tr::has(a.ctx.title()), "{}", a.name);
+            assert!(crate::tr::has(a.name) && crate::tr::has(bind_card(&a)), "{}", a.name);
         }
     }
 

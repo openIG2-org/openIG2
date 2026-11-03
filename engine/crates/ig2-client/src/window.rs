@@ -1893,7 +1893,7 @@ impl App {
 
     /// Ours (ADR 0078): the modern new game page is up.
     fn new_game_modern_up(&self) -> bool {
-        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.new_game_up() && f.mp.is_none() && f.mods.is_none())
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| (f.s.new_game_up() || f.s.name_page_up()) && f.mp.is_none() && f.mods.is_none())
     }
 
     fn info_modern_up(&self) -> bool {
@@ -3000,6 +3000,7 @@ impl App {
         let mut mods_acts = Vec::new();
         let mut main_pick = None;
         let mut ng_act = None;
+        let mut name_pick = None;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -3031,6 +3032,12 @@ impl App {
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
+        } else if let (Some(n), true, Some(h)) = (fr.s.name.as_ref(), fr.s.name_page_up() && fr.mp.is_none(), &self.hud) {
+            // Ours (ADR 0078): the modern name prompt over the scene.
+            let theme = theme(h);
+            let gt = fr.s.gt.min(1.0);
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| name_pick = crate::mainscr_modern::name_page(ctx, &h.texts, n, gt));
+            ov.draw(&mut frame, h, size);
         } else if let (true, Some(h)) = (fr.s.new_game_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern new game page over the scene.
             let theme = theme(h);
@@ -3069,12 +3076,25 @@ impl App {
         for a in mods_acts {
             self.mods_act(a);
         }
+        if let Some(p) = name_pick {
+            self.audio.play(crate::audio::CLICK);
+            let Some(f) = &mut self.front else { return };
+            match p {
+                crate::mainscr_modern::NamePick::Accept => {
+                    if let Some(a) = f.s.name_key(crate::options::EntryKey::Enter) {
+                        self.front_act(a);
+                    }
+                }
+                crate::mainscr_modern::NamePick::Back => f.s.escape(),
+            }
+        }
         if let Some(a) = ng_act {
             use crate::newgame_modern::Act;
             self.audio.play(crate::audio::CLICK);
             let Some(f) = &mut self.front else { return };
             match a {
                 Act::Back => f.s.close_race(),
+                Act::Picked => {}
                 Act::Start { race, level } => f.s.start_campaign(race, level),
                 Act::Scenarios => {
                     f.s.close_race();

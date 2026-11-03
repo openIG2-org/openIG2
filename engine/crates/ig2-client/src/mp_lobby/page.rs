@@ -71,9 +71,9 @@ fn label(ui: &mut egui::Ui, text: &str) {
     ds::heading_label(ui, text);
 }
 
-/// A panel's title (`.ig-panel-title`: 600 20 / 0.08 em upper case).
+/// A panel's title (`.ig-panel-title`: 600 20 / 0.08 em, as written: the boards' "Közvetlen csatlakozás").
 fn title(ui: &mut egui::Ui, text: &str) {
-    let f = Font::HEADING.upper(true);
+    let f = Font::HEADING;
     Text::new(text, f).show(ui, Vec2::new(ui.available_width(), f.line));
 }
 

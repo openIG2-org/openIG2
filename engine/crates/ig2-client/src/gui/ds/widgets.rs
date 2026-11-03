@@ -274,6 +274,9 @@ pub enum Icon {
     Plus,
     Minus,
     Menu,
+    /// A volume's mute button (`volume-2`, crossed out when muted).
+    Speaker,
+    SpeakerOff,
 }
 
 impl Icon {
@@ -316,6 +319,16 @@ impl Icon {
             Icon::Menu => {
                 for y in [6.0, 12.0, 18.0] {
                     poly(&[(4.0, y), (20.0, y)]);
+                }
+            }
+            Icon::Speaker | Icon::SpeakerOff => {
+                poly(&[(11.0, 5.0), (6.0, 9.0), (2.0, 9.0), (2.0, 15.0), (6.0, 15.0), (11.0, 19.0), (11.0, 5.0)]);
+                if self == Icon::Speaker {
+                    poly(&[(15.5, 8.5), (17.0, 10.5), (17.0, 13.5), (15.5, 15.5)]);
+                    poly(&[(19.0, 5.0), (22.0, 9.0), (22.0, 15.0), (19.0, 19.0)]);
+                } else {
+                    poly(&[(16.0, 9.0), (22.0, 15.0)]);
+                    poly(&[(22.0, 9.0), (16.0, 15.0)]);
                 }
             }
         }
@@ -667,9 +680,14 @@ pub fn stepper(ui: &mut Ui, value: &str, value_width: f32) -> (Response, i32) {
 /// A slider (`.sl`: a 150 × 8 track filled in the lit plate colour, a metal knob 12 × 20, its value as a small LCD
 /// readout at the right). `value` 0..1; a click or drag on the track sets it.
 pub fn slider(ui: &mut Ui, value: &mut f32, readout: &str) -> Response {
+    slider_sized(ui, value, readout, 150.0)
+}
+
+/// [`slider`] with a `width`-point track (the volumes' rows stretch theirs).
+pub fn slider_sized(ui: &mut Ui, value: &mut f32, readout: &str, width: f32) -> Response {
     let k = tokens();
-    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(150.0 + 12.0 + 52.0, 24.0), Sense::click_and_drag());
-    let track = Rect::from_min_size(Pos2::new(rect.left() + 6.0, rect.center().y - 4.0), Vec2::new(150.0 - 12.0, 8.0));
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(width + 12.0 + 52.0, 24.0), Sense::click_and_drag());
+    let track = Rect::from_min_size(Pos2::new(rect.left() + 6.0, rect.center().y - 4.0), Vec2::new(width - 12.0, 8.0));
     if let Some(p) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
         let v = ((p.x - track.left()) / track.width()).clamp(0.0, 1.0);
         if v != *value {
@@ -896,10 +914,9 @@ pub fn card<R>(ui: &mut Ui, title: Option<&str>, add: impl FnOnce(&mut Ui) -> R)
     let r = egui::Frame::new().inner_margin(egui::Margin { left: 16, right: 16, top: 18, bottom: 18 }).show(ui, |ui| {
         ui.set_width(ui.available_width());
         if let Some(t) = title {
-            ui.horizontal(|ui| {
-                ui.add_space(8.0);
-                heading_label(ui, t);
-            });
+            // `h3`: 18 high, 8 in, 10 above the rows (a `horizontal` would take the interact height).
+            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), Font::LABEL.line), Sense::hover());
+            Text::new(t, Font::LABEL).color(k.ink_muted).paint(ui, r.with_min_x(r.left() + 8.0));
             ui.add_space(10.0 - ui.spacing().item_spacing.y);
         }
         add(ui)

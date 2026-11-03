@@ -533,7 +533,7 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
         }
         sc.draw(frame, &d, &a.pics, &a.tables);
     }
-    if let Some(n) = &s.name {
+    if let Some(n) = s.name.as_ref().filter(|_| !s.modern) {
         crate::mainscr_scenario::draw_name(frame, &d, n, blink);
     }
     if let Some(h) = &s.high_score {
@@ -671,6 +671,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     // Ours (ADR 0078): the modern main menu with `--modern-menu` (scripts compared with the exe keep the rings).
     s.modern = o.modern_menu;
     s.flow |= s.modern;
+    s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());
+    s.continue_line = s.modern.then(crate::mainscr_modern::continue_line).flatten();
     s.history = file.int(crate::display::STATISTICS) != Some(0);
     let size = [o.size.0 as f32, o.size.1 as f32];
     let vv = Virtual::new(size);
@@ -811,6 +813,26 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 None => {}
             }
         }
+        // Ours (ADR 0078): the modern name prompt.
+        if let (true, None, None, Some(n)) = (s.name_page_up(), &mp, &options, s.name.clone()) {
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
+            }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let mut pick = None;
+            gui.run(o.size, &crate::gui::style(&theme), |ctx| pick = crate::mainscr_modern::name_page(ctx, &hud.texts, &n, s.gt.min(1.0)));
+            match pick {
+                Some(crate::mainscr_modern::NamePick::Accept) => picked = s.name_key(crate::options::EntryKey::Enter),
+                Some(crate::mainscr_modern::NamePick::Back) => s.escape(),
+                None => {}
+            }
+            press = None;
+            release = None;
+        }
         // Ours (ADR 0078): the modern new game page, driven by the script's pointer.
         if let (true, None, None) = (s.new_game_up(), &mp, &options) {
             gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
@@ -826,6 +848,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             gui.run(o.size, &crate::gui::style(&theme), |ctx| act = crate::newgame_modern::page(ctx, &hud.texts, &mut ng, &s.blurbs, heads, s.gt.min(1.0)));
             match act {
                 Some(crate::newgame_modern::Act::Back) => s.close_race(),
+                Some(crate::newgame_modern::Act::Picked) => println!("t {t}: picked {ng:?}"),
                 Some(crate::newgame_modern::Act::Start { race, level }) => s.start_campaign(race, level),
                 Some(crate::newgame_modern::Act::Scenarios) => {
                     s.close_race();

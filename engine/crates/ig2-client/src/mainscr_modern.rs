@@ -66,15 +66,21 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
     let mut pick = None;
     let all = groups(p, history);
     let n = all.iter().map(|g| g.1.len()).sum::<usize>() as f32 + if p == Panel::Main { 0.0 } else { 1.0 };
-    let fixed = 48.0 + all.iter().filter(|g| g.0.is_some()).count() as f32 * 24.0 + (all.len() as f32 - 1.0 + (p != Panel::Main) as u8 as f32) * 29.0;
-    let line = |h: f32| fixed + n * (h + 4.0) + if can_continue && p == Panel::Main { 18.0 } else { 0.0 };
+    // The board's column is `gap: 4px` between all its children: a heading 24 + 4, a rim line 4 + 14 + 1 + 14 + 4.
+    let fixed = 48.0 + all.iter().filter(|g| g.0.is_some()).count() as f32 * 28.0 + (all.len() as f32 - 1.0 + (p != Panel::Main) as u8 as f32) * 37.0;
+    // The entries 4 apart inside each group (Back is a group of its own); Continue's two lines take 49.
+    let groups = all.len() as f32 + if p == Panel::Main { 0.0 } else { 1.0 };
+    let cont = can_continue && p == Panel::Main;
+    let line = |h: f32| fixed + n * h + (n - groups) * 4.0 + if cont { (49.0 - h).max(0.0) } else { 0.0 };
     // At a large UI scale the entries get lower (to 36 points), then the panel rises over the title's place.
-    let item_h = ((screen.height() - PANEL[1] - 40.0 - line(0.0)) / n - 4.0).clamp(36.0, 48.0);
+    let room = screen.height() - PANEL[1] - 36.0 - fixed - (n - groups) * 4.0;
+    let item_h = if cont { (room - 49.0) / (n - 1.0) } else { room / n }.clamp(36.0, 48.0);
     let top = PANEL[1].min(screen.height() - line(item_h) - 24.0).max(16.0);
     let show_title = top >= PANEL[1] - 20.0 || heading(p).is_none() && top >= 200.0;
     // The title: the game's name and ours, or the sub-menu's.
     egui::Area::new(egui::Id::new("mm-title")).fixed_pos(at(TITLE[0], TITLE[1])).fade_in(false).interactable(false).show(ctx, |ui| {
         ui.multiply_opacity(if show_title { opacity } else { 0.0 });
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
         let w = (screen.width() - 2.0 * TITLE[0]).max(200.0);
         let f = Font { size: 34.0, line: 40.0, ..Font::PAGE_TITLE };
         match heading(p) {
@@ -99,15 +105,16 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
             let style = ds::MenuStyle { height: item_h, ..ds::MenuStyle::MENU };
             for (g, (head, items)) in all.iter().enumerate() {
                 if g > 0 {
-                    // `height: 1px; margin: 14px 20px`.
-                    ui.add_space(14.0);
+                    // `height: 1px; margin: 14px 20px` in the column's 4-point gaps.
+                    ui.add_space(18.0);
                     let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
                     ui.painter().hline((r.left() + 20.0)..=(r.right() - 20.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
-                    ui.add_space(14.0);
+                    ui.add_space(18.0);
                 }
                 if let Some(h) = head {
                     let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
                     Text::new(&tr(h), Font::LABEL).color(k.ink_muted).paint(ui, Rect::from_min_max(Pos2::new(r.left() + 20.0, r.top()), Pos2::new(r.right() - 20.0, r.bottom() - 6.0)));
+                    ui.add_space(4.0);
                 }
                 let labels: Vec<String> = items.iter().map(|&i| tr(i.label())).collect();
                 let entries: Vec<ds::MenuEntry> = items.iter().zip(&labels).map(|(&i, l)| {
@@ -127,10 +134,10 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
                 }
             }
             if p != Panel::Main {
-                ui.add_space(14.0);
+                ui.add_space(18.0);
                 let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
                 ui.painter().hline((r.left() + 20.0)..=(r.right() - 20.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
-                ui.add_space(14.0);
+                ui.add_space(18.0);
                 let back = tr("Back");
                 if ds::menu(ui, "mm-back", style, &[ds::MenuEntry { hint: Some("ESC"), ..ds::MenuEntry::new(&back) }], None, None).is_some() {
                     pick = Some(Pick::Back);
@@ -146,6 +153,60 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
     egui::Area::new(egui::Id::new("mm-version")).fixed_pos(rect.min).fade_in(false).interactable(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         Text::new(&v, f).color(k.ink_muted).right().show(ui, rect.size());
+    });
+    pick
+}
+
+/// What the name prompt asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NamePick {
+    /// OK: the entry's Enter.
+    Accept,
+    /// Back: the entry's Esc.
+    Back,
+}
+
+/// Ours (ADR 0078): the multiplayer name entry (`EnterNameMode`) in the boards' look: a deep panel in the screen's
+/// middle with the game's question (`GetString(15, 3, 2)`), the name in a recessed field with its caret, Back and
+/// OK; the keys stay the entry's.
+pub fn name_page(ctx: &egui::Context, texts: &UiTexts, n: &crate::mainscr::NameEntry, opacity: f32) -> Option<NamePick> {
+    let k = ds::tokens();
+    let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
+    let screen = ctx.screen_rect();
+    let w = 520.0f32.min(screen.width() - 32.0);
+    let mut pick = None;
+    ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, egui::Color32::from_black_alpha((90.0 * opacity) as u8));
+    egui::Area::new(egui::Id::new("mm-name")).fixed_pos(Pos2::new(screen.center().x - w / 2.0, screen.top() + screen.height() * 0.32)).fade_in(false).show(ctx, |ui| {
+        ui.multiply_opacity(opacity);
+        let place = ui.painter().add(egui::Shape::Noop);
+        let r = egui::Frame::new().inner_margin(egui::Margin { left: 28, right: 28, top: 28, bottom: 24 }).show(ui, |ui| {
+            let iw = w - 56.0;
+            ui.set_width(iw);
+            ui.spacing_mut().item_spacing = Vec2::new(16.0, 16.0);
+            let q = ig2_formats::text::decode(&texts.get(15, 3, 2), texts.lang);
+            Text::new(q.trim(), Font::PAGE_TITLE.sized(24.0)).color(k.ink_silver).shrink(16.0).show(ui, Vec2::new(iw, 30.0));
+            let (field, _) = ui.allocate_exact_size(Vec2::new(iw, 44.0), egui::Sense::hover());
+            let p = ui.painter();
+            p.rect_filled(field, ds::RADIUS_PLATE, k.glass_deep);
+            ds::rim(p, field, ds::RADIUS_PLATE, k.focus);
+            let caret = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
+            let name = ig2_formats::text::decode(&n.text, texts.lang);
+            let (before, after) = name.split_at(name.char_indices().nth(n.cursor).map_or(name.len(), |c| c.0));
+            let f = Font { size: 20.0, line: 24.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+            Text::new(&format!("{before}{}{after}", if caret { "|" } else { " " }), f).color(k.ink).paint(ui, field.shrink2(Vec2::new(14.0, 0.0)));
+            ui.ctx().request_repaint();
+            let hint = Font { size: 14.0, line: 20.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
+            Text::new(&tr("Enter accepts, Esc goes back."), hint).color(k.ink_muted).show(ui, Vec2::new(iw, 20.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(ds::Plate::new(&tr("OK")).primary(true).width(160.0)).clicked() {
+                    pick = Some(NamePick::Accept);
+                }
+                if ui.add(ds::Plate::new(&tr("Back")).width(160.0)).clicked() {
+                    pick = Some(NamePick::Back);
+                }
+            });
+        });
+        ds::behind(ui, place, |pt| ds::paint_panel(pt, r.response.rect, ds::PanelKind::Deep, 0.90));
     });
     pick
 }

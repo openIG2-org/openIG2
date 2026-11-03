@@ -29,6 +29,8 @@ pub enum Act {
     Scenarios,
     Back,
     Start { race: u8, level: u8 },
+    /// A race or a difficulty picked (the click's sound).
+    Picked,
 }
 
 /// The campaign's races 0..=2 as race numbers (Solarian, Shinari, Kra'hen: `txt17` 1/6, 1/8, 1/10).
@@ -68,12 +70,15 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
     let side_w = SIDE[1].min((screen.width() - 2.0 * margin) / 3.6);
     let at = |x: f32, y: f32| Pos2::new(screen.left() + x, screen.top() + y);
     let race_name = |r: usize| game(&texts.race(RACES[r]));
-    egui::Area::new(egui::Id::new("ng-title")).fixed_pos(at(margin + TITLE[0] - NAV[0], TITLE[1])).fade_in(false).interactable(false).show(ctx, |ui| {
+    // A short window (a large UI scale) moves the rows up with it.
+    let ys = (screen.height() / 1080.0).min(1.0);
+    let (title_y, nav_y, races_y) = (TITLE[1] * ys, NAV[1] * ys, RACES_TOP * ys);
+    egui::Area::new(egui::Id::new("ng-title")).fixed_pos(at(margin + TITLE[0] - NAV[0], title_y)).fade_in(false).interactable(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         Text::new(&tr("New game"), Font { size: 34.0, line: 40.0, ..Font::PAGE_TITLE }).color(k.ink_silver).show(ui, Vec2::new(side_w * 2.0, 40.0));
     });
     // The modes: Campaign (here) and Scenarios, the hint under a rim line.
-    egui::Area::new(egui::Id::new("ng-nav")).fixed_pos(at(margin, NAV[1])).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("ng-nav")).fixed_pos(at(margin, nav_y)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         let place = ui.painter().add(egui::Shape::Noop);
         let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 24)).show(ui, |ui| {
@@ -105,7 +110,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
     let ring = RING.min((mid_r - mid_l - 4.0 * RING_GAP) / 3.0).max(96.0);
     let row_w = 3.0 * ring + 2.0 * RING_GAP;
     let x0 = (mid_l + mid_r - row_w) / 2.0;
-    egui::Area::new(egui::Id::new("ng-races")).fixed_pos(at(x0, RACES_TOP)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("ng-races")).fixed_pos(at(x0, races_y)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         ui.spacing_mut().item_spacing = Vec2::new(RING_GAP, 0.0);
         ui.horizontal(|ui| {
@@ -134,12 +139,13 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
                 }
                 if resp.clicked() {
                     st.race = r;
+                    act = Some(Act::Picked);
                 }
             }
         });
     });
     // The race's panel: its empire, the blurb, the difficulty.
-    egui::Area::new(egui::Id::new("ng-side")).fixed_pos(at(screen.width() - margin - side_w, NAV[1])).fade_in(false).show(ctx, |ui| {
+    let side = egui::Area::new(egui::Id::new("ng-side")).fixed_pos(at(screen.width() - margin - side_w, nav_y)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         let place = ui.painter().add(egui::Shape::Noop);
         let r = egui::Frame::new().inner_margin(24).show(ui, |ui| {
@@ -160,13 +166,16 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
             let mut i = LEVELS.iter().position(|&l| l == st.level).unwrap_or(1);
             if ds::segmented_plates(ui, &mut i, &refs, Some(w), 44.0, Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false }).changed() {
                 st.level = LEVELS[i];
+                act = Some(Act::Picked);
             }
         });
         ds::behind(ui, place, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Glass, 0.86));
     });
     // Back and Start at the bottom right.
     let (back, start) = (tr("Back"), tr("Start"));
-    let foot = Rect::from_min_max(at(screen.width() - margin - (side_w + 16.0).min(456.0), screen.height() - 72.0 - 44.0), at(screen.width() - margin, screen.height() - 72.0));
+    // The plates under the race's panel when the window is too short for their place.
+    let foot_y = (screen.height() - 72.0 - 44.0).max(side.response.rect.bottom() - screen.top() + 16.0);
+    let foot = Rect::from_min_max(at(screen.width() - margin - (side_w + 16.0).min(456.0), foot_y), at(screen.width() - margin, foot_y + 44.0));
     egui::Area::new(egui::Id::new("ng-foot")).fixed_pos(foot.min).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         ui.set_width(foot.width());
