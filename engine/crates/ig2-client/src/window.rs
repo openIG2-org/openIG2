@@ -470,6 +470,8 @@ struct HelpUp {
     ui_ms: u32,
     glow: Option<crate::render::TexId>,
     pics: crate::help::Pictures,
+    /// Ours (ADR 0078): the modern help page's state.
+    page: crate::help_modern::Page,
 }
 
 struct OptionsUp {
@@ -1872,6 +1874,11 @@ impl App {
     /// Ours (ADR 0078): the modern main menu's page is up (it sees the pointer; a press over its panel is its own).
     fn main_menu_modern_up(&self) -> bool {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.s.panel().is_some())
+    }
+
+    /// Ours (ADR 0078): the help screen as the modern page (with the modern in-game menu).
+    fn help_modern_up(&self) -> bool {
+        self.display.modern_menu && self.help.is_some()
     }
 
     /// Ours (ADR 0078): the modern new game page is up.
@@ -3517,7 +3524,7 @@ impl App {
         let glow = self.gpu.as_mut().and_then(|g| {
             self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
         });
-        self.help = Some(HelpUp { s, ui_ms: self.now_ms(), glow, pics: Default::default() });
+        self.help = Some(HelpUp { s, ui_ms: self.now_ms(), glow, pics: Default::default(), page: Default::default() });
     }
 
     /// Help goes at once (its screen changes under a key): the help state is kept, the game clock restarts.
@@ -3564,6 +3571,7 @@ impl App {
         self.audio.frame(human_race(&self.world.game));
         self.backdrop_switch();
         let backdrop = self.backdrop();
+        let modern = self.help_modern_up();
         let Some(h) = &mut self.help else { return };
         while now >= h.ui_ms + 10 {
             h.ui_ms += 10;
@@ -3576,16 +3584,33 @@ impl App {
         let t = now as f32 / 1000.0;
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         frame.backdrop = backdrop;
-        if let Some(font) = &hud.font {
+        if let (Some(font), false) = (&hud.font, modern) {
             let d = crate::help::Draw { font, white: hud.white, glow: h.glow.unwrap_or(hud.white), v: crate::font::Virtual::new(size), palette: &hud.palette, texts: &hud.texts, pics: &h.pics, now_ms: self.start.elapsed().as_secs_f64() * 1000.0 };
             h.s.draw(&mut frame, &d, crate::help::char_y(font));
         }
         hud.paused = self.world.paused();
         hud.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Help, t);
-        ov.draw(&mut frame, hud, size);
+        // Ours (ADR 0078): the modern page between the top bar and the pointer; it opens and closes with the
+        // screen's frame.
+        let mut top = None;
+        if modern {
+            let theme = page_theme(hud, size);
+            let (page, s, install) = (&mut h.page, &mut h.s, &self.install);
+            let fade = (s.frame / 100.0).clamp(0.0, 1.0);
+            let mut act = None;
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| act = page.show(ctx, &hud.texts, s, install, fade));
+            if act.is_some() {
+                s.escape();
+            }
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, hud, size);
+            top = Some(f);
+        } else {
+            ov.draw(&mut frame, hud, size);
+        }
         let done = h.s.done().is_some();
         if let Ok(out) = g.surface.get_current_texture() {
-            g.present(frame, &out.texture, t);
+            g.present_over(frame, top, &out.texture, t);
             g.window.pre_present_notify();
             out.present();
         } else {
@@ -6498,7 +6523,7 @@ impl ApplicationHandler for App {
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
-        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.new_game_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
+        if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.new_game_modern_up() || self.help_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
             let over = g.gui.ctx.is_pointer_over_area();
@@ -6640,6 +6665,8 @@ impl ApplicationHandler for App {
             }
             // The top bar stays live over Help (its spots are registered once, help.md §5).
             WindowEvent::MouseInput { state, button, .. } if self.help.is_some() && { let at = self.help.as_ref().map_or([0.0; 2], |h| h.s.at); self.top_bar_mouse(button, state == ElementState::Pressed, at) } => {}
+            // Ours (ADR 0078): the modern help page has the buttons (the top bar took its own above).
+            WindowEvent::MouseInput { .. } if self.help_modern_up() => {}
             WindowEvent::MouseInput { state, button: MouseButton::Left, .. } if self.help.is_some() => {
                 if let Some(h) = &mut self.help {
                     if state == ElementState::Pressed {
@@ -6663,6 +6690,10 @@ impl ApplicationHandler for App {
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
             WindowEvent::KeyboardInput { event, .. } if self.help.is_some() => {
                 if event.state != ElementState::Pressed {
+                    return;
+                }
+                // Ours (ADR 0078): the modern page's search field takes the keys while it is typed in.
+                if self.help_modern_up() && self.help.as_mut().is_some_and(|h| h.page.key(&event.logical_key.as_ref())) {
                     return;
                 }
                 match event.logical_key.as_ref() {

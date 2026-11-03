@@ -323,6 +323,9 @@ const TABLE: &[(&str, &str)] = &[
     // The modern new game page (ADR 0078).
     ("Pick an empire, then the difficulty. The campaign plays the chosen race's story.", "Válassz birodalmat, aztán nehézséget. A kampány a választott faj történetét játssza végig."),
     ("Start", "Indítás"),
+    // The modern help page (ADR 0078).
+    ("Search", "Keresés"),
+    ("No topic found.", "Nincs ilyen téma."),
     // Game statistics and the match history (column heads at most 7 letters).
     ("Victory", "Győzelem"),
     ("Defeat", "Vereség"),

@@ -413,7 +413,12 @@ impl HelpScreen {
         self.text.pregen(&mut self.table, char_y);
     }
 
-    pub fn memory(&self) -> Memory {
+    /// Topic `i`'s file as read (ours, ADR 0078: the modern page reads it into blocks).
+    pub fn file(&self, i: usize) -> &[u8] {
+        self.files.get(i).map_or(&[][..], |f| &f[..])
+    }
+
+        pub fn memory(&self) -> Memory {
         Memory { topic: self.sel, table: self.table.clone() }
     }
 
@@ -519,6 +524,12 @@ impl HelpScreen {
             return Vec::new();
         }
         texts.get(1, 1, id as u16)
+    }
+
+    /// Ours (ADR 0078): a frame the modern page drew instead: the opening runs (`hlpELINDULT`), no hot-spot acts.
+    pub fn drawn_modern(&mut self) {
+        self.started = true;
+        (self.pressed, self.released) = (false, false);
     }
 
     /// One drawn frame: `Help_Main`, then `GFX_Help` with the passes, then the tooltip.
@@ -836,6 +847,11 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     };
     let mut pics = Pictures::default();
     let size = [o.size.0 as f32, o.size.1 as f32];
+    // Ours (ADR 0078): `--modern-menu` draws the modern page, driven by the script's pointer.
+    let mut gui = o.modern_menu.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    let mut page = crate::help_modern::Page::default();
+    let k = crate::gui::Gui::scale(o.size.1);
+    let mut mouse = o.mouse.unwrap_or([320.0, 240.0]);
     let script = o.script.as_deref().map(crate::script::Script::load).transpose()?;
     let (end, grabs) = match &script {
         Some(sc) => (sc.end(), sc.grabs.clone()),
@@ -843,12 +859,24 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     };
     s.hover(o.mouse.unwrap_or([320.0, 240.0]));
     for t in 0..=end {
+        let mut buttons = Vec::new();
         for e in script.iter().flat_map(|sc| sc.at(t)) {
             match &e.input {
-                Input::Move(at) => s.hover(*at),
+                Input::Move(at) => {
+                    mouse = *at;
+                    s.hover(*at);
+                }
+                Input::Button { button: 1, down, at } if gui.is_some() => {
+                    mouse = *at;
+                    buttons.push(*down);
+                }
                 Input::Button { button: 1, down: true, at } => s.press(*at),
                 Input::Button { button: 1, down: false, .. } => s.release(),
                 Input::Key { name, down: true } if name == "escape" => s.escape(),
+                Input::Key { name, down: true } if gui.is_some() => {
+                    let k = if name.len() == 1 { winit::keyboard::Key::Character(name.as_str()) } else { winit::keyboard::Key::Named(winit::keyboard::NamedKey::Backspace) };
+                    page.key(&k);
+                }
                 _ => {}
             }
         }
@@ -857,7 +885,26 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         }
         pics.load(&mut r, &l.install, &s.text.pics);
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-        {
+        if let Some(g) = &mut gui {
+            g.pointer(Some(Virtual::new(size).px(mouse[0], mouse[1])), k);
+            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let style = crate::gui::style(&theme);
+            let fade = (s.frame / 100.0).clamp(0.0, 1.0);
+            let run = |g: &mut crate::gui::Gui, s: &mut HelpScreen, page: &mut crate::help_modern::Page| {
+                let mut act = None;
+                g.run(o.size, &style, |ctx| act = page.show(ctx, &hud.texts, s, &l.install, fade));
+                if act.is_some() {
+                    s.escape();
+                }
+            };
+            if buttons.is_empty() {
+                run(g, &mut s, &mut page);
+            }
+            for down in buttons {
+                g.button(0, down);
+                run(g, &mut s, &mut page);
+            }
+        } else {
             let font = hud.font.as_ref().ok_or("no font")?;
             let d = Draw { font, white: hud.white, glow, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, pics: &pics, now_ms: t as f64 * 10.0 };
             s.draw(&mut frame, &d, char_y(font));
@@ -867,7 +914,10 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         }
         if grabs.contains(&t) {
             hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Help, 0.0);
-            let rgba = r.draw_to_image(&frame, o.size, 0.0);
+            let rgba = match &mut gui {
+                Some(g) => r.draw_to_image_over(&frame, o.size, 0.0, |d, q, tex| g.paint(d, q, tex)),
+                None => r.draw_to_image(&frame, o.size, 0.0),
+            };
             let path = if script.is_some() { crate::script::grab_path(out, t) } else { out.to_path_buf() };
             crate::assets::write_snapshot(&path, o, &rgba)?;
             println!("{}: t {t} | topic {} top {} lines {} frame {}", path.display(), s.sel, s.top, s.text.n, s.frame);
