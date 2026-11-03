@@ -158,7 +158,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
             let labels: Vec<String> = LEVELS.iter().map(|&l| tr(Item::Level(l).label())).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
             let mut i = LEVELS.iter().position(|&l| l == st.level).unwrap_or(1);
-            if ds::segmented_large(ui, &mut i, &refs, w).changed() {
+            if ds::segmented_plates(ui, &mut i, &refs, Some(w), 44.0, Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false }).changed() {
                 st.level = LEVELS[i];
             }
         });

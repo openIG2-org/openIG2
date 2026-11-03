@@ -563,10 +563,11 @@ fn well(ui: &Ui, rect: Rect) {
 }
 
 /// Segments in a well, the chosen one on a gliding lit block; `width` stretches them into equal columns (a wide row).
-/// `big`: the new game board's `.seg` (44-high plates, 4 apart in a panel-round well).
-fn segments(ui: &mut Ui, labels: &[&str], selected: usize, font: Font, width: Option<f32>, pad: f32, big: bool) -> (Response, Option<usize>) {
+/// `plates`: [`segmented_plates`]' look, its plates this high.
+fn segments(ui: &mut Ui, labels: &[&str], selected: usize, font: Font, width: Option<f32>, pad: f32, plates: Option<f32>) -> (Response, Option<usize>) {
     let k = tokens();
-    let (inset, h) = if big { (4.0, 44.0) } else { (3.0, 30.0) };
+    let big = plates.is_some();
+    let (inset, h) = plates.map_or((3.0, 30.0), |h| (4.0, h));
     let natural: Vec<f32> = labels.iter().map(|s| (Text::new(s, font).layout(ui.ctx(), f32::INFINITY).width + 2.0 * pad).max(46.0)).collect();
     let n = labels.len().max(1) as f32;
     let widths: Vec<f32> = match width {
@@ -612,7 +613,7 @@ fn segments(ui: &mut Ui, labels: &[&str], selected: usize, font: Font, width: Op
 
 /// A segmented choice (`.seg`); `width` for a wide row's equal columns. Sets `selected` on a click.
 pub fn segmented(ui: &mut Ui, selected: &mut usize, labels: &[&str], width: Option<f32>) -> Response {
-    let (mut resp, c) = segments(ui, labels, *selected, SEG_FONT, width, 10.0, false);
+    let (mut resp, c) = segments(ui, labels, *selected, SEG_FONT, width, 10.0, None);
     if let Some(c) = c.filter(|c| c != selected) {
         *selected = c;
         resp.mark_changed();
@@ -620,10 +621,10 @@ pub fn segmented(ui: &mut Ui, selected: &mut usize, labels: &[&str], width: Opti
     resp
 }
 
-/// The large segmented choice of the new game board (`.seg` there: 44-high plates, 500 17 / 0.12 em) in `width`.
-pub fn segmented_large(ui: &mut Ui, selected: &mut usize, labels: &[&str], width: f32) -> Response {
-    const FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false };
-    let (mut resp, c) = segments(ui, labels, *selected, FONT, Some(width), 10.0, true);
+/// A segmented choice of lit plates (`.seg` of the new game and end-of-game boards: plates `height` high, 4 apart in
+/// a panel-round well, labels in `font`); `width` for equal columns, else each to its label.
+pub fn segmented_plates(ui: &mut Ui, selected: &mut usize, labels: &[&str], width: Option<f32>, height: f32, font: Font) -> Response {
+    let (mut resp, c) = segments(ui, labels, *selected, font, width, 18.0, Some(height));
     if let Some(c) = c.filter(|c| c != selected) {
         *selected = c;
         resp.mark_changed();
@@ -633,7 +634,7 @@ pub fn segmented_large(ui: &mut Ui, selected: &mut usize, labels: &[&str], width
 
 /// An off / on toggle with its two words (`.tg`: "KI" "BE"); the lit block glides.
 pub fn toggle(ui: &mut Ui, on: &mut bool, off_label: &str, on_label: &str) -> Response {
-    let (mut resp, c) = segments(ui, &[off_label, on_label], *on as usize, TOGGLE_FONT, None, 8.0, false);
+    let (mut resp, c) = segments(ui, &[off_label, on_label], *on as usize, TOGGLE_FONT, None, 8.0, None);
     if let Some(c) = c.filter(|&c| (c == 1) != *on) {
         *on = c == 1;
         resp.mark_changed();

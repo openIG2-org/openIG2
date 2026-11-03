@@ -16,6 +16,8 @@ use crate::font::Align;
 use crate::options::Draw;
 use crate::render::{Blend, Frame, Instance};
 
+pub mod modern;
+
 /// The match history, beside the saves.
 pub const HISTORY_FILE: &str = "match-history.json";
 

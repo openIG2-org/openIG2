@@ -326,6 +326,9 @@ const TABLE: &[(&str, &str)] = &[
     // The modern help page (ADR 0078).
     ("Search", "Keresés"),
     ("No topic found.", "Nincs ilyen téma."),
+    // The modern end-of-game page (ADR 0078).
+    ("{} game days", "{} játéknap"),
+    ("ended {}", "vége: {}"),
     // Game statistics and the match history (column heads at most 7 letters).
     ("Victory", "Győzelem"),
     ("Defeat", "Vereség"),

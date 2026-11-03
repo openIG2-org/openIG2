@@ -2118,6 +2118,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if o.screen.as_deref() == Some("options") {
         return crate::options::snapshot(o, out);
     }
+    if o.screen.as_deref() == Some("stats") {
+        return crate::stats_screen::modern::snapshot(o, out);
+    }
     if o.screen.as_deref() == Some("help") {
         return crate::help::snapshot(o, out);
     }
