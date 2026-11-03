@@ -2808,7 +2808,6 @@ impl App {
         }
         match main_pick {
             Some(crate::mainscr_modern::Pick::Item(i)) => {
-                self.audio.play(crate::audio::CLICK);
                 if let Some(a) = self.front.as_mut().and_then(|f| f.s.act_item(i)) {
                     self.front_act(a);
                 }
@@ -6058,6 +6057,8 @@ impl ApplicationHandler for App {
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
+        let either = self.main_menu_modern_up();
         if !page && (self.modern_up() || self.main_menu_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.research_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
@@ -6068,6 +6069,7 @@ impl ApplicationHandler for App {
                 WindowEvent::MouseInput { state, button, .. } => {
                     let b = match button {
                         MouseButton::Left => 0,
+                        MouseButton::Right if either => 0,
                         MouseButton::Right => 1,
                         _ => 2,
                     };
@@ -6398,6 +6400,8 @@ impl ApplicationHandler for App {
             {
                 self.open_history();
             }
+            // Ours (ADR 0078): a press over the modern main menu's panel is the page's (a right one is no Esc there).
+            WindowEvent::MouseInput { .. } if self.main_menu_modern_up() && self.gpu.as_ref().is_some_and(|g| g.gui.ctx.is_pointer_over_area()) => {}
             // The main menu's boxes, race spheres and difficulty rings take either button (`Mouse_Lenyom`, FX3).
             WindowEvent::MouseInput { state, button: MouseButton::Right, .. } if self.front.is_some() => {
                 let Some(f) = &mut self.front else { return };
