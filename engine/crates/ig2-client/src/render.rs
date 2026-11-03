@@ -984,6 +984,12 @@ impl Renderer {
 
     /// [`Renderer::draw_to_image`] with `over` drawing into the texture after the frame (an egui page, ADR 0064).
     pub fn draw_to_image_over(&mut self, frame: &Frame, size: (u32, u32), time: f32, over: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture)) -> Vec<u8> {
+        self.draw_to_image_over_top(frame, None, size, time, over)
+    }
+
+    /// [`Renderer::draw_to_image_over`] with `top` drawn last, over the page (the window's top frame: the modern
+    /// colony's pictures, ADR 0074).
+    pub fn draw_to_image_over_top(&mut self, frame: &Frame, top: Option<Frame>, size: (u32, u32), time: f32, over: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture)) -> Vec<u8> {
         let (w, h) = size;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("snapshot"),
@@ -1000,6 +1006,10 @@ impl Renderer {
             None => self.draw(frame, &tex, size, time),
         }
         over(&self.device, &self.queue, &tex);
+        if let Some(mut top) = top {
+            top.keep = true;
+            self.draw(&top, &tex, size, time);
+        }
         let row = (4 * w).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: None,
@@ -1323,7 +1333,9 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
                 crate::colony_modern::show(ctx, &cv, &mut st);
             });
         }
-        r.draw_to_image_over(&frame, o.size, t, |d, q, tex| gui.paint(d, q, tex))
+        let mut top = crate::render::Frame::new([0.0; 4]);
+        crate::colony_modern::pictures(&mut top, &st.wells, panel, info_model, &crate::font::Virtual::new(size));
+        r.draw_to_image_over_top(&frame, Some(top), o.size, t, |d, q, tex| gui.paint(d, q, tex))
     } else {
         r.draw_to_image(&frame, o.size, t)
     };

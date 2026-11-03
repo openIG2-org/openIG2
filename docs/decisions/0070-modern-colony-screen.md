@@ -1,6 +1,6 @@
 # ADR 0070: the modern colony screen
 
-Date: 2026-11-02. Status: accepted (the colony screen of the "Modern versions of every original screen" package,
+Date: 2026-11-02. Status: accepted; amended by ADR 0074 (the colony screen of the "Modern versions of every original screen" package,
 `docs/ENHANCEMENTS.md` → UI). Implemented by `ig2-client::colony_modern` (the panels, their acts),
 `ui::Hud::colony_modern_view` (what they show, read from the state the original's panels read),
 `colony_ui::ColonyUi::modern_act` and `modern_parts` (the acts through the original's hot-spot code, the data), and the

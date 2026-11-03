@@ -29,6 +29,9 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 150 | main menu, exit animation | the exe's respawning saucer (RNG) is missing and the meteors' material is fully black (faintly lit in the exe) | minor | mainscr.md §14 |
 | 154 | main menu, scenario list | the picture slide transitions at t 820/880 still differ (3D RNG/pose) | minor | mainscr.md §14 |
 | 157 | main menu, MP rings | the main menu's remaining MP-ring leftovers (meteor/ship sounds; the local/inet rings are our lobby, ADR 0014) are not done | minor | mainscr.md §14 |
+| 507 | colony, info mode under the modern panels | open-fix: the settings drop-downs open on a click and pick on a second click; the exe opens on the press and the held item picks on the release | yes | colony.md §12.2 |
+| 508 | colony, modern radar | open: on-screen zoom keys (held = numpad +/-) and a starmap key the exe lacks | no | colony.md §11.9 |
+| 509 | colony, info mode under the modern panels | open: a press anywhere off the modern panels is hot-spot 0x20; the exe's 0x20 is the whole screen under its panel's dead 0x1f | no | colony.md §12.2 |
 
 ## Keep
 

@@ -1822,10 +1822,10 @@ impl App {
         self.display.modern_starmap && self.front.is_none() && self.colony.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.view.is_some()
     }
 
-    /// Ours (ADR 0070): the modern colony screen is up (its option on, the colony shown with nothing over it, not in
-    /// the planet info mode, which keeps the original's panels).
+    /// Ours (ADR 0070): the modern colony screen is up (its option on, the colony shown with nothing over it; the planet
+    /// info mode's long info is its own panel, ADR 0074).
     fn colony_modern_up(&self) -> bool {
-        self.display.modern_colony && self.front.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.world.colony_curr.is_some() && self.colony.as_ref().is_some_and(|c| c.ui.info.is_none())
+        self.display.modern_colony && self.front.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.world.colony_curr.is_some() && self.colony.is_some()
     }
 
     /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
@@ -1918,6 +1918,12 @@ impl App {
         }
         if !up {
             self.colony_acts.clear();
+            // A radar zoom key held as the panels went: its camera flag lets go.
+            if self.colony_modern.zoom.take().is_some()
+                && let Some(c) = &mut self.colony
+            {
+                (c.ui.cam_keys.zoom_in, c.ui.cam_keys.zoom_out) = (false, false);
+            }
             return;
         }
         for a in std::mem::take(&mut self.colony_acts) {
@@ -5711,6 +5717,7 @@ impl App {
             let (st, acts, band) = (&mut self.colony_modern, &mut self.colony_acts, g.band());
             g.gui.run(band, &style, |ctx| acts.extend(crate::colony_modern::show(ctx, cv, st)));
             let mut f = crate::render::Frame::new([0.0; 4]);
+            crate::colony_modern::pictures(&mut f, &st.wells, colony_panel, colony_info, &crate::font::Virtual::new(size));
             ov.draw(&mut f, h, size);
             top = Some(f);
         }

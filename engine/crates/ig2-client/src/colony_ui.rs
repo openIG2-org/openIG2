@@ -470,8 +470,10 @@ impl ColonyUi {
         if self.all_off {
             return None;
         }
-        if self.modern && self.info.is_none() {
-            return inside(SPOTS[11].1, p).then_some(0x14);
+        // Ours (ADR 0070, 0074): under the modern panels only the view answers; in the info mode it is 0x20 (the
+        // panel's clicks are the panels' own).
+        if self.modern {
+            return if self.info.is_some() { Some(0x20) } else { inside(SPOTS[11].1, p).then_some(0x14) };
         }
         // In the info mode `Off_Range(1, 0x14)`: 4 stays, 10 keeps its own test, 0x15..=0x1e only on EN's planet.
         if self.info.is_some() {
@@ -848,6 +850,24 @@ impl ColonyUi {
             Act::Answer(yes) => {
                 if let Some(w) = self.window.take().filter(|_| yes) {
                     self.answer_yes(c, w, &mut out);
+                }
+            }
+            Act::Zoom(z) => (self.cam_keys.zoom_in, self.cam_keys.zoom_out) = (z == Some(true), z == Some(false)),
+            // The info mode's buttons on their press (one-shot), at the spot's centre; 0x20 leaves the mode.
+            Act::Info(id) => {
+                let r = INFO_SPOTS.iter().find(|s| s.0 == id).map_or([0.0; 4], |s| s.1);
+                if id == 0x20 || c.owner_is_en() {
+                    self.info_press(c, id, centre(r), &mut out);
+                }
+            }
+            // A menu opened on its spot's press, its item hovered, released: the classic pick (colony.md §12.2).
+            Act::InfoPick(id, item) if c.owner_is_en() => {
+                let r = INFO_SPOTS.iter().find(|s| s.0 == id).map_or([0.0; 4], |s| s.1);
+                if self.info_press(c, id, centre(r), &mut out) {
+                    if let Some(sm) = self.info.as_mut().and_then(|m| m.menu.as_mut()) {
+                        sm.hovered = item;
+                    }
+                    self.info_release(c, &mut out);
                 }
             }
             _ => {}
@@ -2084,5 +2104,14 @@ mod tests {
         assert!(ui.info.is_none());
         ui.modern_act(&c, Act::Card(false), 0);
         assert!(ui.info.is_some(), "the left click is the planet info mode");
+        // ADR 0074: the info mode's panel: a tax item is the menu's release (what 8), "ALL" its spot (5), tax + (2);
+        // a press on open ground (0x20) leaves the mode.
+        let setting = |what: i32, value: i32| Command::Starmap { order: ig2_sim::game::StarmapOrder::Setting { planet: 42, what, value }.into() };
+        assert_eq!(ui.modern_act(&c, Act::InfoPick(0x15, 3), 0).commands, vec![setting(8, 3)]);
+        assert_eq!(ui.modern_act(&c, Act::Info(0x16), 0).commands, vec![setting(5, 0)]);
+        assert_eq!(ui.modern_act(&c, Act::Info(0x18), 0).commands, vec![setting(2, 0)]);
+        assert!(ui.info.as_ref().is_some_and(|m| m.menu.is_none()), "the pick closes the menu");
+        ui.press(&c, [100.0, 400.0], true, 0);
+        assert!(ui.info.is_none(), "0x20 under the panels");
     }
 }

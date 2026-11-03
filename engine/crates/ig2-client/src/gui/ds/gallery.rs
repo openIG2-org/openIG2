@@ -157,6 +157,7 @@ pub fn page(ctx: &egui::Context, cursors: &[(Cursor, Vec<egui::TextureHandle>)])
                 });
                 round_button(ui, Glyph::Text("ÉP"), false, false);
                 round_button(ui, Glyph::Text("ÉP"), false, true);
+                round_button_sized(ui, Glyph::Text("ÉP"), 60.0, false);
                 round_button(ui, Glyph::Icon(Icon::Close), true, false);
             });
             caption(ui, "Readouts, bars");

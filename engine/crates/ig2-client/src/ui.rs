@@ -1158,28 +1158,35 @@ impl Hud {
         let units = ui.war.chosen_units(&w);
         let empire = |e: i32| self.empire_names.get(e.clamp(0, 18) as usize).map(|n| dec(n)).unwrap_or_default();
         // The short info: the units selected, else the building, else the planet's (`ColonyInfoMod` 1, 2, 0).
+        let k = crate::gui::ds::tokens();
         let mut card = m::Card { tip: dec(&parts.tips[5]), surplus: hs.own.then_some((hs.workers, hs.energy)), ..Default::default() };
         if let Some(first) = units.first() {
             let owner = col((first.owner + 0xf).max(0) as usize);
             card.colour = owner;
             card.title = if units.len() > 1 { dec(&sprintf(&self.texts.get(3, 2, 33), &[units.len() as i64])) } else { dec(&self.unit_design_name(state, first)) };
-            card.lines = vec![(empire(first.owner), owner), (dec(&self.unit_weapon_name(state, first)), col(0x23))];
+            card.lines = vec![(empire(first.owner), owner), (dec(&self.unit_weapon_name(state, first)), k.info)];
         } else if let Some(b) = &parts.building {
             card.colour = col(0x22);
             card.title = dec(&b.name);
-            let mut status = dec(&b.status);
-            if let Some(e) = b.efficiency {
-                status = format!("{status} {e}%");
-            }
-            card.lines.push((status, if b.efficiency.is_some_and(|e| e < 100) { col(6) } else { col(0x23) }));
+            // The labels without the original's padding and colon ("Damage :").
+            let label = |b: &[u8]| dec(b).trim_end_matches([':', ' ']).to_string();
+            let row = |l: String, value: String, colour: egui::Color32| m::Row { label: l, value, colour, ..Default::default() };
+            let status = match b.efficiency {
+                Some(e) => row(label(&b.status), format!("{e}%"), if e < 100 { k.lcd_ink } else { k.own }),
+                None => row(String::new(), label(&b.status), k.ink_silver),
+            };
+            card.rows.push(status);
             match (&b.product, b.output) {
-                (Some(label), Some((icon, n))) => card.product = Some((dec(label), icon, n)),
-                (Some(label), None) => card.lines.push((dec(label), col(0x23))),
+                (Some(l), Some((icon, n))) => {
+                    let value = if icon == 3 { crate::starmap_modern::money(n as f64) } else { n.to_string() };
+                    card.rows.push(m::Row { icon: icon.min(3), ..row(label(l), value, k.info) });
+                }
+                (Some(l), None) => card.rows.push(row(String::new(), label(l), k.ink_muted)),
                 _ => {}
             }
-            card.bars.push((dec(&b.damage), b.hp.0 as f32 / b.hp.1.max(1) as f32));
-            if let Some((label, done, all)) = &b.built {
-                card.bars.push((dec(label), *done as f32 / (*all).max(1) as f32));
+            card.rows.push(m::Row { bar: Some(b.hp.0 as f32 / b.hp.1.max(1) as f32), ..row(label(&b.damage), String::new(), k.own) });
+            if let Some((l, done, all)) = &b.built {
+                card.rows.push(m::Row { bar: Some(*done as f32 / (*all).max(1) as f32), icon: 1, ..row(label(l), String::new(), k.info) });
             }
         } else {
             card.planet = true;
@@ -1192,6 +1199,10 @@ impl Hud {
             card.title = main.first().map(|l| dec(&l.0)).unwrap_or_default();
             card.colour = col(if curr.owner == 0 { 12 } else { curr.owner as usize + 15 });
             card.lines = main.iter().skip(1).map(|l| (dec(&crate::diplomacy::articles(&l.0, hu)), col(l.4))).collect();
+            let r = crate::starmap_menus::planet(state, curr.planet);
+            let race = if r[0x20] == 0 { en as usize } else { r[0x21] as usize };
+            let aff = rules.race_surface_affinity.get(race).and_then(|v| v.get(r[0x22] as usize)).copied().unwrap_or(0);
+            card.ratios = Some((crate::starmap_hud::richness(state, rules, curr.planet, en as u8), aff));
         }
         // `TutorialPaused` turns demolish and on/off dead (`Colony_Main`); the colony lock every button.
         let paused = state.mem.u8(ig2_sim::save::va::TUTORIAL_PAUSED) != 0;
@@ -1214,7 +1225,7 @@ impl Hud {
             current: hs.build.as_ref().map(|(name, price, energy, workers)| (dec(name), crate::starmap_modern::money(*price as f64), *energy, *workers)),
             cursor: parts.cursor,
             pending: parts.pending,
-            build_tip: dec(&parts.tips[6]),
+            build_tip: Some(dec(&parts.tips[6])).filter(|t| !t.is_empty()).unwrap_or_else(|| dec(&self.texts.ours("Build"))),
             cursor_tip: dec(&self.texts.ours("Build cursor")),
         });
         let war = curr.war_flag.then(|| {
@@ -1228,10 +1239,11 @@ impl Hud {
                 }
             }
             sides.sort_by_key(|s| (s.0 != en, s.0));
+            let role = |o: i32| dec(&self.texts.ours(if o == curr.owner as i32 { "Defender" } else { "Attacker" }));
             m::War {
                 buttons: ui.war.shown_buttons(&w).into_iter().map(|(id, frame)| (id, frame, parts.war_tips.iter().find(|t| t.0 == id).map(|t| dec(&t.1)).unwrap_or_default())).collect(),
                 charge: (fighters as f32 / 200.0, ships as f32 / 300.0),
-                sides: sides.into_iter().map(|(o, n)| (col((o + 0xf).max(0) as usize), empire(o), n)).collect(),
+                sides: sides.into_iter().map(|(o, n)| m::Side { colour: col((o + 0xf).max(0) as usize), name: empire(o), units: n, role: role(o) }).collect(),
                 notices: [(retreat, 3u16), (landing, 4)].into_iter().filter(|x| x.0).map(|(_, n)| dec(&self.texts.get(3, 2, n))).collect(),
             }
         });
@@ -1241,7 +1253,7 @@ impl Hud {
             let weapon_name = |u: &crate::colony::UnitView| self.unit_weapon_name(state, u);
             let player_name = |e: i32| state.mem.read(0xBAE588 + 11 * e.clamp(0, 18) as u32, 11).iter().copied().take_while(|&b| b != 0).collect::<Vec<u8>>();
             let d = crate::colony_war::Draw2d { font, pics: &self.pics, brushes: &self.colony_brushes, white: self.white, v: &v, palette: &self.palette, texts: &self.texts, empire_names: &self.empire_names, design_name: &design_name, weapon_name: &weapon_name, player_name: &player_name };
-            ui.war.banner_text(&w, &d).map(|(t, k)| (dec(&t), k))
+            ui.war.banner_text(&w, &d).map(|(t, k)| (dec(&crate::diplomacy::articles(&t, hu)), k))
         });
         let destruct = (curr.self_destruct != -1).then(|| m::Destruct {
             lines: [dec(&self.texts.get(3, 5, 1)), dec(&self.texts.get(3, 5, 2))],
@@ -1258,9 +1270,54 @@ impl Hud {
             units: hs.units.iter().map(|&(gx, gy, own)| ([gx / 200.0, gy / 200.0], own)).collect(),
             view: hs.view.map(|q| q.map(|c| unit(c[0], c[1]))),
             tip: dec(&self.texts.get(3, 1, 4)),
+            keys: Default::default(),
         };
         let starmap = bar.screens.iter().find(|s| s.n == 2).map(|s| s.name.clone()).unwrap_or_default();
-        m::View { bar, card, actions, build, war, banner, destruct, confirm, radar, details: dec(&self.texts.ours("Details")), starmap }
+        let colony = bar.screens.iter().find(|s| s.n == 3).map(|s| s.name.clone()).unwrap_or_default();
+        let radar = m::Radar { keys: [dec(&self.texts.ours("Zoom out")), dec(&self.texts.ours("Zoom in")), starmap.clone()], ..radar };
+        let info = ui.info.as_ref().map(|menus| self.colony_long_info(state, rules, menus, curr.planet, time, colony, starmap));
+        m::View { bar, card, actions, build, war, banner, destruct, confirm, radar, info, details: dec(&self.texts.ours("Details")) }
+    }
+
+    /// Ours (ADR 0074): the planet info mode's long info for the modern panel, from `StarmapHosszuInfoKiir`'s lines
+    /// (re/screens/starmap.md §15.2) and the settings' menus as `open_menu` lists them (colony.md §12.2).
+    #[allow(clippy::too_many_arguments)]
+    fn colony_long_info(&self, state: &SaveState, rules: &ig2_rules::Rules, menus: &crate::starmap_menus::Menus, planet: usize, time: f32, back: String, starmap: String) -> crate::colony_modern::Info {
+        use crate::colony_modern as m;
+        use crate::starmap_menus::MenuKind;
+        let lang = self.texts.lang;
+        // The values' icon marks (1 workers, 2 energy) and the field padding go.
+        let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).chars().filter(|c| *c >= ' ').collect::<String>().trim().to_string();
+        let label = |n: u16| dec(&self.texts.get(2, 2, n)).trim_end_matches([':', ' ']).to_string();
+        let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
+        let li = menus.long_info(&t, state, rules, planet, crate::starmap_hud::counter(time));
+        let owner = crate::starmap_menus::planet(state, planet)[0x20];
+        let colour = crate::gui::ink(self.palette.get(if owner == 0 { 12 } else { owner as usize + 15 }).copied().unwrap_or([1.0; 3]));
+        let num = |s: &str| s.split(|c: char| !c.is_ascii_digit() && c != '-').find(|p| !p.is_empty()).and_then(|p| p.parse::<f32>().ok()).unwrap_or(0.0);
+        let mut out = m::Info { back, starmap, all: dec(&self.texts.get(2, 2, 18)), ..Default::default() };
+        for l in &li.lines {
+            let v = dec(&l.value);
+            match (l.n, &l.needed) {
+                (1, _) => out.title = v,
+                (3, _) => out.owner = Some((v, colour)),
+                (_, Some(nd)) => {
+                    let need = dec(nd);
+                    out.needs.push(m::Need { label: label(l.n), needed: format!("{} {need}", label(l.n + 1)), part: (num(&v) / num(&need).max(1.0)).clamp(0.0, 1.0), value: v, short: l.colour == 6 });
+                }
+                (n, None) => out.rows.push((label(n), if v.is_empty() && n == 13 { "-".into() } else { v }, l.colour == 6 && n != 13)),
+            }
+        }
+        out.problems = li.problems.as_ref().map(|ps| (label(14), ps.iter().map(|(v, n)| (*v, dec(n))).collect()));
+        if let Some(vals) = &li.settings {
+            let menus = [(MenuKind::Tax, 0x15, 0x16, Some((0x17, 0x18))), (MenuKind::AutoBuild, 0x19, 0x1a, None), (MenuKind::Priority, 0x1b, 0x1c, Some((0x1d, 0x1e)))];
+            for (j, (kind, spot, all, steps)) in menus.into_iter().enumerate() {
+                let mut scratch = crate::starmap_menus::Menus::colony_info(planet);
+                scratch.open_menu(state, kind, [0.0; 2]);
+                let items = scratch.menu.as_ref().map(|sm| scratch.menu_lines(&t, sm).into_iter().map(|(v, text, _)| (v, dec(&text))).collect()).unwrap_or_default();
+                out.settings.push(m::Setting { label: label(15 + j as u16), value: dec(&vals[j]), menu: spot, items, all, steps });
+            }
+        }
+        out
     }
 
     /// `Tervek[side]+0x84·design`'s name (+0).

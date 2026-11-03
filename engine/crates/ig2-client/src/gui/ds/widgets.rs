@@ -402,7 +402,12 @@ pub fn key_group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 /// The round rust button in its metal ring (`.ig-round`, 72 across; `small` 34, the dark one with a red glyph);
 /// `active` lit.
 pub fn round_button(ui: &mut Ui, glyph: Glyph, small: bool, active: bool) -> Response {
-    let d = if small { 34.0 } else { 72.0 };
+    round_button_sized(ui, glyph, if small { 34.0 } else { 72.0 }, active)
+}
+
+/// [`round_button`] `d` points across (the boards' 60-point action buttons); below 48 the small dark one.
+pub fn round_button_sized(ui: &mut Ui, glyph: Glyph, d: f32, active: bool) -> Response {
+    let small = d < 48.0;
     let ring = if small { 3.0 } else { 5.0 };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(d + 2.0 * (ring + 1.0)), Sense::click());
     let l = look(ui, &resp, false);

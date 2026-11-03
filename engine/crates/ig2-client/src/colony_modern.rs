@@ -1,17 +1,18 @@
-//! Ours (ADR 0070): the modern colony screen on the egui layer (ADR 0062), the "Modern colony screen" option. The
-//! same functions as the original's 2D parts (re/screens/colony.md §6, §10, §11): the top bar (the modern starmap
-//! HUD's, [`crate::starmap_modern::bar`]), the build menu with its costs and the build cursor, the short info (the
-//! planet, the selected building or units) with the selected building's buttons, the radar, the ground war's buttons
-//! with their charge, the battle's sides, the attack banner, and the repair, demolish and self-destruct windows. The 3D
-//! view, its keys and its clicks stay the original's. The window fills a [`View`] from the state the classic panels
-//! read, runs [`show`] once a frame and hands the [`Act`]s to [`crate::colony_ui::ColonyUi::modern_act`], which runs
-//! the classic hot-spots' own code. The planet info mode keeps the original's long info.
-//!
-//! The look is the modern starmap HUD's console (ADR 0065): dark plates with cut corners and the empire's colour.
+//! Ours (ADR 0070, ADR 0074): the modern colony screen on the egui layer (ADR 0062), the "Modern colony screen"
+//! option, drawn with the design kit (ADR 0073, `gui::ds`) after the colony boards. The same functions as the
+//! original's 2D parts (re/screens/colony.md §6, §10, §11, §12): the top bar (the modern starmap HUD's,
+//! [`crate::starmap_modern::bar`]), the build menu with its costs and the build cursor, the short info (the planet, the
+//! selected building or units) with the selected building's buttons, the radar, the ground war's buttons with their
+//! charge, the battle's sides, the attack banner, the repair, demolish and self-destruct windows, and the planet info
+//! mode's long info with its settings. The 3D view, its keys and its clicks stay the original's. The window fills a
+//! [`View`] from the state the classic panels read, runs [`show`] once a frame and hands the [`Act`]s to
+//! [`crate::colony_ui::ColonyUi::modern_act`], which runs the classic hot-spots' own code; the turning building and the
+//! short info's model are the classic render targets, drawn into the wells the panels leave ([`pictures`]).
 
-use egui::{pos2, vec2, Align2, Color32, FontId, Margin, Pos2, Rect, RichText, Sense, Shape, Stroke};
+use egui::{pos2, vec2, Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui};
 
-use crate::starmap_modern::{self as sm, icon_button, lerp, plate, tip, Ink, EDGE};
+use crate::gui::ds::{self, Font, Glyph, IconKey, PanelKind, Text, Weight};
+use crate::starmap_modern::{self as sm};
 
 /// What the panels ask for.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -29,6 +30,13 @@ pub enum Act {
     Pick(i32),
     /// The repair or demolish window answered.
     Answer(bool),
+    /// The radar's zoom keys held: `Some(true)` in (numpad +), `Some(false)` out, `None` let go.
+    Zoom(Option<bool>),
+    /// The planet info mode's button pressed (spec §12.2): "ALL" 0x16/0x1a/0x1c, tax −/+ 0x17/0x18, priority −/+
+    /// 0x1d/0x1e, 0x20 the mode off.
+    Info(u32),
+    /// The info mode's menu 0x15 (tax), 0x19 (auto-build) or 0x1b (priority) answered with an item.
+    InfoPick(u32, i32),
 }
 
 /// One build menu entry.
@@ -56,9 +64,20 @@ pub struct Build {
     pub cursor: bool,
     /// Build orders on their way (`NemSzabadEpiteni`): the list waits.
     pub pending: bool,
-    /// The "Build" button's tooltip and the cursor's.
+    /// The "Build" button's label (its tooltip) and the cursor's.
     pub build_tip: String,
     pub cursor_tip: String,
+}
+
+/// A data line of the short info: label, value, the value's colour, a bar (0..1) instead of the value, the product's
+/// icon byte (1 workers, 2 energy, 3 money).
+#[derive(Debug, Clone, Default)]
+pub struct Row {
+    pub label: String,
+    pub value: String,
+    pub colour: Color32,
+    pub bar: Option<f32>,
+    pub icon: u8,
 }
 
 /// The short info: the planet's, the selected building's or the selected units'.
@@ -66,17 +85,18 @@ pub struct Build {
 pub struct Card {
     pub title: String,
     pub colour: Color32,
+    /// The planet's and the units' lines (text, colour).
     pub lines: Vec<(String, Color32)>,
-    /// The product line: its label, the icon byte (1 workers, 2 energy, 3 money) and the amount.
-    pub product: Option<(String, u8, i32)>,
-    /// Bars: label, the part done 0..1.
-    pub bars: Vec<(String, f32)>,
+    /// The building's data lines.
+    pub rows: Vec<Row>,
     /// Hot-spot 4's tooltip.
     pub tip: String,
     /// Workers' and energy's surplus (EN's planet at peace).
     pub surplus: Option<(i32, i32)>,
     /// The planet (not a building or units): the globe mark.
     pub planet: bool,
+    /// The planet's surface richness and the race's affinity, per cent (the board's ratios beside the globe).
+    pub ratios: Option<(i32, i32)>,
 }
 
 /// The selected building's buttons (on when their hot-spot is): repair, demolish, on/off, self-destruct.
@@ -87,6 +107,15 @@ pub struct Actions {
     pub tips: [String; 4],
 }
 
+/// One side on the field: colour, empire, units, its role (attacker or defender).
+#[derive(Debug, Clone, Default)]
+pub struct Side {
+    pub colour: Color32,
+    pub name: String,
+    pub units: i32,
+    pub role: String,
+}
+
 /// The ground war's strip.
 #[derive(Debug, Clone, Default)]
 pub struct War {
@@ -94,8 +123,8 @@ pub struct War {
     pub buttons: Vec<(u32, usize, String)>,
     /// The fighters' and big ships' charge, 0..1.
     pub charge: (f32, f32),
-    /// The sides on the field: colour, name, units.
-    pub sides: Vec<(Color32, String, i32)>,
+    /// The sides on the field, the player's first.
+    pub sides: Vec<Side>,
     /// The retreat and landing lines.
     pub notices: Vec<String>,
 }
@@ -124,6 +153,47 @@ pub struct Radar {
     pub units: Vec<([f32; 2], bool)>,
     pub view: Option<[[f32; 2]; 4]>,
     pub tip: String,
+    /// The zoom keys' and the starmap key's tooltips.
+    pub keys: [String; 3],
+}
+
+/// A NEEDED block of the long info: label, the NEEDED label and value, the value, the part covered (0..1), short.
+#[derive(Debug, Clone, Default)]
+pub struct Need {
+    pub label: String,
+    pub needed: String,
+    pub value: String,
+    pub part: f32,
+    pub short: bool,
+}
+
+/// A settings row of the info mode: label, value, its menu's hot-spot and items (value, text), the −/+ spots.
+#[derive(Debug, Clone, Default)]
+pub struct Setting {
+    pub label: String,
+    pub value: String,
+    pub menu: u32,
+    pub items: Vec<(i32, String)>,
+    pub all: u32,
+    pub steps: Option<(u32, u32)>,
+}
+
+/// The planet info mode's long info (`StarmapHosszuInfoKiir` on the colony's planet, spec §12).
+#[derive(Debug, Clone, Default)]
+pub struct Info {
+    pub title: String,
+    pub owner: Option<(String, Color32)>,
+    /// The table's lines: label, value, short (the shortage colour).
+    pub rows: Vec<(String, String, bool)>,
+    pub needs: Vec<Need>,
+    /// The PROBLEMS label and each problem's per cent and name.
+    pub problems: Option<(String, Vec<(i32, String)>)>,
+    /// EN's planet: tax, auto-build, priority; and the "ALL" label.
+    pub settings: Vec<Setting>,
+    pub all: String,
+    /// The back-to-the-colony and the starmap plates.
+    pub back: String,
+    pub starmap: String,
 }
 
 /// What the screen shows this frame.
@@ -139,9 +209,19 @@ pub struct View {
     pub destruct: Option<Destruct>,
     pub confirm: Option<Confirm>,
     pub radar: Radar,
-    /// The details' and the starmap's labels (the card's icons).
+    /// The planet info mode is on: its long info.
+    pub info: Option<Info>,
+    /// The details key's label.
     pub details: String,
-    pub starmap: String,
+}
+
+/// A picture well: the classic render target it shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pic {
+    /// The planet panel's turning building (`buildshown`, `crate::colony_ui::PanelBuilding::render`).
+    Building,
+    /// The short info's turning model (`HandleKisInfoObject`: the building, the unit or the globe).
+    Info,
 }
 
 /// What stays between frames.
@@ -150,391 +230,500 @@ pub struct State {
     pub bar: sm::State,
     /// The build menu's group, `None`: the current kind's.
     tab: Option<usize>,
+    /// The zoom key held last frame.
+    pub zoom: Option<bool>,
+    /// The info mode's open menu (its hot-spot).
+    menu: Option<u32>,
+    /// This frame's picture wells in pixels and their opacity ([`pictures`]).
+    pub wells: Vec<(Pic, Rect, f32)>,
 }
 
-/// The colony's own icons.
+/// The boards' measures in points.
+const EDGE: f32 = 24.0;
+const BUILD_W: f32 = 430.0;
+const CARD_W: f32 = 440.0;
+const WAR_CARD_W: f32 = 400.0;
+const RADAR_W: f32 = 300.0;
+const ROUND: f32 = 60.0;
+const ROW_H: f32 = 34.0;
+const INFO_W: f32 = 760.0;
+
+// ---- Icons ----
+
+/// The colony's line icons (the boards' lucide strokes in a 24-unit box, 2 wide).
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Glyph {
-    Repair,
-    Demolish,
+enum Ico {
+    Coins,
+    Bolt,
+    User,
+    Info,
     Power,
-    Destruct,
-    Cursor,
-    Build,
+    Wrench,
+    Trash,
+    Undo,
+    ZoomIn,
+    ZoomOut,
+    Target,
+    Burst,
     /// A war button by its hot-spot.
     War(u32),
 }
 
-fn glyph(p: &egui::Painter, r: Rect, g: Glyph, c: Color32) {
-    use std::f32::consts::PI;
-    let s = Stroke::new(1.4f32, c);
-    let m = r.center();
-    let k = r.height().min(r.width()) * 0.3;
-    let at = |x: f32, y: f32| pos2(m.x + x * k, m.y + y * k);
-    let line = |pts: &[(f32, f32)]| p.add(Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect(), s));
-    match g {
-        // A spanner.
-        Glyph::Repair => {
-            p.line_segment([at(-0.85, 0.85), at(0.15, -0.15)], Stroke::new(2.2f32, c));
-            p.add(Shape::line((0..=14).map(|j| {
-                let a = PI * (0.95 + 1.6 * j as f32 / 14.0);
-                pos2(m.x + 0.45 * k + a.cos() * k * 0.5, m.y - 0.45 * k + a.sin() * k * 0.5)
-            }).collect(), Stroke::new(1.8f32, c)));
+fn ico(p: &egui::Painter, rect: Rect, i: Ico, c: Color32) {
+    let s = rect.width().min(rect.height()) / 24.0;
+    let at = |x: f32, y: f32| rect.center() + vec2(x - 12.0, y - 12.0) * s;
+    let st = Stroke::new(2.0 * s.max(0.75), c);
+    let poly = |pts: &[(f32, f32)]| p.add(Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
+    let closed = |pts: &[(f32, f32)]| p.add(Shape::closed_line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
+    let circle = |x: f32, y: f32, r: f32| p.circle_stroke(at(x, y), r * s, st);
+    // An arc about (x, y) from `a` to `b` degrees (y down: 90 is below).
+    let arc = |x: f32, y: f32, r: f32, a: f32, b: f32| -> Vec<(f32, f32)> {
+        (0..=24).map(|j| (a + (b - a) * j as f32 / 24.0).to_radians()).map(|t| (x + r * t.cos(), y + r * t.sin())).collect()
+    };
+    match i {
+        Ico::Coins => {
+            circle(8.0, 8.0, 6.0);
+            poly(&arc(16.0, 16.0, 6.0, -69.6, 160.5));
+            poly(&[(7.0, 6.0), (8.0, 6.0), (8.0, 10.0)]);
+            poly(&[(16.71, 13.88), (17.41, 14.59), (14.59, 17.41)]);
         }
-        // A building's outline crossed out.
-        Glyph::Demolish => {
-            line(&[(-0.9, 0.9), (-0.9, -0.3), (0.0, -0.9), (0.9, -0.3), (0.9, 0.9), (-0.9, 0.9)]);
-            p.line_segment([at(-0.45, -0.05), at(0.45, 0.75)], s);
-            p.line_segment([at(0.45, -0.05), at(-0.45, 0.75)], s);
+        Ico::Bolt => _ = closed(&[(13.0, 2.0), (3.0, 14.0), (12.0, 14.0), (11.0, 22.0), (21.0, 10.0), (12.0, 10.0)]),
+        Ico::User => {
+            circle(12.0, 7.0, 4.0);
+            let mut v = vec![(19.0, 21.0)];
+            v.extend(arc(15.0, 19.0, 4.0, 0.0, -90.0));
+            v.extend(arc(9.0, 19.0, 4.0, -90.0, -180.0));
+            v.push((5.0, 21.0));
+            poly(&v);
         }
-        // The power sign.
-        Glyph::Power => {
-            p.add(Shape::line((0..=20).map(|j| {
-                let a = -PI / 2.0 + PI * 0.22 + PI * 1.56 * j as f32 / 20.0;
-                pos2(m.x + a.cos() * k * 0.9, m.y + a.sin() * k * 0.9)
-            }).collect(), s));
-            p.line_segment([at(0.0, -1.05), at(0.0, -0.1)], Stroke::new(1.6f32, c));
+        Ico::Info => {
+            circle(12.0, 12.0, 10.0);
+            poly(&[(12.0, 16.0), (12.0, 12.0)]);
+            p.circle_filled(at(12.0, 8.0), 1.3 * s, c);
         }
-        // A burst.
-        Glyph::Destruct => {
-            let v: Vec<Pos2> = (0..16).map(|j| {
-                let a = PI * 2.0 * j as f32 / 16.0;
-                let d = if j % 2 == 0 { 1.05 } else { 0.45 };
-                pos2(m.x + a.cos() * k * d, m.y + a.sin() * k * d)
+        Ico::Power => {
+            poly(&[(12.0, 2.0), (12.0, 12.0)]);
+            poly(&arc(12.0, 12.0, 9.0, -40.0, 220.0));
+        }
+        Ico::Wrench => {
+            poly(&arc(15.5, 8.5, 5.5, 10.0, 280.0));
+            poly(&[(11.6, 12.4), (4.0, 20.0)]);
+            poly(&[(4.0, 20.0), (5.0, 21.0), (12.6, 13.4)]);
+        }
+        Ico::Trash => {
+            poly(&[(3.0, 6.0), (21.0, 6.0)]);
+            poly(&[(19.0, 6.0), (19.0, 20.0), (17.0, 22.0), (7.0, 22.0), (5.0, 20.0), (5.0, 6.0)]);
+            poly(&[(8.0, 6.0), (8.0, 4.0), (10.0, 2.0), (14.0, 2.0), (16.0, 4.0), (16.0, 6.0)]);
+            poly(&[(10.0, 11.0), (10.0, 17.0)]);
+            poly(&[(14.0, 11.0), (14.0, 17.0)]);
+        }
+        Ico::Undo | Ico::War(0x10) => {
+            poly(&[(9.0, 14.0), (4.0, 9.0), (9.0, 4.0)]);
+            let mut v = vec![(4.0, 9.0)];
+            v.extend(arc(14.5, 14.5, 5.5, -90.0, 90.0));
+            v.push((11.0, 20.0));
+            poly(&v);
+        }
+        Ico::ZoomIn | Ico::ZoomOut => {
+            circle(11.0, 11.0, 8.0);
+            poly(&[(21.0, 21.0), (16.65, 16.65)]);
+            poly(&[(8.0, 11.0), (14.0, 11.0)]);
+            if i == Ico::ZoomIn {
+                poly(&[(11.0, 8.0), (11.0, 14.0)]);
+            }
+        }
+        Ico::Target => {
+            circle(12.0, 12.0, 10.0);
+            for l in [[(22.0, 12.0), (18.0, 12.0)], [(6.0, 12.0), (2.0, 12.0)], [(12.0, 6.0), (12.0, 2.0)], [(12.0, 22.0), (12.0, 18.0)]] {
+                poly(&l);
+            }
+        }
+        // The self-destruct: a burst.
+        Ico::Burst => {
+            let v: Vec<(f32, f32)> = (0..16).map(|j| {
+                let (a, d) = (std::f32::consts::TAU * j as f32 / 16.0, if j % 2 == 0 { 10.0 } else { 4.5 });
+                (12.0 + a.cos() * d, 12.0 + a.sin() * d)
             }).collect();
-            p.add(Shape::closed_line(v, s));
+            closed(&v);
         }
-        // The build cursor: a corner frame round a dot.
-        Glyph::Cursor => {
-            for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-                line(&[(sx * 0.95, sy * 0.35), (sx * 0.95, sy * 0.95), (sx * 0.35, sy * 0.95)]);
-            }
-            p.circle_filled(m, k * 0.25, c);
-        }
-        Glyph::Build => {
-            p.line_segment([at(-0.8, 0.0), at(0.8, 0.0)], Stroke::new(1.8f32, c));
-            p.line_segment([at(0.0, -0.8), at(0.0, 0.8)], Stroke::new(1.8f32, c));
-        }
-        Glyph::War(id) => match id {
-            // Air strike: a delta wing.
-            0xb => {
-                p.add(Shape::closed_line([(0.0, -1.0), (0.9, 0.7), (0.0, 0.35), (-0.9, 0.7)].iter().map(|&(x, y)| at(x, y)).collect(), s));
-            }
-            // Laser strike: a beam from above onto a mark.
+        Ico::War(id) => match id {
+            // Air strike: a jet.
+            0xb => _ = closed(&[(12.0, 2.0), (14.0, 9.0), (21.0, 13.0), (21.0, 15.0), (14.0, 13.5), (13.5, 19.0), (16.0, 21.0), (16.0, 22.0), (12.0, 21.0), (8.0, 22.0), (8.0, 21.0), (10.5, 19.0), (10.0, 13.5), (3.0, 15.0), (3.0, 13.0), (10.0, 9.0)]),
+            // Laser strike: a beam from above onto a ring.
             0xc => {
-                p.line_segment([at(0.0, -1.05), at(0.0, 0.45)], Stroke::new(2.0f32, c));
-                p.add(Shape::line((0..=12).map(|j| {
-                    let a = PI * 2.0 * j as f32 / 12.0;
-                    pos2(m.x + a.cos() * k * 0.8, m.y + 0.75 * k + a.sin() * k * 0.25)
-                }).collect(), s));
+                poly(&[(12.0, 2.0), (12.0, 15.0)]);
+                let v: Vec<(f32, f32)> = (0..=24).map(|j| std::f32::consts::TAU * j as f32 / 24.0).map(|t| (12.0 + 7.0 * t.cos(), 18.5 + 2.5 * t.sin())).collect();
+                poly(&v);
+                poly(&[(7.0, 8.0), (9.0, 10.0)]);
+                poly(&[(17.0, 8.0), (15.0, 10.0)]);
             }
-            // Detonator and devastator: a charge with its fuse (the devastator's bigger).
+            // Detonator and devastator: a charge with its fuse (the devastator's with a core).
             0xd | 0xe => {
-                let big = if id == 0xe { 1.0 } else { 0.75 };
-                p.circle_stroke(at(-0.1, 0.2), k * 0.7 * big, s);
-                line(&[(0.35, -0.3), (0.65, -0.75), (0.95, -0.95)]);
+                circle(10.0, 14.0, 7.0);
+                poly(&[(15.0, 9.0), (18.0, 6.0)]);
+                p.circle_filled(at(19.5, 4.5), 1.4 * s, c);
                 if id == 0xe {
-                    p.circle_filled(at(-0.1, 0.2), k * 0.25, c);
+                    p.circle_filled(at(10.0, 14.0), 3.0 * s, c);
+                    poly(&[(21.0, 2.0), (22.0, 1.0)]);
                 }
             }
             // Mines: a ring with studs.
             0xf => {
-                p.circle_stroke(m, k * 0.55, s);
-                for j in 0..6 {
-                    let a = PI * 2.0 * j as f32 / 6.0;
-                    p.line_segment([pos2(m.x + a.cos() * k * 0.55, m.y + a.sin() * k * 0.55), pos2(m.x + a.cos() * k, m.y + a.sin() * k)], s);
+                circle(12.0, 12.0, 5.0);
+                for j in 0..8 {
+                    let a = std::f32::consts::TAU * j as f32 / 8.0;
+                    poly(&[(12.0 + 5.0 * a.cos(), 12.0 + 5.0 * a.sin()), (12.0 + 9.5 * a.cos(), 12.0 + 9.5 * a.sin())]);
                 }
             }
-            // Retreat: a back arrow.
-            0x10 => {
-                line(&[(0.9, 0.7), (0.9, -0.1), (-0.8, -0.1)]);
-                line(&[(-0.35, -0.6), (-0.85, -0.1), (-0.35, 0.4)]);
-            }
-            // Cancel order: a stop square.
+            // Cancel the order: a stop sign.
             _ => {
-                p.rect_stroke(Rect::from_center_size(m, vec2(k * 1.5, k * 1.5)), 1.0, s, egui::StrokeKind::Middle);
+                let v: Vec<(f32, f32)> = (0..8).map(|j| std::f32::consts::TAU * (j as f32 + 0.5) / 8.0).map(|t| (12.0 + 10.0 * t.cos(), 12.0 + 10.0 * t.sin())).collect();
+                closed(&v);
+                poly(&[(9.0, 9.0), (15.0, 15.0)]);
+                poly(&[(15.0, 9.0), (9.0, 15.0)]);
             }
         },
     }
 }
 
-/// A square button with a colony glyph, the HUD's [`icon_button`] look.
-fn glyph_button(ui: &mut egui::Ui, ink: &Ink, g: Glyph, on: bool, enabled: bool, size: f32) -> egui::Response {
-    let (r, resp) = ui.allocate_exact_size(vec2(size, size), if enabled { Sense::click() } else { Sense::hover() });
-    let hot = ui.ctx().animate_bool_with_time(resp.id, enabled && resp.hovered(), 0.12);
-    let p = ui.painter();
-    if resp.is_pointer_button_down_on() && enabled {
-        p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.35));
-    } else if on {
-        p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.16));
-    }
-    if hot > 0.0 {
-        p.rect_filled(r, 2.0, Color32::from_white_alpha((18.0 * hot) as u8));
-        p.rect_stroke(r, 2.0, Stroke::new(1.0f32, ink.accent.gamma_multiply(0.7 * hot)), egui::StrokeKind::Inside);
-    }
-    if on {
-        p.rect_filled(Rect::from_min_max(pos2(r.left() + 3.0, r.bottom() - 2.0), pos2(r.right() - 3.0, r.bottom())), 0.0, ink.accent);
-    }
-    let fg = match () {
-        _ if !enabled => ink.dim.gamma_multiply(0.6),
-        _ if on => lerp(ink.accent, Color32::WHITE, 0.35),
-        _ => lerp(ink.text.gamma_multiply(0.82), ink.text, hot),
-    };
-    glyph(p, r.shrink(1.0), g, fg);
-    resp
+/// A metal key with a colony icon.
+fn key(ui: &mut Ui, i: Ico, on: bool, size: egui::Vec2, tip: &str) -> egui::Response {
+    let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
+    let r = ui.add(IconKey::new(Glyph::Custom(&g)).on(on).size(size));
+    if tip.is_empty() { r } else { ds::tip(r, tip) }
 }
 
-/// A thin bar: the part done in the accent (red below a quarter, amber below half, as `DrawHpStripe`'s colours).
-fn meter(ui: &mut egui::Ui, ink: &Ink, w: f32, part: f32, health: bool) {
-    let (r, _) = ui.allocate_exact_size(vec2(w, 4.0), Sense::hover());
-    let p = ui.painter();
-    p.rect_filled(r, 1.0, Color32::from_black_alpha(150));
-    let part = part.clamp(0.0, 1.0);
-    let c = match () {
-        _ if !health => ink.accent,
-        _ if part > 0.5 => Color32::from_rgb(110, 205, 120),
-        _ if part > 0.25 => Color32::from_rgb(232, 182, 72),
-        _ => Color32::from_rgb(235, 96, 84),
-    };
-    p.rect_filled(Rect::from_min_size(r.min, vec2(r.width() * part, r.height())), 1.0, c);
+/// A round action button (60 across) with its label on a black tag under it (`active` lit); the response is the
+/// button's.
+fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Response {
+    let k = ds::tokens();
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
+        let r = ds::round_button_sized(ui, Glyph::Custom(&g), ROUND, active);
+        let w = r.rect.width() + 40.0;
+        let f = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.14, upper: true, lcd: false };
+        let fit = Text::new(label, f).layout(ui.ctx(), w - 16.0);
+        let tag_w = (fit.width + 16.0).min(w);
+        let (row, _) = ui.allocate_exact_size(vec2(r.rect.width(), 18.0), Sense::hover());
+        let tag = Rect::from_center_size(row.center(), vec2(tag_w, 18.0));
+        ui.painter().rect_filled(tag, ds::RADIUS_PLATE, Color32::BLACK);
+        Text::new(label, f).center().shrink(9.0).color(if active { k.ink } else { k.ink_silver }).paint(ui, tag.shrink2(vec2(8.0, 0.0)));
+        if tip.is_empty() || tip == label { r } else { ds::tip(r, tip) }
+    })
+    .inner
 }
 
-/// A hairline across the plate.
-fn hairline(ui: &mut egui::Ui, ink: &Ink, w: f32) {
-    let (r, _) = ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
-    ui.painter().rect_filled(r, 0.0, ink.edge);
+/// Either button presses it (`AktIkon2`).
+fn either(r: &egui::Response) -> bool {
+    sm::either(r)
 }
 
-/// The panels' points: the build menu's and the card's inside widths, the radar's side, the buttons.
-const MENU_W: f32 = 262.0;
-const CARD_W: f32 = 236.0;
-const RADAR_W: f32 = 150.0;
-const ACT: f32 = 22.0;
-const WAR: f32 = 28.0;
+/// The info mode's buttons act on the press of either button (their hot-spots' one-shot `AktIkon2`, §12.2).
+fn pressed(r: &egui::Response) -> bool {
+    r.hovered() && r.ctx.input(|i| i.pointer.any_pressed())
+}
+
+/// The top of the panels under the bar.
+fn top(ctx: &egui::Context) -> f32 {
+    let bar = ["smh-left", "smh-right"].iter().filter_map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id)))).map(|r| r.bottom()).fold(44.0f32, f32::max);
+    bar + 20.0
+}
 
 /// One frame of the panels over the colony; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut bar = Vec::new();
-    let ink = sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
+    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
     let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(46.0, |r| r.bottom() + 6.0);
+    st.wells.clear();
+    let ppp = ctx.pixels_per_point();
+    let screen = ctx.screen_rect();
+    let top = top(ctx);
     if let Some(b) = &v.build {
-        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(10, 8), |ui| build_menu(ui, b, st, &ink, &mut acts));
-        });
+        let card_top = screen.bottom() - EDGE - 190.0;
+        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
     }
-    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, Margin::symmetric(10, 8), |ui| card_panel(ui, v, &ink, &mut acts));
-    });
-    if let Some(c) = &v.confirm {
-        let at = card.response.rect.right_bottom() + vec2(6.0, 0.0);
-        egui::Area::new(egui::Id::new("cmh-confirm")).pivot(Align2::LEFT_BOTTOM).fixed_pos(at).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(12, 9), |ui| confirm(ui, c, &ink, &mut acts));
+    let war = v.war.is_some();
+    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
+    let card = card.response.rect;
+    // The selected building's round buttons right of the card, the window over them.
+    let a = &v.actions;
+    let mut rounds = None;
+    if [0, 1, 3].iter().any(|&i| a.on[i]) {
+        let r = egui::Area::new(egui::Id::new("cmh-actions")).pivot(Align2::LEFT_BOTTOM).fixed_pos(pos2(card.right() + 24.0, card.bottom())).fade_in(false).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 22.0;
+                for (i, ic, id) in [(0usize, Ico::Wrench, 1u32), (1, Ico::Trash, 2), (3, Ico::Burst, 10)] {
+                    if a.on[i] {
+                        let open = v.confirm.is_some() && ((id == 1) == v.confirm.as_ref().is_some_and(|c| c.price.is_some()));
+                        let label = a.tips[i].split(['\n', '.']).next().unwrap_or("");
+                        if either(&round(ui, ic, open, label, &a.tips[i])) {
+                            acts.push(Act::Spot(id));
+                        }
+                    }
+                }
+            });
         });
+        rounds = Some(r.response.rect);
+    }
+    if let Some(c) = &v.confirm {
+        let at = rounds.map_or(pos2(card.right() + 24.0, card.bottom()), |r| pos2(r.left() + 32.0, r.top() - 16.0));
+        let t = ds::open_t(ctx, egui::Id::new("cmh-confirm"), true);
+        egui::Area::new(egui::Id::new("cmh-confirm")).pivot(Align2::LEFT_BOTTOM).fixed_pos(at + vec2(0.0, (1.0 - t) * 12.0)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            confirm(ui, c, &v.card.title, &mut acts);
+        });
+    } else {
+        ds::open_t(ctx, egui::Id::new("cmh-confirm"), false);
     }
     if let Some(w) = &v.war {
-        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -EDGE)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(10, 7), |ui| war_strip(ui, w, &ink, &mut acts));
-        });
+        let width = (screen.width() - 2.0 * (EDGE + WAR_CARD_W + 16.0)).clamp(480.0, INFO_W);
+        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -EDGE)).fade_in(false).show(ctx, |ui| war_strip(ui, w, width, &mut acts));
     }
     // The banner, the war's lines and the self-destruct under the top bar, centred.
     if v.banner.is_some() || v.destruct.is_some() || v.war.as_ref().is_some_and(|w| !w.notices.is_empty()) {
-        egui::Area::new(egui::Id::new("cmh-notice")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).fade_in(false).show(ctx, |ui| {
-            plate(ui, &ink, Margin::symmetric(14, 9), |ui| notices(ui, v, &ink, &mut acts));
-        });
+        egui::Area::new(egui::Id::new("cmh-notice")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).fade_in(false).show(ctx, |ui| notices(ui, v, &mut acts));
     }
-    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-        plate(ui, &ink, Margin::same(7), |ui| radar(ui, &v.radar, &ink, &mut acts));
-    });
+    if let Some(i) = &v.info {
+        let x = (screen.right() - 150.0 - INFO_W).max(EDGE);
+        let t = ds::open_t(ctx, egui::Id::new("cmh-info"), true);
+        egui::Area::new(egui::Id::new("cmh-info")).fixed_pos(pos2(x, top + 20.0 + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
+            ui.multiply_opacity(t);
+            info_panel(ui, i, st, &mut acts);
+        });
+    } else {
+        ds::open_t(ctx, egui::Id::new("cmh-info"), false);
+        st.menu = None;
+    }
+    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
+    for w in &mut st.wells {
+        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
+    }
     acts
 }
 
-/// The current kind with its costs and the cursor, the groups as tabs, the group's entries with their count and
-/// price; a pick puts the build cursor up.
-fn build_menu(ui: &mut egui::Ui, b: &Build, st: &mut State, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.set_width(MENU_W);
-    ui.spacing_mut().item_spacing.y = 3.0;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        let name = b.current.as_ref().map_or("", |c| c.0.as_str());
-        ui.add(egui::Label::new(RichText::new(name).size(15.0).strong().color(Color32::WHITE)).truncate());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if sm::either(&tip(glyph_button(ui, ink, Glyph::Build, false, b.cursor, ACT), &b.build_tip, "", ink)) {
-                acts.push(Act::Spot(0x13));
+/// A recessed picture well (`glass-deep` with a rim) that [`pictures`] fills with `pic`.
+fn well(ui: &mut Ui, size: egui::Vec2, pic: Pic, st: &mut State) -> egui::Response {
+    let k = ds::tokens();
+    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    ui.painter().rect_filled(r, ds::RADIUS_PLATE, k.glass_deep);
+    ds::radial(ui.painter(), r, ds::RADIUS_PLATE, [0.5, 0.6], &[(0.0, k.rim_bright.gamma_multiply(0.3)), (0.7, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim);
+    st.wells.push((pic, r, ui.opacity()));
+    resp
+}
+
+/// The current kind with its picture, costs and "Build", the groups as tabs, the group's entries with their count
+/// and price; a pick puts the build cursor up, a click on the picture toggles it.
+fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let at = ui.painter().add(Shape::Noop);
+    ui.set_width(BUILD_W);
+    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    // The header: the picture and the current kind (`grid 150px 1fr`, 16 inside).
+    let head = ui.allocate_ui(vec2(BUILD_W, 208.0), |ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(BUILD_W, 208.0), Sense::hover());
+        ds::vgrad(ui.painter(), Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom())), egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
+        let mut pic = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(16.0, 16.0), vec2(150.0, 176.0))));
+        let w = well(&mut pic, vec2(150.0, 176.0), Pic::Building, st);
+        let hot = ds::hover_t(ui.ctx(), w.id, w.hovered() && !b.pending);
+        if b.cursor || hot > 0.0 {
+            // The build cursor's mark in the well's corner: lit while it is up.
+            let m = Rect::from_min_size(w.rect.right_top() + vec2(-30.0, 6.0), vec2(24.0, 24.0));
+            let c = if b.cursor { k.lcd_ink } else { k.ink_silver.gamma_multiply(hot) };
+            for (sx, sy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                let p = |x: f32, y: f32| m.center() + vec2(sx * x, sy * y) * 9.0;
+                ui.painter().add(Shape::line(vec![p(1.0, 0.35), p(1.0, 1.0), p(0.35, 1.0)], Stroke::new(2.0f32, c)));
             }
-            if sm::either(&tip(glyph_button(ui, ink, Glyph::Cursor, b.cursor, !b.pending, ACT), &b.cursor_tip, "", ink)) {
-                acts.push(Act::Pick(-1));
-            }
-        });
+            ui.painter().circle_filled(m.center(), 2.5, c);
+        }
+        if b.cursor {
+            ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.lcd_ink.gamma_multiply(0.7));
+        } else if hot > 0.0 {
+            ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+        }
+        let w = if b.cursor_tip.is_empty() { w } else { ds::tip(w, &b.cursor_tip) };
+        if !b.pending && either(&w) {
+            acts.push(Act::Pick(-1));
+        }
+        let col = Rect::from_min_max(rect.min + vec2(16.0 + 150.0 + 16.0, 16.0), rect.max - vec2(16.0, 16.0));
+        let (name, price, energy, workers) = b.current.clone().unwrap_or_default();
+        let title = Font::HEADING.sized(24.0).tracking(0.08);
+        Text::new(&name, title).color(k.ink).shrink(16.0).paint(ui, Rect::from_min_size(col.min, vec2(col.width(), 28.0)));
+        let data = Font::DATA.sized(17.0);
+        for (j, (i, s)) in [(Ico::Coins, price), (Ico::Bolt, energy.to_string()), (Ico::User, workers.to_string())].into_iter().enumerate() {
+            let y = col.top() + 38.0 + 26.0 * j as f32;
+            let line = Rect::from_min_size(pos2(col.left(), y), vec2(col.width(), 20.0));
+            ico(ui.painter(), Rect::from_min_size(line.min + vec2(0.0, 2.0), vec2(16.0, 16.0)), i, k.info);
+            Text::new(&s, data).color(k.info).paint(ui, line.with_min_x(line.left() + 24.0));
+        }
+        let plate = Rect::from_min_max(pos2(col.left(), col.bottom() - 40.0), col.max);
+        let f = ds::Plate::FONT.sized(15.0).tracking(0.14);
+        let label = if b.build_tip.is_empty() { "Build" } else { b.build_tip.as_str() };
+        let r = ui.put(plate, |ui: &mut Ui| ui.add_enabled(b.cursor, ds::Plate::new(label).primary(b.cursor).font(f).height(40.0).width(plate.width())));
+        if b.cursor {
+            // The armed plate breathes (the original's "BUILD" sparkles).
+            let t = ui.input(|i| i.time) as f32;
+            ds::shadow(ui.painter(), r.rect, 8, 0, 10, 0, k.focus.gamma_multiply(0.18 + 0.12 * (t * 3.0).sin()));
+            ui.ctx().request_repaint();
+        }
+        if r.clicked() {
+            acts.push(Act::Spot(0x13));
+        }
     });
-    if let Some((_, price, energy, workers)) = &b.current {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.label(RichText::new(price).size(12.5).strong().color(ink.accent));
-            ui.add_space(8.0);
-            cost(ui, ink, sm::Icon::Bolt, *energy);
-            ui.add_space(8.0);
-            cost_workers(ui, ink, *workers);
-        });
-    }
-    ui.add_space(2.0);
-    hairline(ui, ink, MENU_W);
-    ui.add_space(2.0);
+    let _ = head;
+    // The groups (4 plates, the current group pressed).
     let current = b.entries.iter().find(|e| e.current).map(|e| e.column);
     let tab = st.tab.or(current).unwrap_or(0).min(b.headers.len().saturating_sub(1));
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        let w = (MENU_W - 2.0 * (b.headers.len().max(1) - 1) as f32) / b.headers.len().max(1) as f32;
+        ui.add_space(16.0);
+        ui.spacing_mut().item_spacing.x = 6.0;
+        let n = b.headers.len().max(1) as f32;
+        let w = (BUILD_W - 32.0 - 6.0 * (n - 1.0)) / n;
+        let f = ds::Plate::FONT.sized(12.0).tracking(0.10);
         for (i, h) in b.headers.iter().enumerate() {
-            let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
-            let hot = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), 0.12);
-            let p = ui.painter();
-            if hot > 0.0 {
-                p.rect_filled(r, 2.0, Color32::from_white_alpha((14.0 * hot) as u8));
-            }
+            let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
+            let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             let on = i == tab;
-            if on {
-                p.rect_filled(Rect::from_min_max(pos2(r.left() + 2.0, r.bottom() - 2.0), pos2(r.right() - 2.0, r.bottom())), 0.0, ink.accent);
+            ds::plate_fill(ui.painter(), r, ds::RADIUS_PANEL, on || resp.is_pointer_button_down_on());
+            if hot > 0.0 && !on {
+                ds::rim(ui.painter(), r, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
             }
-            let c = if on { Color32::WHITE } else { lerp(ink.dim, ink.text, hot) };
-            let mut g = p.layout_no_wrap(h.to_uppercase(), FontId::proportional(10.5), c);
-            if g.size().x > w - 4.0 {
-                g = p.layout_no_wrap(h.to_uppercase(), FontId::proportional(10.5 * (w - 4.0) / g.size().x), c);
-            }
-            p.with_clip_rect(r).galley(r.center() - g.size() / 2.0, g, c);
+            let cut = Text::new(h, f).center().shrink(9.0).color(if on { k.ink } else { k.ink_silver.lerp_to_gamma(k.ink, hot) }).paint(ui, r.shrink2(vec2(4.0, 0.0))).cut;
+            let resp = if cut { resp.on_hover_text(h) } else { resp };
             if resp.clicked() {
                 st.tab = Some(i);
             }
         }
     });
-    ui.add_space(2.0);
-    egui::ScrollArea::vertical().max_height(300.0).auto_shrink([false, true]).show(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for e in b.entries.iter().filter(|e| e.column == tab) {
-            let ok = e.ok && !b.pending;
-            let (r, resp) = ui.allocate_exact_size(vec2(MENU_W, 21.0), if ok { Sense::click() } else { Sense::hover() });
-            let hot = ui.ctx().animate_bool_with_time(resp.id, ok && resp.hovered(), 0.1);
-            let p = ui.painter();
-            if e.current {
-                p.rect_filled(r, 2.0, ink.accent.gamma_multiply(0.18));
+    ui.add_space(12.0);
+    // The group's entries in a recessed well (name, count, price).
+    let rows = b.entries.iter().filter(|e| e.column == tab).count();
+    let list_h = (rows.max(1) as f32 * ROW_H).min((room - 208.0 - 52.0 - 28.0).max(3.0 * ROW_H));
+    ui.horizontal(|ui| {
+        ui.add_space(16.0);
+        let (outer, _) = ui.allocate_exact_size(vec2(BUILD_W - 32.0, list_h + 12.0), Sense::hover());
+        ui.painter().rect_filled(outer, ds::RADIUS_PLATE, k.glass_deep);
+        ds::rim(ui.painter(), outer, ds::RADIUS_PLATE, k.rim);
+        let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(outer.shrink(6.0)).layout(egui::Layout::top_down(egui::Align::Min)));
+        egui::ScrollArea::vertical().id_salt("cmh-build-list").max_height(list_h).auto_shrink([false, true]).show(&mut inner, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let f = Font::BODY.sized(16.0);
+            for e in b.entries.iter().filter(|e| e.column == tab) {
+                let ok = e.ok && !b.pending;
+                let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), if ok { Sense::click() } else { Sense::hover() });
+                let hot = ds::hover_t(ui.ctx(), resp.id, ok && resp.hovered());
+                ds::row_back(ui, r, hot, e.current);
+                let row = r.shrink2(vec2(8.0, 0.0));
+                let base = ds::fit::baseline(r, f);
+                let ink = if ok { k.ink } else { k.ink_muted };
+                let (rest, price) = row.split_left_right_at_x(row.right() - 80.0);
+                let (name, count) = rest.split_left_right_at_x(rest.right() - 36.0);
+                Text::new(&e.price, Font::DATA.sized(16.0)).right().color(if ok { k.info } else { k.ink_muted }).baseline(base).paint(ui, price);
+                if e.count > 0 {
+                    Text::new(&e.count.to_string(), Font::DATA.sized(16.0)).right().color(if ok { k.own } else { k.ink_muted }).baseline(base).paint(ui, count.with_max_x(count.right() - 8.0));
+                }
+                let cut = Text::new(&e.name, f).color(ink).baseline(base).paint(ui, name.with_max_x(name.right() - 8.0)).cut;
+                let resp = if cut { resp.on_hover_text(&e.name) } else { resp };
+                if either(&resp) {
+                    acts.push(Act::Pick(e.tech));
+                    st.tab = None;
+                }
             }
-            if hot > 0.0 {
-                p.rect_filled(r, 2.0, Color32::from_white_alpha((16.0 * hot) as u8));
-            }
-            let fg = if !ok { ink.dim.gamma_multiply(0.7) } else if e.current { Color32::WHITE } else { lerp(ink.text.gamma_multiply(0.88), ink.text, hot) };
-            let price = p.layout_no_wrap(e.price.clone(), FontId::proportional(12.0), if ok { ink.accent } else { fg });
-            let px = r.right() - 6.0 - price.size().x;
-            p.galley(pos2(px, r.center().y - price.size().y / 2.0), price, fg);
-            let mut name_r = r.left() + 6.0;
-            if e.count > 0 {
-                let g = p.layout_no_wrap(e.count.to_string(), FontId::proportional(10.5), ink.text);
-                let chip = Rect::from_min_size(pos2(name_r, r.center().y - 7.0), vec2(g.size().x.max(8.0) + 7.0, 14.0));
-                p.rect_filled(chip, 2.0, ink.edge.gamma_multiply(0.9));
-                p.galley(chip.center() - g.size() / 2.0, g, ink.text);
-                name_r = chip.right() + 6.0;
-            } else {
-                name_r += 22.0;
-            }
-            let g = p.layout_no_wrap(e.name.clone(), FontId::proportional(12.5), fg);
-            p.with_clip_rect(Rect::from_min_max(pos2(name_r, r.top()), pos2(px - 6.0, r.bottom()))).galley(pos2(name_r, r.center().y - g.size().y / 2.0), g, fg);
-            if sm::either(&resp) {
-                acts.push(Act::Pick(e.tech));
-                st.tab = None;
-            }
-        }
-    });
-}
-
-/// A cost with its icon: energy (the bolt).
-fn cost(ui: &mut egui::Ui, ink: &Ink, i: sm::Icon, n: i32) {
-    let (r, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
-    sm::icon(ui.painter(), r, i, ink.dim);
-    ui.label(RichText::new(n.to_string()).size(12.5).color(ink.text));
-}
-
-/// The workers' cost: a figure.
-fn cost_workers(ui: &mut egui::Ui, ink: &Ink, n: i32) {
-    let (r, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
-    figure(ui.painter(), r, ink.dim);
-    ui.label(RichText::new(n.to_string()).size(12.5).color(ink.text));
-}
-
-/// The workers' icon: a head and shoulders.
-fn figure(p: &egui::Painter, r: Rect, c: Color32) {
-    let m = r.center();
-    p.circle_stroke(pos2(m.x, m.y - 3.5), 2.6, Stroke::new(1.3f32, c));
-    p.add(Shape::line((0..=12).map(|j| {
-        let a = std::f32::consts::PI * (1.0 + j as f32 / 12.0);
-        pos2(m.x + a.cos() * 5.0, m.y + 6.0 + a.sin() * 5.0)
-    }).collect(), Stroke::new(1.3f32, c)));
-}
-
-/// A surplus: the icon byte's meaning and the signed number, red below zero.
-fn surplus(ui: &mut egui::Ui, ink: &Ink, energy: bool, n: i32) {
-    let (r, _) = ui.allocate_exact_size(vec2(14.0, 16.0), Sense::hover());
-    if energy {
-        sm::icon(ui.painter(), r, sm::Icon::Bolt, ink.dim);
-    } else {
-        figure(ui.painter(), r, ink.dim);
-    }
-    let c = if n < 0 { Color32::from_rgb(235, 96, 84) } else { ink.text };
-    ui.label(RichText::new(format!("{n:+}")).size(12.5).strong().color(c));
-}
-
-/// The short info and the selected building's buttons; the card is hot-spot 4 (left: the info mode, right: the
-/// starmap).
-fn card_panel(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    let c = &v.card;
-    ui.set_width(CARD_W);
-    let body = ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.y = 2.0;
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(vec2(14.0, 18.0), Sense::hover());
-            let m = r.center();
-            if c.planet {
-                ui.painter().circle_filled(m, 5.0, c.colour);
-                ui.painter().circle_stroke(m, 7.0, Stroke::new(1.0f32, c.colour.gamma_multiply(0.55)));
-            } else {
-                ui.painter().rect_filled(Rect::from_center_size(m, vec2(9.0, 9.0)), 1.0, c.colour);
-            }
-            ui.add(egui::Label::new(RichText::new(&c.title).size(15.0).strong().color(Color32::WHITE)).truncate());
         });
-        if let Some((w, e)) = c.surplus {
-            ui.horizontal(|ui| {
-                ui.add_space(18.0);
-                ui.spacing_mut().item_spacing.x = 3.0;
-                surplus(ui, ink, false, w);
-                ui.add_space(10.0);
-                surplus(ui, ink, true, e);
-            });
-        }
-        ui.add_space(3.0);
-        hairline(ui, ink, CARD_W);
-        ui.add_space(3.0);
-        for (l, col) in &c.lines {
-            ui.add(egui::Label::new(RichText::new(l).size(12.0).color(*col)).truncate());
-        }
-        if let Some((label, icon, n)) = &c.product {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 3.0;
-                ui.label(RichText::new(label).size(12.0).color(ink.text));
-                match icon {
-                    1 => cost_workers(ui, ink, *n),
-                    2 => cost(ui, ink, sm::Icon::Bolt, *n),
-                    _ => {
-                        ui.label(RichText::new(sm::money(*n as f64)).size(12.5).strong().color(ink.text));
+    });
+    ui.add_space(16.0);
+    let rect = ui.min_rect();
+    ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
+}
+
+/// The short info: the picture well, the title with the details and on/off keys, the lines or data rows; above it
+/// the workers' and energy's surplus. The card is hot-spot 4 (left: the info mode, right: the starmap).
+fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let c = &v.card;
+    ui.set_width(width);
+    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+    if let Some((w, e)) = c.surplus.filter(|_| v.info.is_none()) {
+        ui.horizontal(|ui| {
+            let cw = (width - 8.0) / 2.0;
+            for (i, n) in [(Ico::User, w), (Ico::Bolt, e)] {
+                let (r, _) = ui.allocate_exact_size(vec2(cw, 38.0), Sense::hover());
+                ds::paint_panel(ui.painter(), r, PanelKind::Deep, 0.88);
+                ico(ui.painter(), Rect::from_min_size(r.min + vec2(14.0, 10.0), vec2(18.0, 18.0)), i, k.ink);
+                Text::new(&format!("{n:+}"), Font::DATA.sized(18.0)).color(if n < 0 { k.enemy } else { k.own }).paint(ui, r.with_min_x(r.left() + 42.0).shrink2(vec2(0.0, 4.0)));
+            }
+        });
+    }
+    let at = ui.painter().add(Shape::Noop);
+    let well_w = if c.planet { 80.0 } else if v.war.is_some() { 112.0 } else { 84.0 };
+    let inner = egui::Frame::new().inner_margin(14).show(ui, |ui| {
+        ui.set_width(width - 28.0);
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 14.0;
+            if c.planet {
+                // The globe between the planet's ratios (`.ig-card .side`).
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let ratio = |ui: &mut Ui, n: Option<i32>| _ = Text::new(&n.map(|n| format!("{n}%")).unwrap_or_default(), Font::DATA.sized(12.0).tracking(0.08)).center().color(k.ink_muted).show(ui, vec2(well_w, 14.0));
+                    ratio(ui, c.ratios.map(|r| r.0));
+                    let (r, _) = ui.allocate_exact_size(vec2(well_w, 72.0), Sense::hover());
+                    st.wells.push((Pic::Info, Rect::from_center_size(r.center(), vec2(72.0, 72.0)), ui.opacity()));
+                    ratio(ui, c.ratios.map(|r| r.1));
+                });
+            } else {
+                well(ui, vec2(well_w, 96.0), Pic::Info, st);
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                let w = ui.available_width();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let keys = if c.planet || !v.actions.on[2] { 1.0 } else { 2.0 };
+                    let title = if c.planet { Font::HEADING.sized(20.0).weight(Weight::Medium) } else { Font::HEADING };
+                    Text::new(&c.title, title).color(k.ink).shrink(14.0).show(ui, vec2(w - keys * 42.0, 32.0));
+                    if ds::tip(ui.add(IconKey::new(Glyph::Custom(&|p: &egui::Painter, r: Rect, col: Color32| ico(p, r, Ico::Info, col))).size(vec2(36.0, 32.0))), &v.details).clicked() {
+                        acts.push(Act::Card(false));
+                    }
+                    if !c.planet && v.actions.on[2] && either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
+                        acts.push(Act::Spot(0x11));
+                    }
+                });
+                for (i, (l, col)) in c.lines.iter().enumerate() {
+                    // The units' empire as the board's empire label; the planet's lines upper case (`.ig-card .line`).
+                    let f = if c.planet { Font::DATA.tracking(0.12).upper(true) } else if i == 0 { Font::LABEL.tracking(0.16) } else { Font::DATA };
+                    Text::new(l, f).shrink(11.0).color(*col).show(ui, vec2(w, 20.0));
+                }
+                for r in &c.rows {
+                    let (rect, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
+                    let base = ds::fit::baseline(rect, Font::DATA);
+                    let (a, b) = rect.split_left_right_at_x(rect.left() + 110.0);
+                    Text::new(&r.label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
+                    if let Some(part) = r.bar {
+                        let bar = Rect::from_min_size(pos2(b.left(), rect.center().y - 3.0), vec2(b.width(), 6.0));
+                        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar));
+                        let fill = if part > 0.5 { k.own } else if part > 0.25 { k.lcd_ink } else { k.enemy };
+                        ds::bar(&mut child, bar.width(), 6.0, part, if r.icon == 0 { fill } else { k.info });
+                    } else {
+                        let mut x = b.left();
+                        if let Some(i) = [None, Some(Ico::User), Some(Ico::Bolt), Some(Ico::Coins)].get(r.icon as usize).copied().flatten() {
+                            ico(ui.painter(), Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(16.0, 16.0)), i, r.colour);
+                            x += 22.0;
+                        }
+                        Text::new(&r.value, Font::DATA).color(r.colour).baseline(base).paint(ui, b.with_min_x(x));
                     }
                 }
             });
-        }
-        for (i, (l, part)) in c.bars.iter().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(l).size(11.0).color(ink.dim));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| meter(ui, ink, 110.0, *part, i == 0));
-            });
-        }
+        });
     });
-    let card = ui.interact(body.response.rect, ui.id().with("cmh-card-body"), Sense::click());
+    let rect = inner.response.rect;
+    ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
+    let card = ui.interact(rect, ui.id().with("cmh-card-body"), Sense::click());
+    let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
+    if hot > 0.0 {
+        ds::rim(ui.painter(), rect, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
+    }
     let card = if c.tip.is_empty() { card } else { card.on_hover_text(&c.tip) };
     if card.clicked() {
         acts.push(Act::Card(false));
@@ -542,140 +731,410 @@ fn card_panel(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
     if card.secondary_clicked() {
         acts.push(Act::Card(true));
     }
-    ui.add_space(5.0);
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        if tip(icon_button(ui, ink, sm::Icon::Details, false, true, ACT), &v.details, "", ink).clicked() {
-            acts.push(Act::Card(false));
-        }
-        if !v.starmap.is_empty() && tip(icon_button(ui, ink, sm::Icon::Screen(2), false, true, ACT), &v.starmap, "", ink).clicked() {
-            acts.push(Act::Card(true));
-        }
-        let a = &v.actions;
-        if a.on.iter().any(|&o| o) {
-            sm::rule(ui, ink, ACT);
-        }
-        for (i, (g, id)) in [(Glyph::Repair, 1), (Glyph::Demolish, 2), (Glyph::Power, 0x11), (Glyph::Destruct, 10)].into_iter().enumerate() {
-            if !a.on[i] {
-                continue;
+}
+
+/// The repair or demolish window: the question, the building and the price, the answers.
+fn confirm(ui: &mut Ui, c: &Confirm, name: &str, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    ds::panel(ui, PanelKind::Raised, 0.96, 16.0, |ui| {
+        ui.set_width(300.0 - 32.0);
+        ui.spacing_mut().item_spacing.y = 12.0;
+        let w = ui.available_width();
+        Text::new(&c.title, Font::BODY.weight(Weight::Medium).sized(17.0)).color(k.ink).lines(2).show(ui, vec2(w, 22.0));
+        let sub = c.price.as_deref().unwrap_or(name);
+        Text::new(sub, Font::DATA.sized(14.0).tracking(0.08)).color(if c.price.is_some() { k.info } else { k.ink_silver }).show(ui, vec2(w, 18.0));
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let f = ds::Plate::FONT.sized(15.0);
+            let pw = (w - 8.0) / 2.0;
+            if ui.add(ds::Plate::new(&c.yes).font(f).height(40.0).width(pw)).clicked() {
+                acts.push(Act::Answer(true));
             }
-            let on = id == 0x11 && !a.switched_off;
-            // Either button (`AktIkon2`).
-            if sm::either(&tip(glyph_button(ui, ink, g, on, true, ACT), &a.tips[i], "", ink)) {
-                acts.push(Act::Spot(id));
+            if ui.add(ds::Plate::new(&c.no).font(f).height(40.0).width(pw)).clicked() {
+                acts.push(Act::Answer(false));
             }
-        }
+        });
     });
 }
 
-/// The repair or demolish window: the question, the price, the answers.
-fn confirm(ui: &mut egui::Ui, c: &Confirm, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.spacing_mut().item_spacing.y = 4.0;
-    ui.label(RichText::new(&c.title).size(13.5).strong().color(Color32::WHITE));
-    if let Some(p) = &c.price {
-        ui.label(RichText::new(p).size(12.0).color(ink.text));
-    }
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        let yes = egui::Button::new(RichText::new(&c.yes).color(Color32::WHITE)).fill(ink.accent.gamma_multiply(0.45)).min_size(vec2(64.0, 22.0));
-        if ui.add(yes).clicked() {
-            acts.push(Act::Answer(true));
-        }
-        if ui.add(egui::Button::new(RichText::new(&c.no).color(ink.text)).min_size(vec2(64.0, 22.0))).clicked() {
-            acts.push(Act::Answer(false));
-        }
-    });
-}
-
-/// The war's buttons (the charge under the strikes) and the sides on the field.
-fn war_strip(ui: &mut egui::Ui, w: &War, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 3.0;
-        for (id, frame, t) in &w.buttons {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                let on = *frame > 1 && matches!(id, 0xb | 0xc | 0x10);
-                let r = glyph_button(ui, ink, Glyph::War(*id), on, true, WAR);
-                // Either button presses it (`AktIkon2`).
-                if sm::either(&tip(r, t, "", ink)) {
-                    acts.push(Act::Spot(*id));
-                }
-                match id {
-                    0xb => meter(ui, ink, WAR, w.charge.0, false),
-                    0xc => meter(ui, ink, WAR, w.charge.1, false),
-                    _ => {
-                        ui.allocate_exact_size(vec2(WAR, 4.0), Sense::hover());
-                    }
+/// The war's buttons as round keys (the strikes' charge under them), then the sides on the field with the retreat
+/// between them.
+fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    ui.set_width(width);
+    ui.vertical_centered(|ui| {
+        ui.spacing_mut().item_spacing.y = 12.0;
+        let others: Vec<_> = w.buttons.iter().filter(|b| b.0 != 0x10).collect();
+        if !others.is_empty() {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 18.0;
+                let n = others.len() as f32;
+                ui.add_space(((width - n * (ROUND + 12.0) - (n - 1.0) * 18.0) / 2.0).max(0.0));
+                for (id, frame, t) in others {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
+                        if either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
+                            acts.push(Act::Spot(*id));
+                        }
+                        let charge = match id {
+                            0xb => Some(w.charge.0),
+                            0xc => Some(w.charge.1),
+                            _ => None,
+                        };
+                        if let Some(c) = charge {
+                            let full = c >= 1.0;
+                            ui.horizontal(|ui| {
+                                ui.add_space(10.0);
+                                let r = ds::bar(ui, ROUND - 8.0, 4.0, c, if full { k.lcd_ink } else { k.info });
+                                if full {
+                                    let t = ui.input(|i| i.time) as f32;
+                                    ds::shadow(ui.painter(), r.rect, 2, 0, 6, 0, k.lcd_ink.gamma_multiply(0.3 + 0.2 * (t * 4.0).sin()));
+                                    ui.ctx().request_repaint();
+                                }
+                            });
+                        }
+                    });
                 }
             });
         }
-        if !w.buttons.is_empty() && !w.sides.is_empty() {
-            sm::rule(ui, ink, WAR + 6.0);
+        if w.sides.is_empty() && !w.buttons.iter().any(|b| b.0 == 0x10) {
+            return;
         }
-        for (c, name, n) in &w.sides {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
+        let most = w.sides.iter().map(|s| s.units).max().unwrap_or(1).max(1) as f32;
+        ds::panel(ui, PanelKind::Glass, 0.88, 0.0, |ui| {
+            egui::Frame::new().inner_margin(egui::Margin::symmetric(18, 14)).show(ui, |ui| {
+                ui.set_width(width - 36.0);
                 ui.horizontal(|ui| {
-                    let (r, _) = ui.allocate_exact_size(vec2(8.0, 14.0), Sense::hover());
-                    ui.painter().rect_filled(Rect::from_center_size(r.center(), vec2(7.0, 7.0)), 1.0, *c);
-                    ui.label(RichText::new(n.to_string()).size(15.0).strong().color(Color32::WHITE));
+                    ui.spacing_mut().item_spacing.x = 16.0;
+                    let side_w = (width - 36.0 - 96.0 - 32.0) / 2.0;
+                    let side = |ui: &mut Ui, s: Option<&Side>, right: bool| {
+                        // As tall as the retreat's column, the side's lines centred in it (one row, one baseline).
+                        let (r, _) = ui.allocate_exact_size(vec2(side_w, 90.0), Sense::hover());
+                        let r = Rect::from_center_size(r.center(), vec2(side_w, 66.0));
+                        let Some(s) = s else { return };
+                        let (head, rest) = r.split_top_bottom_at_y(r.top() + 30.0);
+                        let name_f = Font::LABEL.sized(14.0).tracking(0.16);
+                        let num_f = Font::HEADING.sized(28.0).tracking(0.06);
+                        let base = head.bottom() - 6.0;
+                        let num = s.units.to_string();
+                        let nw = Text::new(&num, num_f).layout(ui.ctx(), side_w).width;
+                        let (name_r, num_r) = if right { (head.with_min_x(head.left() + nw + 8.0), head.with_max_x(head.left() + nw)) } else { (head.with_max_x(head.right() - nw - 8.0), head.with_min_x(head.right() - nw)) };
+                        let t = Text::new(&s.name, name_f).color(s.colour).baseline(base);
+                        if right { t.right() } else { t }.paint(ui, name_r);
+                        Text::new(&num, num_f).color(s.colour).baseline(base).paint(ui, num_r);
+                        let role = Text::new(&s.role, Font::LABEL.sized(12.0)).color(k.ink_muted);
+                        if right { role.right() } else { role }.paint(ui, Rect::from_min_size(rest.min + vec2(0.0, 4.0), vec2(rest.width(), 16.0)));
+                        let bar = Rect::from_min_size(pos2(rest.left(), rest.bottom() - 8.0), vec2(rest.width(), 8.0));
+                        let part = s.units as f32 / most;
+                        let p = ui.painter();
+                        p.rect_filled(bar, 4, k.glass_deep);
+                        let f = ui.ctx().animate_value_with_time(ui.id().with(("side", right)), part, ds::anim(ds::GLIDE_TIME));
+                        let fill = if right { bar.with_min_x(bar.right() - bar.width() * f) } else { bar.with_max_x(bar.left() + bar.width() * f) };
+                        p.rect_filled(fill, 4, s.colour);
+                        ds::rim(p, bar, 4, k.rim);
+                    };
+                    side(ui, w.sides.first(), false);
+                    let retreat = w.buttons.iter().find(|b| b.0 == 0x10);
+                    ui.allocate_ui(vec2(96.0, 90.0), |ui| {
+                        ui.vertical_centered(|ui| {
+                            if let Some((id, frame, t)) = retreat {
+                                let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
+                                if either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
+                                    acts.push(Act::Spot(*id));
+                                }
+                            } else {
+                                ui.allocate_exact_size(vec2(96.0, 66.0), Sense::hover());
+                            }
+                        });
+                    });
+                    side(ui, w.sides.get(1), true);
                 });
-                ui.label(RichText::new(name).size(10.5).color(ink.dim));
+                for s in w.sides.iter().skip(2) {
+                    Text::new(&format!("{} · {}", s.name, s.units), Font::LABEL).center().color(s.colour).show(ui, vec2(width - 36.0, 18.0));
+                }
             });
-            ui.add_space(6.0);
-        }
+        });
     });
 }
 
 /// The attack banner, the retreat and landing lines, the self-destruct's countdown and its cancel.
-fn notices(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    ui.spacing_mut().item_spacing.y = 3.0;
-    ui.vertical_centered(|ui| {
-        if let Some((t, k)) = &v.banner {
-            ui.label(RichText::new(t).size(14.0).strong().color(Color32::WHITE.gamma_multiply(k.clamp(0.0, 1.0))));
-        }
-        for n in v.war.iter().flat_map(|w| &w.notices) {
-            ui.label(RichText::new(n).size(12.5).color(ink.accent));
-        }
-        if let Some(d) = &v.destruct {
-            ui.label(RichText::new(&d.lines[0]).size(12.5).color(ink.text));
-            ui.label(RichText::new(&d.lines[1]).size(14.0).strong().color(Color32::WHITE));
-            ui.label(RichText::new(d.seconds.to_string()).size(30.0).strong().color(Color32::from_rgb(235, 96, 84)));
-            if let Some(c) = &d.cancel
-                && sm::either(&ui.add(egui::Button::new(RichText::new(c).color(Color32::WHITE)).fill(ink.accent.gamma_multiply(0.4)).min_size(vec2(90.0, 22.0))))
-            {
-                acts.push(Act::Spot(8));
+fn notices(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| {
+        ui.set_width(720.0);
+        ui.spacing_mut().item_spacing.y = 6.0;
+        ui.vertical_centered(|ui| {
+            if let Some((t, a)) = &v.banner {
+                Text::new(t, Font::HEADING).center().lines(2).color(k.ink.gamma_multiply(a.clamp(0.0, 1.0))).show(ui, vec2(720.0, 26.0));
             }
+            for n in v.war.iter().flat_map(|w| &w.notices) {
+                Text::new(n, Font::DATA).center().color(k.lcd_ink).show(ui, vec2(720.0, 20.0));
+            }
+            if let Some(d) = &v.destruct {
+                Text::new(&d.lines[0], Font::LABEL).center().color(k.ink_muted).show(ui, vec2(720.0, 18.0));
+                Text::new(&d.lines[1], Font::HEADING).center().color(k.ink).show(ui, vec2(720.0, 26.0));
+                // The seconds on an LCD, its red glow pulsing once a second.
+                let f = Font::READOUT.sized(44.0);
+                let s = d.seconds.to_string();
+                let (r, _) = ui.allocate_exact_size(vec2(140.0, 52.0), Sense::hover());
+                let t = ui.input(|i| i.time) as f32;
+                ds::shadow(ui.painter(), r, ds::RADIUS_PLATE, 0, 14, 0, k.signal_red.gamma_multiply(0.25 + 0.2 * (t * std::f32::consts::TAU).cos()));
+                ds::lcd_window(ui.painter(), r);
+                Text::new(&s, f).center().color(k.signal_red).paint(ui, r);
+                ui.ctx().request_repaint();
+                if let Some(c) = &d.cancel
+                    && either(&ui.add(ds::Plate::new(c).primary(true).font(ds::Plate::FONT.sized(15.0)).height(40.0).width(200.0)))
+                {
+                    acts.push(Act::Spot(8));
+                }
+            }
+        });
+    });
+}
+
+/// The planet info mode's long info (the PlanetInfo board): the name and the owner, the table, the workers' and
+/// energy's NEEDED blocks and the problems, the settings with their menus, "ALL" and −/+; the plates back to the
+/// colony and to the starmap.
+fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let at = ui.painter().add(Shape::Noop);
+    ui.set_width(INFO_W);
+    ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+    // The header strip.
+    let (head, _) = ui.allocate_exact_size(vec2(INFO_W, 76.0), Sense::hover());
+    ds::vgrad(ui.painter(), head, egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
+    let hr = head.shrink2(vec2(28.0, 0.0));
+    let base = hr.top() + 22.0 + 30.0;
+    let owner_w = i.owner.as_ref().map_or(0.0, |(n, _)| Text::new(n, Font::LABEL.sized(14.0).tracking(0.16)).layout(ui.ctx(), 300.0).width);
+    Text::new(&i.title, Font::HEADING.sized(34.0).tracking(0.1)).color(k.ink).shrink(22.0).baseline(base).paint(ui, hr.with_max_x(hr.right() - owner_w - 16.0));
+    if let Some((n, c)) = &i.owner {
+        Text::new(n, Font::LABEL.sized(14.0).tracking(0.16)).right().color(*c).baseline(base).paint(ui, hr.with_min_x(hr.right() - owner_w));
+    }
+    // The table and the blocks, two columns.
+    ui.add_space(6.0);
+    ui.horizontal_top(|ui| {
+        ui.add_space(28.0);
+        ui.spacing_mut().item_spacing.x = 28.0;
+        let cw = (INFO_W - 56.0 - 28.0) / 2.0;
+        ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(cw);
+            ui.spacing_mut().item_spacing.y = 10.0;
+            for (l, val, short) in &i.rows {
+                let (r, _) = ui.allocate_exact_size(vec2(cw, 22.0), Sense::hover());
+                let f = Font::DATA.sized(17.0);
+                let base = ds::fit::baseline(r, f);
+                let (a, b) = r.split_left_right_at_x(r.left() + 130.0);
+                Text::new(l, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
+                Text::new(val, f).shrink(12.0).color(if *short { k.enemy } else { k.info }).baseline(base).paint(ui, b);
+            }
+        });
+        ui.allocate_ui_with_layout(vec2(cw, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.set_width(cw);
+            ui.spacing_mut().item_spacing.y = 8.0;
+            for n in &i.needs {
+                let (r, _) = ui.allocate_exact_size(vec2(cw, 18.0), Sense::hover());
+                let (a, b) = r.split_left_right_at_x(r.center().x);
+                Text::new(&n.label, Font::LABEL).color(k.ink_muted).paint(ui, a);
+                Text::new(&n.needed, Font::LABEL).right().color(k.ink_muted).paint(ui, b);
+                let c = if n.short { k.enemy } else { k.info };
+                Text::new(&n.value, Font::DATA.sized(22.0)).color(c).show(ui, vec2(cw, 26.0));
+                ds::bar(ui, cw, 6.0, n.part, c);
+                ui.add_space(6.0);
+                ds::separator(ui, 0.0);
+                ui.add_space(6.0);
+            }
+            if let Some((label, ps)) = &i.problems {
+                ds::heading_label(ui, label);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (pct, name) in ps {
+                    let (r, _) = ui.allocate_exact_size(vec2(cw, 22.0), Sense::hover());
+                    let f = Font::DATA.sized(17.0).tracking(0.08);
+                    let base = ds::fit::baseline(r, f);
+                    let p = format!("{pct}%");
+                    let pw = Text::new(&p, f).layout(ui.ctx(), cw).width;
+                    Text::new(&p, f).color(k.enemy).baseline(base).paint(ui, r);
+                    Text::new(name, f).color(k.ink).baseline(base).paint(ui, r.with_min_x(r.left() + pw + 8.0));
+                }
+            }
+        });
+    });
+    ui.add_space(22.0);
+    // The settings (EN's planet).
+    if !i.settings.is_empty() {
+        let (line, _) = ui.allocate_exact_size(vec2(INFO_W, 1.0), Sense::hover());
+        ui.painter().hline(line.x_range(), line.center().y, Stroke::new(1.0f32, k.rim));
+        ui.add_space(20.0);
+        for s in &i.settings {
+            ui.horizontal(|ui| {
+                ui.add_space(28.0);
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let (l, _) = ui.allocate_exact_size(vec2(160.0, 40.0), Sense::hover());
+                Text::new(&s.label, Font::LABEL).color(k.ink_muted).paint(ui, l);
+                let field_w = INFO_W - 56.0 - 160.0 - 80.0 - 2.0 * 44.0 - 40.0;
+                let open = st.menu == Some(s.menu);
+                let (f, resp) = ui.allocate_exact_size(vec2(field_w, 40.0), Sense::click());
+                let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+                ui.painter().rect_filled(f, ds::RADIUS_PLATE, k.glass_deep);
+                ds::rim(ui.painter(), f, ds::RADIUS_PLATE, if open { k.focus } else { k.rim_bright.lerp_to_gamma(k.focus, hot * 0.6) });
+                Text::new(&s.value, Font::DATA.sized(16.0).tracking(0.08)).color(k.ink).shrink(12.0).paint(ui, f.shrink2(vec2(12.0, 0.0)).with_max_x(f.right() - 34.0));
+                ds::Icon::ChevronDown.paint(ui.painter(), Rect::from_center_size(pos2(f.right() - 18.0, f.center().y), vec2(16.0, 16.0)), k.ink_silver);
+                if resp.clicked() {
+                    st.menu = if open { None } else { Some(s.menu) };
+                }
+                if open {
+                    let picked = menu_list(ui, f, s, st);
+                    if let Some(item) = picked {
+                        acts.push(Act::InfoPick(s.menu, item));
+                        st.menu = None;
+                    }
+                }
+                let r = ui.add(ds::Plate::new(&i.all).font(ds::Plate::FONT.sized(13.0)).height(40.0).width(80.0));
+                if pressed(&r) {
+                    acts.push(Act::Info(s.all));
+                }
+                if let Some((minus, plus)) = s.steps {
+                    for (id, icon) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
+                        ui.allocate_ui(vec2(44.0, 40.0), |ui| {
+                            if pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
+                                acts.push(Act::Info(id));
+                            }
+                        });
+                    }
+                }
+            });
+            ui.add_space(10.0);
+        }
+        ui.add_space(10.0);
+    }
+    let rect = ui.min_rect();
+    ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.9));
+    ui.add_space(30.0);
+    ui.allocate_ui_with_layout(vec2(INFO_W, 44.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        if ui.add(ds::Plate::new(&i.starmap).width(220.0)).clicked() {
+            acts.push(Act::Card(true));
+        }
+        if pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
+            acts.push(Act::Info(0x20));
         }
     });
 }
 
-/// The radar (`DrawRadar`): the buildings, the units (own green, the rest red), the view's outline; a press glides the
-/// camera there, a drag follows.
-fn radar(ui: &mut egui::Ui, r: &Radar, ink: &Ink, acts: &mut Vec<Act>) {
-    let (rect, resp) = ui.allocate_exact_size(vec2(RADAR_W, RADAR_W), Sense::click_and_drag());
-    let p = ui.painter().with_clip_rect(rect);
-    p.rect_filled(rect, 0.0, Color32::from_black_alpha(150));
-    for j in 1..4 {
-        let (x, y) = (rect.left() + rect.width() * j as f32 / 4.0, rect.top() + rect.height() * j as f32 / 4.0);
-        p.line_segment([pos2(x, rect.top()), pos2(x, rect.bottom())], Stroke::new(1.0f32, ink.edge.gamma_multiply(0.35)));
-        p.line_segment([pos2(rect.left(), y), pos2(rect.right(), y)], Stroke::new(1.0f32, ink.edge.gamma_multiply(0.35)));
+/// An info menu's open list under its field `f`: the items, the current one selected; a click picks one, a click
+/// elsewhere closes it.
+fn menu_list(ui: &Ui, f: Rect, s: &Setting, st: &mut State) -> Option<i32> {
+    let mut picked = None;
+    let id = egui::Id::new(("cmh-menu", s.menu));
+    let area = egui::Area::new(id).fixed_pos(f.left_bottom() + vec2(0.0, 4.0)).order(egui::Order::Foreground).fade_in(false).show(ui.ctx(), |ui| {
+        ds::panel(ui, PanelKind::Deep, 0.97, 6.0, |ui| {
+            ui.set_width(f.width() - 12.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (v, t) in &s.items {
+                if ui.add(ds::ListRow::new(t).selected(*t == s.value).height(30.0).font(Font::DATA.sized(16.0))).clicked() {
+                    picked = Some(*v);
+                }
+            }
+        });
+    });
+    if picked.is_none() && ui.input(|i| i.pointer.any_pressed()) && !area.response.rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO)) && !f.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO)) {
+        st.menu = None;
     }
-    let at = |u: [f32; 2]| pos2(rect.left() + u[0] * rect.width(), rect.top() + u[1] * rect.height());
+    picked
+}
+
+/// The radar in its metal frame (`DrawRadar`): the buildings, the units (own green, the rest red), the view's
+/// outline; a press glides the camera there, a drag follows. Under it the zoom keys (held: numpad + / −) and the
+/// starmap.
+fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let (outer, _) = ui.allocate_exact_size(vec2(RADAR_W, RADAR_W + 8.0 + 32.0), Sense::hover());
+    let p = ui.painter();
+    ds::shadow(p, outer.translate(vec2(0.0, 3.0)), 18, 0, 8, 0, Color32::from_black_alpha(204));
+    ds::radial(p, outer, 18, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
+    ds::relief(p, outer, 18);
+    let screen = Rect::from_min_size(outer.min + vec2(10.0, 10.0), vec2(RADAR_W - 20.0, RADAR_W - 20.0));
+    // Hot-spot 5 is off in the planet info mode (spec §12.2).
+    let resp = ui.interact(screen, ui.id().with("cmh-radar-screen"), if live { Sense::click_and_drag() } else { Sense::hover() });
+    let p = ui.painter().with_clip_rect(screen);
+    p.rect_filled(screen, 10, Color32::BLACK);
+    ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, k.glass.gamma_multiply(0.9)), (1.0, Color32::BLACK)]);
+    let grid = Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18));
+    for j in 1..8 {
+        let (x, y) = (screen.left() + screen.width() * j as f32 / 8.0, screen.top() + screen.height() * j as f32 / 8.0);
+        p.vline(x, screen.y_range(), grid);
+        p.hline(screen.x_range(), y, grid);
+    }
+    let at = |u: [f32; 2]| pos2(screen.left() + u[0] * screen.width(), screen.top() + u[1] * screen.height());
     for &(u, c) in &r.buildings {
-        p.rect_filled(Rect::from_center_size(at(u), vec2(3.0, 3.0)), 0.0, c);
+        p.rect_filled(Rect::from_center_size(at(u), vec2(5.0, 5.0)), 1, c);
     }
     for &(u, own) in &r.units {
-        p.circle_filled(at(u), 1.5, if own { Color32::from_rgb(90, 230, 110) } else { Color32::from_rgb(240, 80, 70) });
+        let c = if own { k.own } else { k.enemy };
+        p.circle_filled(at(u), 4.0, c.gamma_multiply(0.25));
+        p.circle_filled(at(u), 2.2, c);
     }
     if let Some(q) = r.view {
-        p.add(Shape::closed_line([q[0], q[1], q[3], q[2]].into_iter().map(at).collect(), Stroke::new(1.0f32, ink.accent)));
+        let pts: Vec<Pos2> = [q[0], q[1], q[3], q[2]].into_iter().map(at).collect();
+        p.add(Shape::convex_polygon(pts.clone(), k.lcd_ink.gamma_multiply(0.06), Stroke::NONE));
+        p.add(Shape::closed_line(pts, Stroke::new(1.5f32, k.lcd_ink)));
     }
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0f32, ink.edge), egui::StrokeKind::Inside);
-    let resp = tip(resp, &r.tip, "", ink);
+    // The recess's inner shadow and the metal's dark ring.
+    ds::vgrad(ui.painter(), screen, 10, &[(0.0, Color32::from_black_alpha(220)), (6.0 / screen.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    ds::rim(ui.painter(), screen.expand(1.0), 11, k.metal_shadow);
+    let resp = if r.tip.is_empty() { resp } else { resp.on_hover_text(&r.tip) };
+    if live && resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+    }
     let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
-    if let (true, Some(q)) = (resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
-        acts.push(Act::Radar([(q.x - rect.left()) / rect.width(), (q.y - rect.top()) / rect.height()], first));
+    if let (true, Some(q)) = (live && resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
+        acts.push(Act::Radar([(q.x - screen.left()) / screen.width(), (q.y - screen.top()) / screen.height()], first));
+    }
+    // The keys.
+    let keys = Rect::from_center_size(pos2(outer.center().x, outer.bottom() - 10.0 - 16.0), vec2(3.0 * 34.0 + 2.0 * 2.0 + 4.0, 32.0));
+    let mut zoom = None;
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(keys));
+    ds::key_group(&mut child, |ui| {
+        for (i, (ic, z)) in [(Ico::ZoomOut, Some(false)), (Ico::ZoomIn, Some(true)), (Ico::Target, None)].into_iter().enumerate() {
+            let resp = key(ui, ic, false, vec2(34.0, 28.0), &r.keys[i]);
+            match z {
+                Some(z) if resp.is_pointer_button_down_on() => zoom = Some(z),
+                None if resp.clicked() => acts.push(Act::Card(true)),
+                _ => {}
+            }
+        }
+    });
+    if zoom != st.zoom {
+        acts.push(Act::Zoom(zoom));
+        st.zoom = zoom;
+    } else if zoom.is_some() {
+        acts.push(Act::Zoom(zoom));
+    }
+}
+
+/// The classic render targets in the wells [`show`] left (`wells` in pixels): the panel's turning building
+/// (`crate::colony_ui::PANEL_VIEW`'s pass about (98, 88)) and the short info's model (the info box's corner,
+/// 0..50 × 400..480), each fitted into its well and drawn over the panels.
+pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], building: Option<crate::render::TexId>, info: Option<crate::render::TexId>, v: &crate::font::Virtual) {
+    let wide = crate::kit::Wide::new(v);
+    for &(pic, r, alpha) in wells {
+        let (tex, src) = match pic {
+            Pic::Building => (building, [28.0, 38.0, 140.0, 100.0]),
+            Pic::Info => (info, [0.0, 400.0, 50.0, 80.0]),
+        };
+        let Some(tex) = tex else { continue };
+        let [mut x0, mut y0, mut w0, mut h0] = src;
+        // The building fits its well; the short info's model fills it (the box's corner cut to the well's shape).
+        if pic == Pic::Info {
+            let aspect = r.width() / r.height().max(1.0);
+            let (w1, h1) = if w0 / h0 > aspect { (h0 * aspect, h0) } else { (w0, w0 / aspect) };
+            (x0, y0, w0, h0) = (x0 + (w0 - w1) / 2.0, y0 + (h0 - h1) / 2.0, w1, h1);
+        }
+        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
+        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
+        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
+        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+        f.push(tex, crate::render::Blend::GammaPremul, i);
     }
 }
 
@@ -698,7 +1157,6 @@ mod tests {
                 ..Default::default()
             }),
             details: "Details".into(),
-            starmap: "Starmap".into(),
             ..Default::default()
         }
     }
@@ -740,7 +1198,7 @@ mod tests {
     /// The card is hot-spot 4: left = the planet info mode, right = the starmap.
     #[test]
     fn card_left_and_right() {
-        let at = |ctx: &egui::Context| area(ctx, "cmh-card").left_top() + vec2(60.0, 16.0);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-card").left_bottom() + vec2(200.0, -30.0);
         assert_eq!(click(&view(), 0, at), vec![Act::Card(false)]);
         assert_eq!(click(&view(), 1, at), vec![Act::Card(true)]);
     }
@@ -748,8 +1206,8 @@ mod tests {
     /// A build menu entry is picked by its tech; the current kind's group is the first tab.
     #[test]
     fn build_entry_picks() {
-        // The header (≈20), the costs (≈18), the rule, the tabs (20): the second entry's row.
-        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 8.0 + 22.0 + 19.0 + 9.0 + 23.0 + 2.0 + 42.0 + 10.0);
+        // The header (208), the tabs (4 + 36 + 12), the well's 6: the second entry's row.
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 208.0 + 52.0 + 6.0 + ROW_H * 1.5);
         assert_eq!(click(&view(), 0, at), vec![Act::Pick(0x52)]);
     }
 
@@ -760,23 +1218,78 @@ mod tests {
         if let Some(b) = &mut v.build {
             b.entries[1].ok = false;
         }
-        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 8.0 + 22.0 + 19.0 + 9.0 + 23.0 + 2.0 + 42.0 + 10.0);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 208.0 + 52.0 + 6.0 + ROW_H * 1.5);
         assert_eq!(click(&v, 0, at), vec![]);
     }
 
-    /// The card's action strip: after the details and starmap icons and the rule, repair is the first.
+    /// Long or translated texts never resize the panels: they are shrunk and cut inside them.
+    #[test]
+    fn long_texts_keep_the_panels() {
+        let long = "Rendkívül hosszú nevű épület, amely sehogy sem fér el a sorban".repeat(3);
+        let mut v = view();
+        v.card.title = long.clone();
+        if let Some(b) = &mut v.build {
+            b.entries[0].name = long.clone();
+            b.headers[3] = long.clone();
+            b.current.as_mut().unwrap().0 = long;
+        }
+        let widths = |v: &View| {
+            let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+            let style = crate::gui::style(&crate::theme::Theme::modern());
+            let mut st = State::default();
+            let mut w = (0.0, 0.0);
+            for _ in 0..3 {
+                g.run(SIZE, &style, |ctx| {
+                    show(ctx, v, &mut st);
+                    w = (area(ctx, "cmh-build").width(), area(ctx, "cmh-card").width());
+                });
+            }
+            w
+        };
+        assert_eq!(widths(&v), widths(&view()));
+    }
+
+    /// The picture well toggles the build cursor (the pick list's short press).
+    #[test]
+    fn building_well_toggles_the_cursor() {
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(16.0 + 75.0, 16.0 + 88.0);
+        assert_eq!(click(&view(), 0, at), vec![Act::Pick(-1)]);
+    }
+
+    /// The round buttons right of the card: repair is the first.
     #[test]
     fn repair_button_presses_its_spot() {
-        let at = |ctx: &egui::Context| area(ctx, "cmh-card").left_bottom() + vec2(10.0 + 2.0 * (ACT + 2.0) + 9.0 + 2.0 + ACT / 2.0, -8.0 - ACT / 2.0);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-actions").left_top() + vec2(36.0, 36.0);
         assert_eq!(click(&view(), 0, at), vec![Act::Spot(1)]);
     }
 
     /// A press on the radar asks for the point across it.
     #[test]
     fn radar_press() {
-        let at = |ctx: &egui::Context| area(ctx, "cmh-radar").left_top() + vec2(7.0 + RADAR_W / 2.0, 7.0 + RADAR_W / 4.0);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-radar").left_top() + vec2(10.0 + (RADAR_W - 20.0) / 2.0, 10.0 + (RADAR_W - 20.0) / 4.0);
         let acts = click(&view(), 0, at);
         let Some(Act::Radar(u, true)) = acts.first().copied() else { panic!("{acts:?}") };
         assert!((u[0] - 0.5).abs() < 0.02 && (u[1] - 0.25).abs() < 0.02, "{u:?}");
+    }
+
+    /// The info mode's "ALL" and back plates are its hot-spots' acts; a menu item is picked by its value.
+    #[test]
+    fn info_mode_settings() {
+        let mut v = view();
+        v.build = None;
+        v.info = Some(Info {
+            title: "Magellan 10".into(),
+            settings: vec![Setting { label: "Tax".into(), value: "Low".into(), menu: 0x15, items: vec![(0, "None".into()), (1, "Low".into())], all: 0x16, steps: Some((0x17, 0x18)) }],
+            all: "ALL".into(),
+            back: "Colony".into(),
+            starmap: "Starmap".into(),
+            ..Default::default()
+        });
+        // The header (76 + 6), the empty columns, 22, the rule and 20: the settings row; "ALL" after 28 + 160 + field.
+        let field_w = INFO_W - 56.0 - 160.0 - 80.0 - 88.0 - 40.0;
+        let row = |ctx: &egui::Context| area(ctx, "cmh-info").left_top() + vec2(0.0, 76.0 + 6.0 + 22.0 + 1.0 + 20.0 + 20.0);
+        assert_eq!(click(&v, 0, |ctx| row(ctx) + vec2(28.0 + 160.0 + 10.0 + field_w + 10.0 + 40.0, 0.0)), vec![Act::Info(0x16)]);
+        let back = |ctx: &egui::Context| area(ctx, "cmh-info").right_bottom() + vec2(-220.0 - 12.0 - 110.0, -22.0);
+        assert_eq!(click(&v, 0, back), vec![Act::Info(0x20)]);
     }
 }
