@@ -1141,62 +1141,7 @@ impl App {
         self.screen_change_step();
         let ov = self.frame_overlay();
         let now = self.now_ms();
-        let sim = crate::prof::scope("sim");
-        // The frame's message pass, then the ticks due (none while `IdoPause`).
-        self.world.log_on = self.display.event_log;
-        self.world.pump();
-        self.menus.sent_done();
-        if let Some(c) = &mut self.colony {
-            let p = self.world.colony.unwrap_or(0);
-            c.ui.events(&std::mem::take(&mut self.world.colony_events), self.world.curr.human, p);
-            // A building came or went: `Init3dColony`'s building loop again.
-            if let (Some((renderer, ..)), Some(s)) = (gfx(&mut self.gpu, &mut self.headless), &self.world.colony_curr) {
-                if c.scene.stale(s) {
-                    let _reload = crate::prof::scope("reload");
-                    if let Err(e) = c.scene.reload(renderer, &self.install, self.tables, self.maps, s) {
-                        eprintln!("ig2-client: colony: {e}");
-                    }
-                }
-            }
-        } else {
-            self.world.colony_events.clear();
-        }
-        for e in std::mem::take(&mut self.world.order_events) {
-            if let Some(d) = &mut self.design {
-                d.event(&e);
-            }
-            if let OrderEvent::Split { empire, fleet, new } = e {
-                if empire == self.world.curr.human {
-                    // `MULTIGET_Starmap`: the new fleet is selected and the transfer between the two opens, before the
-                    // frame's ticks (their 0x1b spares the panel's fleets).
-                    self.select(Selection { mode: 2, fleet: new, ..self.selection() });
-                    self.panels.open_transfer(fleet as i32, new as i32, false);
-                }
-            }
-        }
-        self.sync_transfer();
-        self.world.game.set_screen(self.shown_kep());
-        self.world.game.sp_battles.colony = if self.shown_kep() == 3 { self.world.colony } else { None };
-        let due = self.clock.advance(now);
-        // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
-        // A tutorial just started holds the game until its first tick has run (`ticked`).
-        let held = self.tutorial.as_ref().is_some_and(|t| !t.ticked);
-        if (!self.world.paused() || self.world.net.is_some()) && self.headless.as_ref().is_none_or(|h| h.sim) && !held {
-            // ADR 0058: the extra speeds run more ticks; a slow-down (`SetIdoLelassit`) or the row off ends them.
-            let fastest = self.world.game.speed_level() == 3 && self.settings.int(crate::display::EXTRA_SPEEDS) == Some(1);
-            if !fastest || self.world.net.is_some() || self.world.viewer.is_some() || self.spacewar.is_some() {
-                self.turbo = 1;
-            }
-            for _ in 0..due * self.turbo {
-                self.world.tick();
-                if let Some(t) = &mut self.tutorial {
-                    t.counter += 1;
-                }
-                let _autosave = crate::prof::scope("autosave");
-                self.autosave_tick();
-            }
-        }
-        drop(sim);
+        self.frame_sim(now);
         let ui = crate::prof::scope("ui");
         // Multiplayer: the session ended under this machine (`ExitToMainScreen` from `MULTIGET`'s disconnect).
         // A replay at its end (ADR 0038 §6).
@@ -1267,328 +1212,7 @@ impl App {
         if self.front.is_some() {
             return;
         }
-        let at = self.virtual_cursor();
-        let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in && !self.info_modern_up();
-        let info_down = self.info_down;
-        let (line_on, waiting, story) = self.message_line_gates();
-        // `GFX_AllandoCallBack2`'s story text `_s(5, 0x215d)` on the colony screen.
-        let story = story.then(|| self.world.game.rules.messages.story_text(0x215d).to_vec());
-        // `FRISSIT_Scroll2`'s head (exe 0x556210): an error text doesn't count in a chat entry (`IOAzonosito` 1) or a
-        // screen change.
-        let scroll_runs = !self.screen_changing();
-        if let Some(h) = &mut self.hud {
-            let world = &mut self.world;
-            (h.line_held, h.message_waiting, h.story_line) = (!line_on, waiting, story);
-            let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
-            let now_ms = now as f64;
-            for (line, colour) in world.chat_lines.drain(..) {
-                h.chat.ring.add(line, colour, now_ms);
-            }
-            for _ in 0..due_ui {
-                if let Some(e) = &mut h.error {
-                    // An error text counts up to 300 UI frames instead of the line moving, then goes.
-                    if scroll_runs && h.chat.entry.is_none() {
-                        e.1 += 1;
-                        if e.1 > 300 {
-                            h.error = None;
-                        }
-                    }
-                } else if line_on {
-                    let hu = h.texts.lang == ig2_formats::text::Lang::Hu;
-                    h.scroller.step(&mut || world.pop_message().map(|(t, i)| (crate::diplomacy::articles(&t, hu), i)));
-                }
-                // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
-                let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };
-                h.info.ui_frame(&world.ui.info, world.ui.human, spot, at[1], info_down);
-                h.messages.ui_frame();
-                if on_messages {
-                    h.messages.tick();
-                }
-                // `FRISSIT_Messages2`: every 11th UI frame on the screen, the automatic messages.
-                self.messages_auto = (self.messages_auto + 1) % 11;
-                if on_messages && self.messages_auto == 0 {
-                    world.send(ig2_sim::game::MessageOrder::Auto.into());
-                }
-            }
-            if on_messages {
-                h.messages.sync(ig2_sim::game::inbox_place(&world.game.state));
-                // A dialogue the sim opened by itself (an automatic message, one taken up again) is shown.
-                if let Some(i) = ig2_sim::game::dialogue_in_progress(&world.game.state) {
-                    if h.messages.open.as_ref().is_none_or(|d| d.index != i) {
-                        h.open_message(&self.install, &world.ui, i);
-                    }
-                }
-            }
-            if let Some(d) = &mut h.messages.open {
-                for (k, a) in d.answers.iter_mut().enumerate() {
-                    a.disabled = ig2_sim::game::choice_disabled(&world.game.state, k);
-                }
-            }
-            // `Messages_Main`'s last step every frame on the screen: the answer asked for (`ValaszKivalasztva`).
-            if on_messages {
-                h.messages.answer();
-            }
-            // `MessagesGfx2D_2` types only at `mesframe` 30.
-            let typing = on_messages && h.messages.text_up();
-            if let Some(d) = h.messages.open.as_mut().filter(|_| on_messages) {
-                if typing { d.advance(due_ui as f32 * 10.0) } else { d.wait(due_ui as f32 * 10.0) }
-            }
-            let mut orders = std::mem::take(&mut h.messages.orders);
-            if let Some(d) = &mut h.messages.open {
-                orders.append(&mut d.orders);
-            }
-            for o in orders {
-                world.send(o.into());
-            }
-        }
-        self.head_clip_frame(now, due_ui);
-        // `StarmapKeyboardDoModifies` runs every UI frame whatever the screen; `Starmap_Autoscroll` on the starmap only,
-        // not under the long info, the zoom or a playing tutorial (`TutorialActive`, ELF `Starmap_Autoscroll`; the player's
-        // turns scroll); the minimap held retargets every frame.
-        let scroll = self.colony.is_none() && self.spacewar.is_none() && !self.under_screen() && !self.menus.info_on() && self.cam_saved.is_none() && !self.tutorial_playing();
-        let win = self.gpu.as_ref().map_or([640, 480], |g| {
-            let s = g.window.inner_size();
-            [s.width, s.height]
-        });
-        if let Some(v) = &mut self.view {
-            for _ in 0..due_ui {
-                self.star_keys.tick(&mut v.camera);
-                // Gated off, the speeds keep their values (the exe skips the whole function). The pointer is the last
-                // physical one, so the scroll goes on with it outside the window (as the colony's), (0, 0) before the
-                // first move (`pointer_seen`).
-                if scroll {
-                    let held = self.mouse_held != 0 || !self.pointer_seen;
-                    self.star_keys.autoscroll(&mut v.camera, self.cursor_px, win, held);
-                }
-            }
-        }
-        // `FlottaDelete` / `FlottaOsszevon` end a fleet's rename when that fleet goes.
-        if let Some(r) = self.menus.rename.as_ref().filter(|r| r.fleet) {
-            if self.world.game.state.fleets.get(r.index).is_none_or(|f| f[0x15] != self.world.curr.human) {
-                self.menus.rename = None;
-            }
-        }
-        if due_ui > 0 && self.console_held.is_some_and(|(s, _)| s == 7) {
-            let t = orders::minimap_target(self.virtual_cursor());
-            let zoom = self.camera3()[2];
-            self.tween_to([t[0], t[1], zoom], 4);
-        }
-        // `FRISSIT_Starmap2` runs on the starmap only.
-        if let (Some(v), None, None) = (&mut self.view, &self.colony, self.overlay) {
-            // `Starmap_Belep` inits `fifo` and `starf` on every entry.
-            // `Starmap_Belep` also lets every console button out (`SetFrame(GetSubMeshid(KezeloId, i), 0)`, i < 6, exe
-            // 0x5b19a0); `GombFazis`, `MelyikGombot` and `KezeloGombFrame` keep their values.
-            if !self.on_starmap {
-                self.panels.faders = crate::starmap_panels::StarmapFaders::enter();
-                self.star_buttons.depth = [0.0; 6];
-                // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs (`spacewarbanvanbarkacs`);
-                // it does nothing while a main track plays, so a ground war's music ends here (a campaign's intro
-                // plays first, `AfterVideo::StarmapEntry`).
-                let battle = self.spacewar_parked.is_some() || self.spacewar.as_ref().is_some_and(|sw| !sw.ended);
-                if !battle && self.world.videos.is_empty() {
-                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
-                }
-            }
-            for _ in 0..due_ui {
-                v.ui_tick();
-                self.panels.ui_tick();
-                // `Starmap_Main` sets a held rotate, zoom or pitch button again every frame, then `ShowStarmap` steps.
-                // Zoom and pitch read the buttons each frame: left in / up, then right out / down (right wins with both).
-                if let Some((s @ (2 | 3 | 5 | 6), _)) = self.console_held {
-                    self.star_buttons.press(s);
-                    let k = &mut self.star_keys;
-                    let pair = match s {
-                        5 => Some((&mut k.zoom_in, &mut k.zoom_out)),
-                        6 => Some((&mut k.up, &mut k.down)),
-                        _ => None,
-                    };
-                    if let Some((inc, dec)) = pair {
-                        if self.mouse_held & 1 != 0 {
-                            (*inc, *dec) = (true, false);
-                        }
-                        if self.mouse_held & 2 != 0 {
-                            (*inc, *dec) = (false, true);
-                        }
-                    }
-                }
-                self.star_buttons.step();
-            }
-            self.on_starmap = true;
-        } else {
-            self.on_starmap = false;
-        }
-        if let (Some(h), Some(g)) = (&mut self.hud, &mut self.gpu)
-            && let Some(c) = &mut h.starmap.console
-        {
-            c.pose(&mut g.renderer, &self.install, &self.star_buttons.depth);
-        }
-        // The radial menu's frame (`FRISSIT_Starmap2`).
-        for _ in 0..due_ui {
-            self.menus.ui_frame();
-        }
-        // The long info's fly in and out and its pin to the planet (`Starmap_Main`, `GFX_Starmap`).
-        let mut production = false;
-        if let Some(v) = &mut self.view {
-            let c = &v.camera;
-            let (curr, prev) = (&self.world.curr, &self.world.prev);
-            let clock = prev.orbit + (curr.orbit - prev.orbit) * self.world.draw_phase(self.clock.phase(now));
-            let orbit = |p: usize| curr.planets.iter().find(|q| q.index == p).map_or([0.0; 2], |q| crate::starmap::orbit_position(q, clock));
-            let planet = self.menus.info.map(|i| i.planet);
-            let (cam, star, out) = self.menus.advance_info([c.x, c.y, c.zoom, c.rotate], orbit, now as f32 / 1000.0);
-            if let Some([x, y, z]) = cam {
-                (v.camera.x, v.camera.y, v.camera.zoom) = (x, y, z);
-            }
-            v.star_scale = planet.filter(|_| self.menus.info_on()).map(|p| (p, star));
-            // `KellSelect` 0: no selection ring while the long info is up.
-            if self.menus.info_on() {
-                v.selected = None;
-            } else if v.selected.is_none() {
-                let s = self.world.game.local_view();
-                v.selected = match s.starmap_mode {
-                    1 => Some(Pick::Planet(s.planet.max(0) as usize)),
-                    2 => Some(Pick::Fleet(s.fleet.max(0) as usize)),
-                    _ => None,
-                };
-            }
-            production = out == Some(true);
-        }
-        if production {
-            let acts = self.panels.toggle_production(&self.world.game.state, &sel);
-            self.apply(acts);
-        }
-        let win = self.gpu.as_ref().map_or([640, 480], |g| {
-            let s = g.window.inner_size();
-            [s.width, s.height]
-        });
-        // `ColonyKisInfo` (ELF 0x4edb40): with a unit or a building selected (`ColonyInfoMod` 1, 2) the name entry ends
-        // and the old name is back.
-        if self.menus.rename.is_some() && self.colony.as_ref().is_some_and(|c| c.ui.selected != 0 || !c.ui.war.selected.is_empty()) {
-            if let Some(b) = self.menus.rename.as_ref().map(|r| r.backup.clone()) {
-                self.write_rename(&b);
-            }
-            self.menus.rename = None;
-        }
-        let tutorial_playing = self.tutorial_playing();
-        if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
-            let shown = self.overlay.is_none() && self.spy.is_none();
-            for _ in 0..due_ui {
-                // `Frissit2_Colony` runs every UI tick (the camera keys); `Colony_Autoscroll` only on the screen.
-                c.ui.cam_keys.tick(&mut c.view.camera);
-                // The pointer's last window position, also once it has left the window (the exe reads the last
-                // physical position, colony.md §11.9).
-                // `Colony_Autoscroll` (ELF 0x4e2e40) stops while the tutorial's script plays (`TutorialActive`).
-                if shown && !tutorial_playing {
-                    c.ui.cam_keys.autoscroll(&mut c.view.camera, self.cursor_px, win, self.mouse_held != 0);
-                } else {
-                    c.ui.cam_keys.stop_scroll();
-                }
-                // `Frissit2_Colony`'s ambients and music only with the screen shown (`AktKep == 3`).
-                if shown {
-                    c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
-                    if let Some(m) = crate::colony_ui::ColonyUi::war_music(&mut self.volt_harc, s.at_war) {
-                        self.audio.play_music(m, false, human_race(&self.world.game));
-                    }
-                }
-            }
-            // `TransformRotation`, once a drawn frame in `ShowColony`.
-            if shown {
-                c.ui.cam_keys.frame(&mut c.view.camera);
-                c.ui.cam_keys.tank(&mut c.view.camera, &s.units, &c.ui.war.selected);
-            }
-            self.cam_keep.clone_from(&c.ui.cam_keys);
-            // The earthquake (`ShowColony`): the clock starts at the first colony draw after it, `FRISSIT_Story` ends it
-            // 10000 `AktIdo` (ms) later; the jolt only on the quake's planet.
-            c.view.camera.shake = [0.0; 2];
-            if let Some((q, since)) = &mut self.quake {
-                if since.get_or_insert_with(Instant::now).elapsed() >= QUAKE {
-                    self.quake = None;
-                } else if Some(*q) == self.world.colony && shown {
-                    let x = (self.quake_rand.rand() % 31 - 15) as f32;
-                    let y = (self.quake_rand.rand() % 31 - 15) as f32;
-                    c.view.camera.shake = [x, y];
-                }
-            }
-            c.ui.building_sounds(s, shown);
-            c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
-            // The lightning lights one drawn frame.
-            c.ui.flash = false;
-        }
-        if self.colony.is_some() && self.overlay.is_none() && self.spy.is_none() {
-            self.colony_pointer(false);
-        }
-        // `Messages_Kilep`'s loop and `Messages3DUpdate`'s flags, before the frame is drawn: the closing run out, the
-        // screen asked for takes over.
-        if self.overlay == Some(crate::ui::Screen::Messages) && self.hud.as_mut().is_some_and(|h| h.messages.render_step()) {
-            if self.kep_kell.is_some() {
-                self.screen_change_step();
-            } else {
-                self.overlay = None;
-            }
-        }
-        if let Some(r) = &mut self.research {
-            if std::mem::take(&mut r.picked_turret) {
-                self.world.game.tutorial_check_event(8);
-            }
-            for _ in 0..due_ui {
-                r.step(&self.world.game.state);
-            }
-            if r.closed() {
-                self.drop_research();
-                self.overlay = None;
-                self.screen_change_step();
-            }
-        }
-        let tips = std::mem::take(&mut self.design_tips);
-        self.design_do(|d, c, mask| {
-            for _ in 0..due_ui {
-                d.step(c, mask);
-            }
-            d.tooltip(c, mask, &tips, now as f64);
-        });
-        self.design_tips = tips;
-        if self.design.as_ref().is_some_and(|d| d.closed()) {
-            self.drop_design();
-            self.overlay = None;
-            self.screen_change_step();
-        }
-        if let Some(tr) = &mut self.trade {
-            for _ in 0..due_ui {
-                tr.step(&self.world.game.state);
-                for delivery in tr.orders.drain(..) {
-                    self.world.send(ig2_net::Command::Buy { delivery });
-                }
-            }
-            tr.tooltip(&self.trade_tips, now as f64);
-            if tr.closed() {
-                self.trade = None;
-                self.overlay = None;
-                self.screen_change_step();
-            }
-        }
-        if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
-            r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
-            r.set_auto(self.world.game.auto_research[crate::research::en(&self.world.game.state)]);
-            if let Some(h) = &self.hud {
-                r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, &h.texts, &m.centres, now as f64);
-            }
-        }
-        // The sounds queued by the frame's input and by these UI ticks, then the ticks' music steps.
-        self.audio_frame(due_ui);
-        self.row_frame_phase(due_ui);
-        // A button held on a panel steps on the 100 Hz UI ticks (`Starmap_Main::KezdoIdo` counts 60 a second).
-        if self.panel_held.is_some() || self.production_hold.is_some() {
-            // The modern view's held count button keeps its half (ADR 0071).
-            let at = match self.production_hold {
-                Some((l, k, plus)) => crate::production_modern::count_spot(l, k, plus).1,
-                // ADR 0077: a held modern scroll bar reads the pointer's height only.
-                None if self.fleet_modern_up() && self.panels.scrolling() => self.fleet_modern.scroll_pointer(self.virtual_cursor()),
-                None => self.starmap_virtual(self.virtual_cursor()),
-            };
-            for _ in 0..due_ui {
-                let acts = self.panels.hold_frame(&self.world.game.state, &sel, at);
-                self.apply(acts);
-            }
-        }
+        self.frame_ui_steps(now, due_ui, sel);
         let paused = self.world.paused();
         let alpha = self.world.draw_phase(self.clock.phase(now));
         drop(ui);
@@ -2087,6 +1711,394 @@ impl App {
         self.diplomacy_modern_apply();
         self.spy_modern_apply();
         self.trade_modern_apply();
+    }
+
+    /// The frame's message pass and the sim ticks due (none while `IdoPause`), with what the screens take from the
+    /// world first: the colony's events and its scene's reload, the order events, the screen the sim sees.
+    fn frame_sim(&mut self, now: u32) {
+        let sim = crate::prof::scope("sim");
+        // The frame's message pass, then the ticks due (none while `IdoPause`).
+        self.world.log_on = self.display.event_log;
+        self.world.pump();
+        self.menus.sent_done();
+        if let Some(c) = &mut self.colony {
+            let p = self.world.colony.unwrap_or(0);
+            c.ui.events(&std::mem::take(&mut self.world.colony_events), self.world.curr.human, p);
+            // A building came or went: `Init3dColony`'s building loop again.
+            if let (Some((renderer, ..)), Some(s)) = (gfx(&mut self.gpu, &mut self.headless), &self.world.colony_curr) {
+                if c.scene.stale(s) {
+                    let _reload = crate::prof::scope("reload");
+                    if let Err(e) = c.scene.reload(renderer, &self.install, self.tables, self.maps, s) {
+                        eprintln!("ig2-client: colony: {e}");
+                    }
+                }
+            }
+        } else {
+            self.world.colony_events.clear();
+        }
+        for e in std::mem::take(&mut self.world.order_events) {
+            if let Some(d) = &mut self.design {
+                d.event(&e);
+            }
+            if let OrderEvent::Split { empire, fleet, new } = e {
+                if empire == self.world.curr.human {
+                    // `MULTIGET_Starmap`: the new fleet is selected and the transfer between the two opens, before the
+                    // frame's ticks (their 0x1b spares the panel's fleets).
+                    self.select(Selection { mode: 2, fleet: new, ..self.selection() });
+                    self.panels.open_transfer(fleet as i32, new as i32, false);
+                }
+            }
+        }
+        self.sync_transfer();
+        self.world.game.set_screen(self.shown_kep());
+        self.world.game.sp_battles.colony = if self.shown_kep() == 3 { self.world.colony } else { None };
+        let due = self.clock.advance(now);
+        // Multiplayer: the session is pumped while paused too (its keep-alive and the others' commands).
+        // A tutorial just started holds the game until its first tick has run (`ticked`).
+        let held = self.tutorial.as_ref().is_some_and(|t| !t.ticked);
+        if (!self.world.paused() || self.world.net.is_some()) && self.headless.as_ref().is_none_or(|h| h.sim) && !held {
+            // ADR 0058: the extra speeds run more ticks; a slow-down (`SetIdoLelassit`) or the row off ends them.
+            let fastest = self.world.game.speed_level() == 3 && self.settings.int(crate::display::EXTRA_SPEEDS) == Some(1);
+            if !fastest || self.world.net.is_some() || self.world.viewer.is_some() || self.spacewar.is_some() {
+                self.turbo = 1;
+            }
+            for _ in 0..due * self.turbo {
+                self.world.tick();
+                if let Some(t) = &mut self.tutorial {
+                    t.counter += 1;
+                }
+                let _autosave = crate::prof::scope("autosave");
+                self.autosave_tick();
+            }
+        }
+        drop(sim);
+    }
+
+    /// The frame's UI steps after the sim: the HUD and its message line, the camera and the starmap's scroll, the
+    /// colony, research, design and trade screens' steps, the frame's sounds and the panels' held buttons.
+    fn frame_ui_steps(&mut self, now: u32, due_ui: u64, sel: Selection) {
+        let at = self.virtual_cursor();
+        let on_info = self.overlay == Some(crate::ui::Screen::Info) && self.pointer_in && !self.info_modern_up();
+        let info_down = self.info_down;
+        let (line_on, waiting, story) = self.message_line_gates();
+        // `GFX_AllandoCallBack2`'s story text `_s(5, 0x215d)` on the colony screen.
+        let story = story.then(|| self.world.game.rules.messages.story_text(0x215d).to_vec());
+        // `FRISSIT_Scroll2`'s head (exe 0x556210): an error text doesn't count in a chat entry (`IOAzonosito` 1) or a
+        // screen change.
+        let scroll_runs = !self.screen_changing();
+        if let Some(h) = &mut self.hud {
+            let world = &mut self.world;
+            (h.line_held, h.message_waiting, h.story_line) = (!line_on, waiting, story);
+            let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
+            let now_ms = now as f64;
+            for (line, colour) in world.chat_lines.drain(..) {
+                h.chat.ring.add(line, colour, now_ms);
+            }
+            for _ in 0..due_ui {
+                if let Some(e) = &mut h.error {
+                    // An error text counts up to 300 UI frames instead of the line moving, then goes.
+                    if scroll_runs && h.chat.entry.is_none() {
+                        e.1 += 1;
+                        if e.1 > 300 {
+                            h.error = None;
+                        }
+                    }
+                } else if line_on {
+                    let hu = h.texts.lang == ig2_formats::text::Lang::Hu;
+                    h.scroller.step(&mut || world.pop_message().map(|(t, i)| (crate::diplomacy::articles(&t, hu), i)));
+                }
+                // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
+                let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };
+                h.info.ui_frame(&world.ui.info, world.ui.human, spot, at[1], info_down);
+                h.messages.ui_frame();
+                if on_messages {
+                    h.messages.tick();
+                }
+                // `FRISSIT_Messages2`: every 11th UI frame on the screen, the automatic messages.
+                self.messages_auto = (self.messages_auto + 1) % 11;
+                if on_messages && self.messages_auto == 0 {
+                    world.send(ig2_sim::game::MessageOrder::Auto.into());
+                }
+            }
+            if on_messages {
+                h.messages.sync(ig2_sim::game::inbox_place(&world.game.state));
+                // A dialogue the sim opened by itself (an automatic message, one taken up again) is shown.
+                if let Some(i) = ig2_sim::game::dialogue_in_progress(&world.game.state) {
+                    if h.messages.open.as_ref().is_none_or(|d| d.index != i) {
+                        h.open_message(&self.install, &world.ui, i);
+                    }
+                }
+            }
+            if let Some(d) = &mut h.messages.open {
+                for (k, a) in d.answers.iter_mut().enumerate() {
+                    a.disabled = ig2_sim::game::choice_disabled(&world.game.state, k);
+                }
+            }
+            // `Messages_Main`'s last step every frame on the screen: the answer asked for (`ValaszKivalasztva`).
+            if on_messages {
+                h.messages.answer();
+            }
+            // `MessagesGfx2D_2` types only at `mesframe` 30.
+            let typing = on_messages && h.messages.text_up();
+            if let Some(d) = h.messages.open.as_mut().filter(|_| on_messages) {
+                if typing { d.advance(due_ui as f32 * 10.0) } else { d.wait(due_ui as f32 * 10.0) }
+            }
+            let mut orders = std::mem::take(&mut h.messages.orders);
+            if let Some(d) = &mut h.messages.open {
+                orders.append(&mut d.orders);
+            }
+            for o in orders {
+                world.send(o.into());
+            }
+        }
+        self.head_clip_frame(now, due_ui);
+        // `StarmapKeyboardDoModifies` runs every UI frame whatever the screen; `Starmap_Autoscroll` on the starmap only,
+        // not under the long info, the zoom or a playing tutorial (`TutorialActive`, ELF `Starmap_Autoscroll`; the player's
+        // turns scroll); the minimap held retargets every frame.
+        let scroll = self.colony.is_none() && self.spacewar.is_none() && !self.under_screen() && !self.menus.info_on() && self.cam_saved.is_none() && !self.tutorial_playing();
+        let win = self.gpu.as_ref().map_or([640, 480], |g| {
+            let s = g.window.inner_size();
+            [s.width, s.height]
+        });
+        if let Some(v) = &mut self.view {
+            for _ in 0..due_ui {
+                self.star_keys.tick(&mut v.camera);
+                // Gated off, the speeds keep their values (the exe skips the whole function). The pointer is the last
+                // physical one, so the scroll goes on with it outside the window (as the colony's), (0, 0) before the
+                // first move (`pointer_seen`).
+                if scroll {
+                    let held = self.mouse_held != 0 || !self.pointer_seen;
+                    self.star_keys.autoscroll(&mut v.camera, self.cursor_px, win, held);
+                }
+            }
+        }
+        // `FlottaDelete` / `FlottaOsszevon` end a fleet's rename when that fleet goes.
+        if let Some(r) = self.menus.rename.as_ref().filter(|r| r.fleet) {
+            if self.world.game.state.fleets.get(r.index).is_none_or(|f| f[0x15] != self.world.curr.human) {
+                self.menus.rename = None;
+            }
+        }
+        if due_ui > 0 && self.console_held.is_some_and(|(s, _)| s == 7) {
+            let t = orders::minimap_target(self.virtual_cursor());
+            let zoom = self.camera3()[2];
+            self.tween_to([t[0], t[1], zoom], 4);
+        }
+        // `FRISSIT_Starmap2` runs on the starmap only.
+        if let (Some(v), None, None) = (&mut self.view, &self.colony, self.overlay) {
+            // `Starmap_Belep` inits `fifo` and `starf` on every entry.
+            // `Starmap_Belep` also lets every console button out (`SetFrame(GetSubMeshid(KezeloId, i), 0)`, i < 6, exe
+            // 0x5b19a0); `GombFazis`, `MelyikGombot` and `KezeloGombFrame` keep their values.
+            if !self.on_starmap {
+                self.panels.faders = crate::starmap_panels::StarmapFaders::enter();
+                self.star_buttons.depth = [0.0; 6];
+                // `Starmap_Belep` exe 0x5b1d74: `PlayMusicMain(0, 0)` unless a battle still runs (`spacewarbanvanbarkacs`);
+                // it does nothing while a main track plays, so a ground war's music ends here (a campaign's intro
+                // plays first, `AfterVideo::StarmapEntry`).
+                let battle = self.spacewar_parked.is_some() || self.spacewar.as_ref().is_some_and(|sw| !sw.ended);
+                if !battle && self.world.videos.is_empty() {
+                    self.audio.play_music(crate::audio::Music::Main, false, human_race(&self.world.game));
+                }
+            }
+            for _ in 0..due_ui {
+                v.ui_tick();
+                self.panels.ui_tick();
+                // `Starmap_Main` sets a held rotate, zoom or pitch button again every frame, then `ShowStarmap` steps.
+                // Zoom and pitch read the buttons each frame: left in / up, then right out / down (right wins with both).
+                if let Some((s @ (2 | 3 | 5 | 6), _)) = self.console_held {
+                    self.star_buttons.press(s);
+                    let k = &mut self.star_keys;
+                    let pair = match s {
+                        5 => Some((&mut k.zoom_in, &mut k.zoom_out)),
+                        6 => Some((&mut k.up, &mut k.down)),
+                        _ => None,
+                    };
+                    if let Some((inc, dec)) = pair {
+                        if self.mouse_held & 1 != 0 {
+                            (*inc, *dec) = (true, false);
+                        }
+                        if self.mouse_held & 2 != 0 {
+                            (*inc, *dec) = (false, true);
+                        }
+                    }
+                }
+                self.star_buttons.step();
+            }
+            self.on_starmap = true;
+        } else {
+            self.on_starmap = false;
+        }
+        if let (Some(h), Some(g)) = (&mut self.hud, &mut self.gpu)
+            && let Some(c) = &mut h.starmap.console
+        {
+            c.pose(&mut g.renderer, &self.install, &self.star_buttons.depth);
+        }
+        // The radial menu's frame (`FRISSIT_Starmap2`).
+        for _ in 0..due_ui {
+            self.menus.ui_frame();
+        }
+        // The long info's fly in and out and its pin to the planet (`Starmap_Main`, `GFX_Starmap`).
+        let mut production = false;
+        if let Some(v) = &mut self.view {
+            let c = &v.camera;
+            let (curr, prev) = (&self.world.curr, &self.world.prev);
+            let clock = prev.orbit + (curr.orbit - prev.orbit) * self.world.draw_phase(self.clock.phase(now));
+            let orbit = |p: usize| curr.planets.iter().find(|q| q.index == p).map_or([0.0; 2], |q| crate::starmap::orbit_position(q, clock));
+            let planet = self.menus.info.map(|i| i.planet);
+            let (cam, star, out) = self.menus.advance_info([c.x, c.y, c.zoom, c.rotate], orbit, now as f32 / 1000.0);
+            if let Some([x, y, z]) = cam {
+                (v.camera.x, v.camera.y, v.camera.zoom) = (x, y, z);
+            }
+            v.star_scale = planet.filter(|_| self.menus.info_on()).map(|p| (p, star));
+            // `KellSelect` 0: no selection ring while the long info is up.
+            if self.menus.info_on() {
+                v.selected = None;
+            } else if v.selected.is_none() {
+                let s = self.world.game.local_view();
+                v.selected = match s.starmap_mode {
+                    1 => Some(Pick::Planet(s.planet.max(0) as usize)),
+                    2 => Some(Pick::Fleet(s.fleet.max(0) as usize)),
+                    _ => None,
+                };
+            }
+            production = out == Some(true);
+        }
+        if production {
+            let acts = self.panels.toggle_production(&self.world.game.state, &sel);
+            self.apply(acts);
+        }
+        let win = self.gpu.as_ref().map_or([640, 480], |g| {
+            let s = g.window.inner_size();
+            [s.width, s.height]
+        });
+        // `ColonyKisInfo` (ELF 0x4edb40): with a unit or a building selected (`ColonyInfoMod` 1, 2) the name entry ends
+        // and the old name is back.
+        if self.menus.rename.is_some() && self.colony.as_ref().is_some_and(|c| c.ui.selected != 0 || !c.ui.war.selected.is_empty()) {
+            if let Some(b) = self.menus.rename.as_ref().map(|r| r.backup.clone()) {
+                self.write_rename(&b);
+            }
+            self.menus.rename = None;
+        }
+        let tutorial_playing = self.tutorial_playing();
+        if let (Some(c), Some(s)) = (&mut self.colony, &self.world.colony_curr) {
+            let shown = self.overlay.is_none() && self.spy.is_none();
+            for _ in 0..due_ui {
+                // `Frissit2_Colony` runs every UI tick (the camera keys); `Colony_Autoscroll` only on the screen.
+                c.ui.cam_keys.tick(&mut c.view.camera);
+                // The pointer's last window position, also once it has left the window (the exe reads the last
+                // physical position, colony.md §11.9).
+                // `Colony_Autoscroll` (ELF 0x4e2e40) stops while the tutorial's script plays (`TutorialActive`).
+                if shown && !tutorial_playing {
+                    c.ui.cam_keys.autoscroll(&mut c.view.camera, self.cursor_px, win, self.mouse_held != 0);
+                } else {
+                    c.ui.cam_keys.stop_scroll();
+                }
+                // `Frissit2_Colony`'s ambients and music only with the screen shown (`AktKep == 3`).
+                if shown {
+                    c.ui.ui_frame(s, self.world.curr.human as i32, &mut c.view.camera);
+                    if let Some(m) = crate::colony_ui::ColonyUi::war_music(&mut self.volt_harc, s.at_war) {
+                        self.audio.play_music(m, false, human_race(&self.world.game));
+                    }
+                }
+            }
+            // `TransformRotation`, once a drawn frame in `ShowColony`.
+            if shown {
+                c.ui.cam_keys.frame(&mut c.view.camera);
+                c.ui.cam_keys.tank(&mut c.view.camera, &s.units, &c.ui.war.selected);
+            }
+            self.cam_keep.clone_from(&c.ui.cam_keys);
+            // The earthquake (`ShowColony`): the clock starts at the first colony draw after it, `FRISSIT_Story` ends it
+            // 10000 `AktIdo` (ms) later; the jolt only on the quake's planet.
+            c.view.camera.shake = [0.0; 2];
+            if let Some((q, since)) = &mut self.quake {
+                if since.get_or_insert_with(Instant::now).elapsed() >= QUAKE {
+                    self.quake = None;
+                } else if Some(*q) == self.world.colony && shown {
+                    let x = (self.quake_rand.rand() % 31 - 15) as f32;
+                    let y = (self.quake_rand.rand() % 31 - 15) as f32;
+                    c.view.camera.shake = [x, y];
+                }
+            }
+            c.ui.building_sounds(s, shown);
+            c.view.overlay = c.ui.overlay(s, self.world.curr.human as i32);
+            // The lightning lights one drawn frame.
+            c.ui.flash = false;
+        }
+        if self.colony.is_some() && self.overlay.is_none() && self.spy.is_none() {
+            self.colony_pointer(false);
+        }
+        // `Messages_Kilep`'s loop and `Messages3DUpdate`'s flags, before the frame is drawn: the closing run out, the
+        // screen asked for takes over.
+        if self.overlay == Some(crate::ui::Screen::Messages) && self.hud.as_mut().is_some_and(|h| h.messages.render_step()) {
+            if self.kep_kell.is_some() {
+                self.screen_change_step();
+            } else {
+                self.overlay = None;
+            }
+        }
+        if let Some(r) = &mut self.research {
+            if std::mem::take(&mut r.picked_turret) {
+                self.world.game.tutorial_check_event(8);
+            }
+            for _ in 0..due_ui {
+                r.step(&self.world.game.state);
+            }
+            if r.closed() {
+                self.drop_research();
+                self.overlay = None;
+                self.screen_change_step();
+            }
+        }
+        let tips = std::mem::take(&mut self.design_tips);
+        self.design_do(|d, c, mask| {
+            for _ in 0..due_ui {
+                d.step(c, mask);
+            }
+            d.tooltip(c, mask, &tips, now as f64);
+        });
+        self.design_tips = tips;
+        if self.design.as_ref().is_some_and(|d| d.closed()) {
+            self.drop_design();
+            self.overlay = None;
+            self.screen_change_step();
+        }
+        if let Some(tr) = &mut self.trade {
+            for _ in 0..due_ui {
+                tr.step(&self.world.game.state);
+                for delivery in tr.orders.drain(..) {
+                    self.world.send(ig2_net::Command::Buy { delivery });
+                }
+            }
+            tr.tooltip(&self.trade_tips, now as f64);
+            if tr.closed() {
+                self.trade = None;
+                self.overlay = None;
+                self.screen_change_step();
+            }
+        }
+        if let (Some(r), Some(m)) = (&mut self.research, &self.research_models) {
+            r.tip.moved(self.view.as_ref().map_or([0.0; 2], |v| v.camera.virtual_of(self.cursor)));
+            r.set_auto(self.world.game.auto_research[crate::research::en(&self.world.game.state)]);
+            if let Some(h) = &self.hud {
+                r.tooltip(&self.world.game.state, &m.mask, &self.research_tips, &h.texts, &m.centres, now as f64);
+            }
+        }
+        // The sounds queued by the frame's input and by these UI ticks, then the ticks' music steps.
+        self.audio_frame(due_ui);
+        self.row_frame_phase(due_ui);
+        // A button held on a panel steps on the 100 Hz UI ticks (`Starmap_Main::KezdoIdo` counts 60 a second).
+        if self.panel_held.is_some() || self.production_hold.is_some() {
+            // The modern view's held count button keeps its half (ADR 0071).
+            let at = match self.production_hold {
+                Some((l, k, plus)) => crate::production_modern::count_spot(l, k, plus).1,
+                // ADR 0077: a held modern scroll bar reads the pointer's height only.
+                None if self.fleet_modern_up() && self.panels.scrolling() => self.fleet_modern.scroll_pointer(self.virtual_cursor()),
+                None => self.starmap_virtual(self.virtual_cursor()),
+            };
+            for _ in 0..due_ui {
+                let acts = self.panels.hold_frame(&self.world.game.state, &sel, at);
+                self.apply(acts);
+            }
+        }
     }
 }
 
