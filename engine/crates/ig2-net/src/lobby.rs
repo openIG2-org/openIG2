@@ -105,6 +105,11 @@ impl LobbyState {
         self.slots.iter().find(|s| s.kind == SlotKind::Human(member)).map(|s| s.empire)
     }
 
+    /// The members' empires, in member order.
+    pub fn human_empires(&self) -> Vec<u8> {
+        self.members.iter().filter_map(|m| self.empire_of(m.id)).collect()
+    }
+
     /// The empires the computer plays.
     pub fn ais(&self) -> Vec<u8> {
         self.slots.iter().filter(|s| s.kind == SlotKind::Ai).map(|s| s.empire).collect()

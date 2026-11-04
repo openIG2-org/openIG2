@@ -361,7 +361,7 @@ impl<'r> HostSession<'r> {
             return Err(Box::new(lobby));
         }
         let st = lobby.state();
-        let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let humans = st.human_empires();
         game.start_multiplayer(humans[0], &humans);
         game.libc = Libc(lobby.session() as u32);
         let file = Snapshot::capture(&game, &[], 0, 0).to_file(rules_id(lobby.rules()), true);
@@ -375,7 +375,7 @@ impl<'r> HostSession<'r> {
     pub fn start_galaxy(lobby: LobbyHost, data: &StartData, rules: &'r GameRules, settings: SessionSettings, ticks: u32, story: i32) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
         let Some(options) = st.galaxy.filter(|_| lobby.can_start()) else { return Err(Box::new(lobby)) };
-        let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let humans = st.human_empires();
         let mut races = [0u8; 8];
         for s in &st.slots {
             if (1..=8).contains(&s.empire) {
@@ -395,7 +395,7 @@ impl<'r> HostSession<'r> {
     /// with the saved settings. Refused (the lobby back) otherwise.
     pub fn resume(lobby: LobbyHost, save: &MpSave, rules: &'r GameRules) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
-        let theirs: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let theirs = st.human_empires();
         let missing: Vec<u8> = save.session.humans.iter().map(|h| h.empire).filter(|e| !theirs.contains(e)).collect();
         if !lobby.can_start() || theirs.iter().any(|e| !save.session.humans.iter().any(|h| h.empire == *e)) {
             return Err(Box::new(lobby));

@@ -211,50 +211,54 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
 
 /// [`state_hash`]'s parts, each hashed on its own: which part of two states differs (a desync's diagnosis).
 pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)> {
-    fn h<T: Serialize + ?Sized>(x: &T) -> u64 {
-        let mut d = <sha2::Sha256 as sha2::Digest>::new();
-        wire::to_sink(x, &mut d).expect("the state encodes");
-        u64::from_le_bytes(sha2::Digest::finalize(d)[..8].try_into().unwrap())
-    }
     let v = view(game, pending);
     vec![
-        ("mem", h(&v.mem)),
-        ("template", h(&v.template)),
-        ("fleets", h(&v.fleets)),
-        ("ships", h(&v.ships)),
-        ("waypoints", h(&v.waypoints)),
-        ("designs", h(&v.designs)),
-        ("buildings", h(&v.buildings)),
-        ("story", h(&v.story)),
-        ("buckets", h(&v.buckets)),
-        ("multiplayer_blob", h(&v.multiplayer_blob)),
-        ("fresh_buildings", h(&v.fresh_buildings)),
-        ("libc", h(&v.libc)),
-        ("names", h(&(&v.fleet_name, &v.empire_names, &v.family_names))),
-        ("ground_fields", h(&v.ground_fields)),
-        ("view", h(&v.view)),
-        ("humans", h(&v.humans)),
-        ("realtime", h(&v.realtime)),
-        ("pending", h(&v.pending)),
-        ("inboxes", h(&v.inboxes)),
-        ("transfers", h(&v.transfers)),
-        ("formation", h(&v.formation)),
-        ("spectators", h(&v.spectators)),
-        ("ai_difficulty", h(&v.ai_difficulty)),
-        ("auto_research", h(&v.auto_research)),
-        ("stats", h(&v.stats)),
-        ("enhanced_ai", h(&v.enhanced_ai)),
-        ("story_fixes", h(&v.story_fixes)),
-        ("mod_stories", h(&v.mod_stories)),
+        ("mem", encoded_hash(&v.mem)),
+        ("template", encoded_hash(&v.template)),
+        ("fleets", encoded_hash(&v.fleets)),
+        ("ships", encoded_hash(&v.ships)),
+        ("waypoints", encoded_hash(&v.waypoints)),
+        ("designs", encoded_hash(&v.designs)),
+        ("buildings", encoded_hash(&v.buildings)),
+        ("story", encoded_hash(&v.story)),
+        ("buckets", encoded_hash(&v.buckets)),
+        ("multiplayer_blob", encoded_hash(&v.multiplayer_blob)),
+        ("fresh_buildings", encoded_hash(&v.fresh_buildings)),
+        ("libc", encoded_hash(&v.libc)),
+        ("names", encoded_hash(&(&v.fleet_name, &v.empire_names, &v.family_names))),
+        ("ground_fields", encoded_hash(&v.ground_fields)),
+        ("view", encoded_hash(&v.view)),
+        ("humans", encoded_hash(&v.humans)),
+        ("realtime", encoded_hash(&v.realtime)),
+        ("pending", encoded_hash(&v.pending)),
+        ("inboxes", encoded_hash(&v.inboxes)),
+        ("transfers", encoded_hash(&v.transfers)),
+        ("formation", encoded_hash(&v.formation)),
+        ("spectators", encoded_hash(&v.spectators)),
+        ("ai_difficulty", encoded_hash(&v.ai_difficulty)),
+        ("auto_research", encoded_hash(&v.auto_research)),
+        ("stats", encoded_hash(&v.stats)),
+        ("enhanced_ai", encoded_hash(&v.enhanced_ai)),
+        ("story_fixes", encoded_hash(&v.story_fixes)),
+        ("mod_stories", encoded_hash(&v.mod_stories)),
     ]
 }
 
 /// The state hash (ADR 0007 §3): the first 8 bytes of SHA-256 over the snapshot encoding of `game` and `pending`.
 pub fn state_hash(game: &Game, pending: &[Command]) -> u64 {
-    let mut h = <sha2::Sha256 as sha2::Digest>::new();
-    wire::to_sink(&view(game, pending), &mut h).expect("the state encodes");
-    let out = sha2::Digest::finalize(h);
-    u64::from_le_bytes(out[..8].try_into().unwrap())
+    encoded_hash(&view(game, pending))
+}
+
+/// The first 8 bytes of SHA-256 over `x`'s wire encoding.
+fn encoded_hash<T: Serialize + ?Sized>(x: &T) -> u64 {
+    let mut d = <sha2::Sha256 as sha2::Digest>::new();
+    wire::to_sink(x, &mut d).expect("the state encodes");
+    digest_u64(&sha2::Digest::finalize(d))
+}
+
+/// A SHA-256 digest's first 8 bytes as the `u64` the hashes compare.
+fn digest_u64(d: &[u8]) -> u64 {
+    u64::from_le_bytes(d[..8].try_into().unwrap())
 }
 
 /// Where two snapshots differ (a desync's diagnosis): the parts whose hashes differ, the first `max` differing memory
@@ -291,8 +295,7 @@ pub fn diff(a: &Snapshot, b: &Snapshot, rules: &GameRules, max: usize) -> Result
 }
 
 fn hash_bytes(b: &[u8]) -> u64 {
-    let out = <sha2::Sha256 as sha2::Digest>::digest(b);
-    u64::from_le_bytes(out[..8].try_into().unwrap())
+    digest_u64(&<sha2::Sha256 as sha2::Digest>::digest(b))
 }
 
 /// The synced state at a turn boundary.
