@@ -210,7 +210,7 @@ mod pipe {
         fn has_data(&mut self) -> io::Result<bool> {
             let mut avail = 0u32;
             // SAFETY: the handle is this open pipe's; no buffer is passed, only the count is written.
-            let ok = unsafe { PeekNamedPipe(self.as_raw_handle() as *mut c_void, std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut avail, std::ptr::null_mut()) };
+            let ok = unsafe { PeekNamedPipe(self.as_raw_handle(), std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut avail, std::ptr::null_mut()) };
             if ok == 0 {
                 return Err(io::Error::last_os_error());
             }
