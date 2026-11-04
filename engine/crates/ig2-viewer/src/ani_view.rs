@@ -32,6 +32,9 @@ pub fn decode(install: &Install, path: &str) -> Result<Decoded, String> {
 /// Headless: tile every `step`-th frame into a 5-wide contact sheet.
 pub fn snapshot(install: &Install, path: &str, out: &std::path::Path) -> Result<String, String> {
     let d = decode(install, path)?;
+    if d.frames.is_empty() {
+        return Err(format!("{path}: no frames"));
+    }
     let picks: Vec<&Frame> = d.frames.iter().step_by((d.frames.len() / 10).max(1)).take(10).collect();
     let cols = 5.min(picks.len());
     let rows = picks.len().div_ceil(cols);
