@@ -15,7 +15,7 @@ use crate::wire;
 /// The data channel's largest piece (every browser takes 16 KiB messages).
 pub const CHUNK: usize = 16 << 10;
 /// The largest message put back together (as QUIC's frames).
-const MAX_MESSAGE: usize = 64 << 20;
+use crate::transport::MAX_MESSAGE;
 /// The data channel's label.
 pub const LABEL: &str = "ig2";
 

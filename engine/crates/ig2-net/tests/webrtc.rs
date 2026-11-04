@@ -115,7 +115,7 @@ fn two_peers_in_lockstep_over_webrtc() {
     let turns = 30;
     let mut issued = false;
     wait(|| {
-        host.pump().unwrap();
+        host.pump();
         for (p, link) in &mut peers {
             if p.turn >= 4 && p.slot == 1 && !issued {
                 p.issue(Command::StoryChoice { id: 10031 });
@@ -126,7 +126,7 @@ fn two_peers_in_lockstep_over_webrtc() {
         peers.iter().all(|(p, _)| p.turn >= turns).then_some(())
     });
     wait(|| {
-        host.pump().unwrap();
+        host.pump();
         (host.log.len() as u64 >= turns).then_some(())
     });
     let (a, b) = (&peers[0].0, &peers[1].0);

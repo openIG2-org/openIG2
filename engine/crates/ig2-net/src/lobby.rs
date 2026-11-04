@@ -289,12 +289,13 @@ impl Door {
 
     /// Run the admissions as far as their messages go at `now`. `check` sees the name of a joiner whose hello
     /// passed (and again once its password checked out) and may turn it away. Returns the admitted links with
-    /// their names; every refusal sent goes to `refused`.
-    pub fn pump(&mut self, now: Duration, check: impl Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Result<Vec<Admitted>, wire::Error> {
+    /// their names; every refusal sent goes to `refused`. A joiner whose message doesn't decode is refused
+    /// ([`Refusal::Protocol`]) without holding up the others.
+    pub fn pump(&mut self, now: Duration, check: impl Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Vec<Admitted> {
         let mut admitted = Vec::new();
         let mut keep = Vec::new();
         for mut p in std::mem::take(&mut self.pending) {
-            match self.advance(&mut p, now, &check, refused)? {
+            match self.advance(&mut p, now, &check, refused) {
                 Outcome::Keep => keep.push(p),
                 Outcome::Drop => {}
                 Outcome::Admit(name) => match check(&name) {
@@ -307,7 +308,7 @@ impl Door {
             }
         }
         self.pending = keep;
-        Ok(admitted)
+        admitted
     }
 
     /// Turn every connection still being admitted away with `why`.
@@ -318,23 +319,30 @@ impl Door {
     }
 
     /// Run one joiner's admission as far as its messages go.
-    fn advance(&self, p: &mut Pending, now: Duration, check: &dyn Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Result<Outcome, wire::Error> {
+    fn advance(&self, p: &mut Pending, now: Duration, check: &dyn Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Outcome {
         loop {
             if let Stage::Refuse { at, why } = p.stage {
                 if now < at {
-                    return Ok(Outcome::Keep);
+                    return Outcome::Keep;
                 }
                 p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
                 refused.push(why);
-                return Ok(Outcome::Drop);
+                return Outcome::Drop;
             }
             if now.saturating_sub(p.since) > ADMISSION_TIMEOUT || p.link.closed() {
                 p.stage = Stage::Refuse { at: now, why: Refusal::TimedOut };
                 continue;
             }
-            let Some(m) = p.link.recv()? else { return Ok(Outcome::Keep) };
+            let m = match p.link.recv() {
+                Ok(Some(m)) => m,
+                Ok(None) => return Outcome::Keep,
+                Err(_) => {
+                    p.stage = Stage::Refuse { at: now, why: Refusal::Protocol };
+                    continue;
+                }
+            };
             if let Some(name) = self.admission(p, m, now, check) {
-                return Ok(Outcome::Admit(name));
+                return Outcome::Admit(name);
             }
         }
     }
@@ -680,20 +688,28 @@ impl LobbyHost {
         all && (self.state.galaxy.is_none() || self.state.members.len() + self.state.ais().len() >= 2)
     }
 
+    /// The member id the next joiner gets: from `next_id` on, the first in `1..=255` no member holds (ids wrap
+    /// round after many joins, a member that stayed keeps its own).
+    fn free_id(&self) -> Option<u8> {
+        (0..255u16)
+            .map(|k| ((self.next_id as u16 - 1 + k) % 255 + 1) as u8)
+            .find(|&id| !self.links.contains_key(&id) && self.state.members.iter().all(|m| m.id != id))
+    }
+
     /// Run the admissions, take the members' messages, send the new state. Returns what happened.
     pub fn pump(&mut self) -> Result<Vec<LobbyEvent>, wire::Error> {
         let full = self.capacity() <= self.state.members.len();
         let mut refused = Vec::new();
-        let admitted = self.door.pump(self.epoch.elapsed(), |_| full.then_some(Refusal::Full), &mut refused)?;
+        let admitted = self.door.pump(self.epoch.elapsed(), |_| full.then_some(Refusal::Full), &mut refused);
         let mut events: Vec<LobbyEvent> = refused.into_iter().map(LobbyEvent::Refused).collect();
         for (mut link, name) in admitted {
-            if self.capacity() <= self.state.members.len() {
+            let id = self.free_id();
+            let (Some(id), false) = (id, self.capacity() <= self.state.members.len()) else {
                 link.send(&Msg::Lobby(LobbyMsg::Refused(Refusal::Full)));
                 events.push(LobbyEvent::Refused(Refusal::Full));
                 continue;
-            }
-            let id = self.next_id;
-            self.next_id = self.next_id.wrapping_add(1).max(1);
+            };
+            self.next_id = id.wrapping_add(1).max(1);
             link.send(&Msg::Lobby(LobbyMsg::Welcome { member: id }));
             self.links.insert(id, link);
             self.state.members.push(Member { id, name, ready: false });
@@ -711,9 +727,15 @@ impl LobbyHost {
                 gone.push(id);
                 continue;
             }
-            while let Some(m) = l.recv()? {
-                if let Some(m) = lobby(m) {
-                    got.push((id, m));
+            // A member whose message doesn't decode leaves like a closed link.
+            loop {
+                match l.recv() {
+                    Ok(Some(m)) => got.extend(lobby(m).map(|m| (id, m))),
+                    Ok(None) => break,
+                    Err(_) => {
+                        gone.push(id);
+                        break;
+                    }
                 }
             }
         }

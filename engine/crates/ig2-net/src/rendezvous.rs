@@ -685,15 +685,26 @@ fn offer_path(path: &str) -> Option<(u64, [u8; PIN_BYTES])> {
     Some((u64::from_str_radix(session, 16).ok()?, p))
 }
 
+/// How long a client has to send its whole request (not each read: a trickle can't hold a connection).
+const HTTP_REQUEST_TIME: Duration = Duration::from_secs(5);
+
 fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>) -> std::io::Result<()> {
     use std::io::Read;
-    s.set_read_timeout(Some(Duration::from_secs(5)))?;
-    s.set_write_timeout(Some(Duration::from_secs(5)))?;
+    s.set_write_timeout(Some(HTTP_REQUEST_TIME))?;
     let std::net::IpAddr::V4(from) = s.peer_addr()?.ip() else { return Ok(()) };
+    let deadline = std::time::Instant::now() + HTTP_REQUEST_TIME;
+    let read = |s: &mut std::net::TcpStream, chunk: &mut [u8]| -> std::io::Result<usize> {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        s.set_read_timeout(Some(left))?;
+        s.read(chunk)
+    };
     let mut b = Vec::new();
     let mut chunk = [0u8; 2048];
     let head = loop {
-        let n = s.read(&mut chunk)?;
+        let n = read(&mut s, &mut chunk)?;
         if n == 0 {
             return Ok(());
         }
@@ -718,7 +729,7 @@ fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>)
         return http_reply(&mut s, 413, b"");
     }
     while b.len() < head + len {
-        let n = s.read(&mut chunk)?;
+        let n = read(&mut s, &mut chunk)?;
         if n == 0 {
             return Ok(());
         }

@@ -94,7 +94,7 @@ impl<'r> Session<'r> {
             if self.peers.iter().all(|(p, _)| p.turn >= turns) {
                 return;
             }
-            self.host.pump().unwrap();
+            self.host.pump();
             for (p, link) in &mut self.peers {
                 // Uneven speeds: peers drift apart within the input delay.
                 let max = if p.slot % 2 == 0 { 1 } else { 3 };
@@ -113,7 +113,7 @@ impl<'r> Session<'r> {
     /// Pump `rounds` times without asking for progress (a held session stands still).
     fn idle(&mut self, rounds: usize) {
         for _ in 0..rounds {
-            self.host.pump().unwrap();
+            self.host.pump();
             for (p, link) in &mut self.peers {
                 p.poll(link, 3).unwrap();
             }
@@ -283,7 +283,7 @@ fn a_diverged_peer_is_reported() {
     // Slot 2's libc stream drifts (as an unsynchronised `rand()` would).
     s.peers[1].0.game.libc.0 ^= 0x5555;
     s.run_to(12, |_| {});
-    s.host.pump().unwrap();
+    s.host.pump();
     let d = s.host.desyncs.first().expect("a desync");
     assert!(d.turn >= 5 && d.turn <= 6, "{d:?}");
     for (p, link) in &mut s.peers {
@@ -1420,7 +1420,7 @@ fn a_desync_inside_a_battle_is_reported_and_resynced() {
     let u = peer2.game.realtime.slots[b].units.iter().position(|u| u.alive).unwrap();
     peer2.game.realtime.slots[b].units[u].alive = false;
     s.run_to(drift_turn + 5, |p| p.events.clear());
-    s.host.pump().unwrap();
+    s.host.pump();
     let d = s.host.desyncs.first().expect("a desync").clone();
     assert!(d.turn == drift_turn && d.slots == [2], "{d:?}");
     // Resync: slot 2 reloads 6's state and the bundles since.

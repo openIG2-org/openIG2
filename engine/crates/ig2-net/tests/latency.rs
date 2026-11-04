@@ -75,7 +75,7 @@ impl Net {
     fn frame(&mut self) {
         let t = self.now.get() + 10;
         self.now.set(t);
-        self.host.pump().unwrap();
+        self.host.pump();
         for (p, link, _, since) in &mut self.peers {
             let rtt = link.rtt().unwrap();
             p.adapt(rtt);

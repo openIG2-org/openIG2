@@ -22,6 +22,8 @@ use crate::wire::{self, ByteBuf, Bytes};
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
 pub const VERSION: u16 = 15;
 pub const HEADER: usize = 64;
+/// The largest state a save, a start or a replay's chunk may inflate to: the header's length is the sender's word.
+pub const MAX_STATE: usize = 64 << 20;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -414,7 +416,10 @@ impl Snapshot {
         let h = Header::read(b)?;
         let u32_at = |o: usize| u32::from_le_bytes(b[o..o + 4].try_into().unwrap()) as usize;
         let (zlen, raw) = (u32_at(44), u32_at(48));
-        let z = b.get(HEADER..HEADER + zlen).ok_or(Error::Truncated)?;
+        if raw > MAX_STATE {
+            return Err(Error::Corrupt(format!("{raw} state bytes, at most {MAX_STATE}")));
+        }
+        let z = b.get(HEADER..HEADER.saturating_add(zlen)).ok_or(Error::Truncated)?;
         let state = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, raw).map_err(|e| Error::Corrupt(format!("{e:?}")))?;
         if state.len() != raw {
             return Err(Error::Corrupt(format!("{} state bytes, header says {raw}", state.len())));
@@ -429,7 +434,7 @@ impl Snapshot {
     /// The length of the save file [`Snapshot::from_file`] reads from the front of `b`.
     pub fn file_len(b: &[u8]) -> Result<usize, Error> {
         Header::read(b)?;
-        Ok(HEADER + u32::from_le_bytes(b[44..48].try_into().unwrap()) as usize)
+        Ok(HEADER.saturating_add(u32::from_le_bytes(b[44..48].try_into().unwrap()) as usize))
     }
 }
 
