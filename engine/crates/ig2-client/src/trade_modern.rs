@@ -208,9 +208,6 @@ fn list_panel(ui: &mut Ui, v: &View, kind: usize, size: egui::Vec2, acts: &mut V
             let on = chosen == Some(i as i32);
             let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             ds::row_back(ui, r, hot, on);
-            if on {
-                ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.ink_silver);
-            }
             let base = ds::fit::baseline(r, Font::BODY.sized(18.0));
             let (px, cx) = (r.left() + price_x, r.left() + count_x - 8.0);
             Text::new(&row.name, Font::BODY.sized(18.0)).shrink(13.0).baseline(base).color(k.ink).paint(ui, Rect::from_min_max(r.min + vec2(8.0, 0.0), pos2(px - 100.0, r.bottom())));

@@ -276,9 +276,6 @@ fn menu_panel(ui: &mut Ui, rows: &[Row], picked: Option<usize>, size: egui::Vec2
         let resp = ui.interact(r, ui.id().with(("dmh-row", i)), Sense::click());
         let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && !row.off);
         ds::row_back(ui, r, hot, picked == Some(i));
-        if picked == Some(i) {
-            ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.ink_silver);
-        }
         let room = if row.sub.is_some() { 28.0 } else { 8.0 };
         let c = pos2(r.right() - 16.0, r.center().y);
         Text::new(&row.text, Font::BODY.sized(19.0)).shrink(13.0).color(if row.off { k.ink_muted } else { k.ink }).paint(ui, Rect::from_min_max(r.min + vec2(8.0, 0.0), r.max - vec2(room, 0.0)));
