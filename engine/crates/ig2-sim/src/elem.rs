@@ -17,6 +17,7 @@ mod spies;
 mod threats;
 mod waves;
 
+use crate::script::{answered, promoted, read};
 use crate::story::{flag, Abort, InfoLine, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
 /// `st_Elem_include` (parts 1 and 2a–2g).
@@ -132,21 +133,6 @@ impl Script for ElemStories {
 }
 
 // ---------------------------------------------------------------- helpers
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message == (b, r)
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
 
 fn message(w: &mut dyn StoryWorld, id: i32) {
     w.event(StoryEvent::NewMessage { id, arg: 0 });

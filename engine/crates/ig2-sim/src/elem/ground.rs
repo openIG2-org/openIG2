@@ -2,13 +2,10 @@
 //! the human lands, the buildings left decide the empire's thanks) and 854 (riots: the human's vehicles on a
 //! crowded planet go over to empire 10 and the rest may go mad). Spec: `re/rules/campaign.md` §8.14, part 2b.
 
+use crate::script::rnd;
 use super::{param, read};
 use crate::multi::nearest_planet;
-use crate::story::{flag, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld, STREAM};
-
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
+use crate::story::{flag, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld};
 
 fn message(w: &mut dyn StoryWorld, id: i32) {
     w.event(StoryEvent::NewMessage { id, arg: 0 });

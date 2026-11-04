@@ -17,10 +17,11 @@ mod heroes;
 pub(crate) mod relations;
 pub(crate) mod spies;
 
+use crate::script::{rnd, answered, promoted, read, message};
 use crate::cvt::cvtt_f64;
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{fleet_strength, random_tech, ship_fleet};
-use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
+use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld};
 
 /// `st_Rnd_include`.
 #[derive(Debug, Clone, Default)]
@@ -128,10 +129,6 @@ impl Script for RndStories {
 
 // ---------------------------------------------------------------- helpers
 
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
-
 /// `RndClass(5)` (exe `RndClass::Next`): the candidate offered with weight `x` replaces the pick when
 /// `rnd(1, Σx) ≤ x`.
 #[derive(Default)]
@@ -148,25 +145,6 @@ impl Pick {
         self.n = self.n.wrapping_add(x);
         rnd(w, 1, self.n) <= x
     }
-}
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message == (b, r)
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9, `MessageSelectedBlokk`).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
 }
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {

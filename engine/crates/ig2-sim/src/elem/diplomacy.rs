@@ -2,14 +2,11 @@
 //! from the second strongest enemy), 858 (empire 5's planet taken: the others' non-aggression pacts) and 860 (empire
 //! 1's tribute for three planets). Spec: `re/rules/campaign.md` §8.14, part 2c.
 
+use crate::script::message;
 use super::{add_money, answered, param, promoted};
 use crate::campaign::second_strongest_enemy;
 use crate::rnd::relations::friendly_empire;
 use crate::story::{flag, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld, STREAM};
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
 
 fn race(w: &mut dyn StoryWorld, e: i32) {
     w.event(StoryEvent::MessageRace(e));

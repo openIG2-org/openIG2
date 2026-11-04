@@ -7,6 +7,7 @@
 //! episodes. The world changes go out as [`StoryEvent`]s; the fleet helper `st_fDistFromBir`
 //! lives here (`st_fEliminate` and `st_fGetNearest` are `brnd`'s `Story::send_away` and `nearest_fleet`).
 
+use crate::script::{answered, promoted, read, message};
 use crate::cvt::cvtt_f32;
 use crate::story::{adat, flag, Abort, KemNews, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
@@ -57,25 +58,6 @@ fn trader_id(id: i32) -> bool {
 }
 
 // ---------------------------------------------------------------- message predicates and helpers
-
-/// `st_Message(b, r)`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message.0 == b && s.message.1 == r
-}
-
-/// `st_Elevul(b)`.
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {
     w.event(StoryEvent::MessageParam { slot, text });

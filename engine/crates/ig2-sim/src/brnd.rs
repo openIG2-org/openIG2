@@ -7,6 +7,7 @@
 //! wormhole (239). What they do to the rest of the game goes out as [`StoryEvent`]s and [`StoryWorld`] calls
 //! (designs made and deleted, fleets, money, morale, techs, planet values and views).
 
+use crate::script::{rnd, answered, promoted, message};
 use crate::multi::empire_centre;
 use crate::story::{flag, Abort, InfoLine, MessageText, Script, Story, StoryEvent, StoryWorld, DESIGN, STREAM};
 
@@ -57,24 +58,6 @@ impl Script for BRndStories {
 }
 
 // ---------------------------------------------------------------- helpers
-
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message == (b, r)
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {
     w.event(StoryEvent::MessageParam { slot, text });
@@ -1006,15 +989,7 @@ fn wormhole(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
     }
     if s.special_is(0x11, 0, 0, 0) {
         message(w, 2392, 0);
-        let p = s.b_search(2390, 0, w);
-        let r = rnd(w, 20, 28);
-        let q = rnd(w, 1, 360);
-        let a = q as f64 * std::f64::consts::PI / 180.0;
-        let dx = (a.cos() * r as f64) as i32;
-        let dy = (a.sin() * r as f64) as i32;
-        let (fx, fy) = w.fleet_xy(s.special[1]);
-        let (px, py) = w.planet_xy(p);
-        w.event(StoryEvent::Wormhole { x1: fx as i32, y1: fy as i32, x2: (dx as f32 + px) as i32, y2: (dy as f32 + py) as i32 });
+        crate::script::wormhole_near(s, w, 2390);
         w.event(StoryEvent::RevealWormhole);
         s.win(0, true, w);
     }

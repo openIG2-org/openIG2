@@ -26,6 +26,7 @@ pub mod research;
 pub mod rnd;
 pub mod rng;
 pub mod save;
+mod script;
 pub mod spacebattle;
 pub mod spacebattle_raw;
 pub mod spacewar;

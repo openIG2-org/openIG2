@@ -1039,21 +1039,8 @@ impl ColonyWorld {
             let t = rules.colony.buildings[b.kind as usize].tech as usize;
             let cost = price(&self.tech, crate::spacewar::race_role(&ctx.race_like, ctx.empire_race[e]), t);
             if cost as f64 <= self.money[e].available(2) {
-                let kind = b.kind as u8;
-                // Building 0 has no footprint (the search reads before the table) and never fits.
-                let slot = if kind == 0 { 0 } else { self.place_building(b.planet, kind, false, 0, place, rules, ctx) };
-                if slot == 0 {
-                    self.planets[b.planet].autobuild_counter = -1000;
-                    events.push(SideEvent::AutobuildNoRoom { empire: e as u8, planet: b.planet, kind });
-                } else {
-                    self.add_money(e, 2, -(cost as f64), rules, ctx);
-                    self.planets[b.planet].autobuild_counter = 0;
-                    if rules.colony.role(b.kind as u8) == kind::TRADE_PORT {
-                        let owner = self.planets[b.planet].owner as usize;
-                        self.empires.bump_trade_ports(owner);
-                    }
-                    events.push(SideEvent::AutobuildPlaced { empire: e as u8, planet: b.planet, kind, slot });
-                }
+                let owner = self.planets[b.planet].owner as usize;
+                self.autobuild_place(e, *b, cost, owner, place, rules, ctx, events);
                 self.money[e].reserve[2] = 0.0;
             } else {
                 self.money[e].reserve[2] = (cost + 100) as f64;
@@ -1081,19 +1068,27 @@ impl ColonyWorld {
                 waiting[e] = true;
                 continue;
             }
-            let kind = b.kind as u8;
-            let slot = if kind == 0 { 0 } else { self.place_building(b.planet, kind, false, 0, place, rules, ctx) };
-            if slot == 0 {
-                self.planets[b.planet].autobuild_counter = -1000;
-                events.push(SideEvent::AutobuildNoRoom { empire: e as u8, planet: b.planet, kind });
-            } else {
-                self.add_money(e, 2, -(cost as f64), rules, ctx);
-                self.planets[b.planet].autobuild_counter = 0;
-                if rules.colony.role(b.kind as u8) == kind::TRADE_PORT {
-                    self.empires.bump_trade_ports(e);
-                }
-                events.push(SideEvent::AutobuildPlaced { empire: e as u8, planet: b.planet, kind, slot });
+            self.autobuild_place(e, b, cost, e, place, rules, ctx, events);
+        }
+    }
+
+    /// Empire `e` places autobuild pick `b` bought for `cost`: no room keeps the planet's autobuild off for a while,
+    /// else the money goes and a trade port counts for `trade_owner`.
+    #[allow(clippy::too_many_arguments)]
+    fn autobuild_place(&mut self, e: usize, b: Pick, cost: i32, trade_owner: usize, place: Placement, rules: &SideRules, ctx: &EconomyContext, events: &mut Vec<SideEvent>) {
+        let kind = b.kind as u8;
+        // Building 0 has no footprint (the search reads before the table) and never fits.
+        let slot = if kind == 0 { 0 } else { self.place_building(b.planet, kind, false, 0, place, rules, ctx) };
+        if slot == 0 {
+            self.planets[b.planet].autobuild_counter = -1000;
+            events.push(SideEvent::AutobuildNoRoom { empire: e as u8, planet: b.planet, kind });
+        } else {
+            self.add_money(e, 2, -(cost as f64), rules, ctx);
+            self.planets[b.planet].autobuild_counter = 0;
+            if rules.colony.role(kind) == kind::TRADE_PORT {
+                self.empires.bump_trade_ports(trade_owner);
             }
+            events.push(SideEvent::AutobuildPlaced { empire: e as u8, planet: b.planet, kind, slot });
         }
     }
 
