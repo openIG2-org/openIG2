@@ -359,7 +359,12 @@ pub struct Game<'r> {
     /// one is in the state, and the shared one while this is.
     pub local_ticker: messages::Ticker,
     pub shared_ticker: Option<messages::Ticker>,
+    /// [`Game::live_weapons`], made from the rules once.
+    live_weapons: std::sync::OnceLock<LiveWeapons>,
 }
+
+/// The weapon table as `InitSpaceWar` leaves it and its records' words ([`Game::live_weapons`]).
+type LiveWeapons = (Vec<crate::spacebattle::WeaponRules>, Vec<Vec<i32>>);
 
 /// A name the local screen shows before the lockstep carries it (a rename in multiplayer, deviation 395): fleet or
 /// planet `index`'s name bytes as typed and, for a fleet, its custom-name bit.
@@ -477,6 +482,7 @@ impl<'r> Game<'r> {
             local_ticker: messages::Ticker::default(),
             shared_ticker: None,
             local_names: Vec::new(),
+            live_weapons: Default::default(),
         }
     }
 
@@ -510,6 +516,7 @@ impl<'r> Game<'r> {
             local_ticker: self.local_ticker.clone(),
             shared_ticker: self.shared_ticker.clone(),
             local_names: self.local_names.clone(),
+            live_weapons: self.live_weapons.clone(),
         }
     }
 

@@ -1766,6 +1766,13 @@ impl SaveState {
         (1..=self.planet_count()).flat_map(|p| self.slots(p)).map(|b| b[0]).find(|&k| k as usize >= kinds)
     }
 
+    /// Ours: the first table count of the save outside the room the game has for it (a corrupt or foreign save):
+    /// the planets, the story's planet, counter, logic and variable lists, the spy reports and the wormholes. The
+    /// tables are read with these counts, so such a save is refused at load.
+    pub fn bad_count(&self) -> Option<String> {
+        bad_count(&self.mem)
+    }
+
     /// Ours (ADR 0069 §11): the first hull a live design names that `hulls` (the active rules' count) lacks.
     pub fn unknown_hull(&self, hulls: usize) -> Option<i32> {
         let hull = |r: &[u8]| i32::from_le_bytes(r[0x44..0x48].try_into().unwrap());
@@ -2511,9 +2518,36 @@ impl SaveState {
     }
 }
 
+/// [`SaveState::bad_count`] of the state's memory.
+fn bad_count(m: &Memory) -> Option<String> {
+    let story = |k: u32| m.i32(va::STORY_LIST_COUNTS + 4 * k);
+    let counts = [
+        ("planet", m.i32(va::PLANET_COUNT), PLANET_SLOTS as i32 - 1),
+        ("story counter", story(1), story::MAX_COUNTERS as i32),
+        ("story logic", story(2), story::MAX_LOGIC as i32),
+        ("story variable", story(3), story::MAX_VARS as i32),
+        ("spy report", m.i32(va::SPY_REPORT_COUNT), crate::spy::MAX_REPORTS),
+        ("wormhole", m.i32(va::WORMHOLE_COUNT), 5),
+    ];
+    counts.into_iter().find(|&(_, n, max)| !(0..=max).contains(&n)).map(|(what, n, max)| format!("{n} {what} entries (at most {max})"))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Memory;
+    use super::{bad_count, va, Memory, PLANET_SLOTS};
+
+    #[test]
+    fn table_counts_past_the_tables_are_found() {
+        let mut s = Memory::default();
+        assert_eq!(bad_count(&s), None);
+        s.set_i32(va::STORY_LIST_COUNTS + 4, crate::story::MAX_COUNTERS as i32 + 1);
+        assert!(bad_count(&s).is_some_and(|b| b.contains("story counter")));
+        s.set_i32(va::STORY_LIST_COUNTS + 4, 0);
+        s.set_i32(va::PLANET_COUNT, PLANET_SLOTS as i32);
+        assert!(bad_count(&s).is_some_and(|b| b.contains("planet")));
+        s.set_i32(va::PLANET_COUNT, -1);
+        assert!(bad_count(&s).is_some());
+    }
 
     #[test]
     fn memory_merges_runs_and_reads_gaps_as_zero() {

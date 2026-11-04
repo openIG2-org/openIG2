@@ -288,13 +288,15 @@ impl SpaceRules {
     }
 
     /// The rules a battle tick reads, with the state's switches (`BattleRules`).
-    pub fn tick_rules(&self) -> BattleRules {
-        BattleRules { weapons: self.weapons.clone(), forms: self.forms.clone(), ..Default::default() }
+    /// The tick's rules with `weapons` (the table as the battle's setup left it).
+    pub fn tick_rules(&self, weapons: Vec<WeaponRules>) -> BattleRules {
+        BattleRules { weapons, forms: self.forms.clone(), ..Default::default() }
     }
 
-    pub fn setup_rules(&self) -> SetupRules {
+    /// The setup's rules with `weapons` (the table as the battle's setup left it).
+    pub fn setup_rules(&self, weapons: Vec<WeaponRules>) -> SetupRules {
         SetupRules {
-            weapons: self.weapons.clone(),
+            weapons,
             forms: self.forms.clone(),
             formations: self.formations.clone(),
             building_tech: self.building_tech.clone(),
