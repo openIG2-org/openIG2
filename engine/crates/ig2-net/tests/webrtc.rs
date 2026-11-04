@@ -37,9 +37,14 @@ struct Relay {
 
 impl Relay {
     fn start() -> Self {
-        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let SocketAddr::V4(addr) = tcp.local_addr().unwrap() else { unreachable!() };
-        let socket = std::net::UdpSocket::bind(addr).unwrap();
+        // The free TCP port's UDP twin may be taken or reserved (Windows: os error 10013): try another pair.
+        let (tcp, addr, socket) = (0..50)
+            .find_map(|_| {
+                let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let SocketAddr::V4(addr) = tcp.local_addr().unwrap() else { unreachable!() };
+                std::net::UdpSocket::bind(addr).ok().map(|s| (tcp, addr, s))
+            })
+            .expect("a loopback port free for TCP and UDP");
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         std::thread::spawn(move || serve_with_http(&socket, Some(tcp), &mut Service::default(), |_| s.load(Ordering::Relaxed)));
