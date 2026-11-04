@@ -392,6 +392,8 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(46, Group::Interface, "Modern main menu", MODERN_MAIN_MENU, d.modern_main_menu as i32, Vec::new(), 1),
         row(47, Group::Interface, "Modern design screen", MODERN_DESIGN, d.modern_design as i32, Vec::new(), 1),
         row(41, Group::Interface, "UI scale", UI_SCALE, (ui_scale(f) as i32 - 50) / 10, (0..=15).map(|n| format!("{}%", 50 + 10 * n).into_bytes()).collect(), 15),
+        // ADR 0080: Discord Rich Presence (status and the Join button by default).
+        row(54, Group::Multiplayer, "Discord status", crate::discord::KEY, f.int(crate::discord::KEY).unwrap_or(2).clamp(0, 2), ["Off", "Status", "With join"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
     ]
 }
 
@@ -426,7 +428,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 2]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));

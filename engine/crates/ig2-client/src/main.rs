@@ -69,6 +69,7 @@ mod colony_war;
 mod colony_weather;
 mod diplomacy;
 mod diplomacy_scene;
+mod discord;
 mod display;
 mod event_log;
 mod fleet_groups;

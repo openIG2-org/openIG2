@@ -55,6 +55,7 @@ mod media;
 mod menus;
 mod modern;
 mod pointer;
+mod presence;
 mod saves;
 mod screens;
 mod session;
@@ -489,6 +490,9 @@ struct App {
     /// screen whose row frame carried them last (re/screens/trade.md §13).
     dk: crate::kit::DesignFrame,
     dk_owner: u8,
+    /// Ours (ADR 0080): Discord Rich Presence, and the race names its texts use (read on the first report).
+    discord: crate::discord::Presence,
+    discord_races: Vec<String>,
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
@@ -988,6 +992,8 @@ impl App {
             // The exe's boot values (`.data`): `dkm` 0, `dkmcel` π/2.
             dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
+            discord: Default::default(),
+            discord_races: Vec::new(),
         }
     }
 
@@ -2169,9 +2175,6 @@ fn research_key(k: NamedKey) -> Option<crate::research::Key> {
         NamedKey::PageDown => K::PageUp,
         _ => return None,
     })
-}
-
-impl App {
 }
 
 /// The row frame's phase hand-over (`dkm`, `dkmcel`, `GfxNovelo`: one set of globals, `Frissit2_Grafika` exe 0x4d2ed0

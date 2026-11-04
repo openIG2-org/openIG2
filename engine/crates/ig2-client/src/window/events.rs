@@ -166,6 +166,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.frame();
+                self.discord_frame();
                 crate::prof::frame(self.profile_screen());
                 if self.front.as_ref().is_some_and(|f| f.quit) {
                     el.exit();

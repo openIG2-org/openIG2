@@ -718,6 +718,9 @@ mod words {
     pub const COPY: &[u8] = b"Copy join code";
     pub const COPY_HINT: &[u8] = b"Send it to the players: they paste it into Join directly (Ctrl+V).";
     pub const OPEN_SEAT: &[u8] = b"Open";
+    // Ours (ADR 0080).
+    pub const DISCORD_JOINING: &[u8] = b"Joining through Discord...";
+    pub const DISCORD_COMING: &[u8] = b"is joining through Discord";
     pub const YOU: &[u8] = b"You";
     pub const TAKE_SEAT: &[u8] = b"Take seat";
     pub const CHAT: &[u8] = b"Chat";
@@ -1026,6 +1029,54 @@ impl MpScreen {
         self.role = Some(Role::Joiner(Box::new(LobbyClient::join_with_mods(link, &self.name, self.rules, self.mods, password, code))));
         self.line.clear();
         self.lost = false;
+    }
+
+    /// Ours (ADR 0080): join the room of a join code a friend's Discord activity gave (their Join pressed here): the
+    /// code in the address field, joined as typed (a password room asks for it as after a typed code). Nothing while
+    /// in a room or connecting.
+    pub fn join_from_discord(&mut self, code: &str, net: &mut dyn Net) {
+        if self.role.is_some() || self.connecting.is_some() {
+            return;
+        }
+        self.saves = None;
+        self.internet = None;
+        self.selected = None;
+        self.focus = Focus::Address;
+        self.address = Field::new(MAX_ADDRESS);
+        for c in code.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
+            self.address.key(EntryKey::Char(c));
+        }
+        self.join(net);
+        if self.connecting.is_some() {
+            self.line = words::DISCORD_JOINING.to_vec();
+        }
+    }
+
+    /// Ours (ADR 0080): the room as the Discord activity shows it (none on the connection page).
+    pub fn discord_room(&self) -> Option<crate::discord::Room> {
+        let st = self.state()?;
+        let me = self.member()?;
+        let seated = st.slots.iter().filter(|s| matches!(s.kind, SlotKind::Human(_))).count();
+        let open = st.slots.iter().filter(|s| s.kind == SlotKind::Open).count();
+        let humans = st.members.len().max(seated) as u32;
+        let host = st.members.iter().find(|m| m.id == 0).map_or("", |m| m.name.as_str());
+        Some(crate::discord::Room {
+            name: st.name.clone(),
+            host: self.is_host(),
+            humans,
+            seats: (seated + open).max(humans as usize) as u32,
+            race: st.slots.iter().find(|s| s.kind == SlotKind::Human(me)).map(|s| s.race).filter(|&r| r != 0),
+            ready: st.members.iter().any(|m| m.id == me && m.ready),
+            private: st.private,
+            saved: self.resume.is_some(),
+            party: crate::discord::party_id(&[&st.name, host]),
+            code: self.join_code().map(|c| c.encode()),
+        })
+    }
+
+    /// Ours (ADR 0080): a friend's join request accepted on Discord, told in the room's chat.
+    pub fn discord_joining(&mut self, name: &str) {
+        self.chat.push((String::new(), format!("{name} {}", words::text(crate::tr::game(), words::DISCORD_COMING))));
     }
 
     /// Leave the room for the connection page.
