@@ -752,10 +752,10 @@ fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     let vals = rect.with_min_x(rect.left() + LABEL_W);
     match &r.setting {
         Some(s) => {
-            let cur = s.items.iter().find(|i| i.0 == s.current).map_or(String::new(), |i| i.1.clone());
+            let cur = s.items.iter().find(|i| i.0 == s.current).map_or("", |i| i.1.as_str());
             let mut c = ui.new_child(egui::UiBuilder::new().max_rect(vals));
-            let rows: Vec<(i32, String, bool)> = s.items.iter().map(|(i, n)| (*i, n.clone(), false)).collect();
-            if let (_, Some(Some(i))) = ds::select(&mut c, ("imh-setting", s.hot), &cur, &rows, vec2(vals.width() - 8.0, 24.0), Font::DATA.sized(15.0), k.info) {
+            let rows: Vec<(i32, &str, bool)> = s.items.iter().map(|(i, n)| (*i, n.as_str(), false)).collect();
+            if let (_, Some(Some(i))) = ds::select(&mut c, ("imh-setting", s.hot), cur, &rows, vec2(vals.width() - 8.0, 24.0), Font::DATA.sized(15.0), k.info) {
                 if i != s.current {
                     acts.push(Act::Setting(s.hot, i));
                 }

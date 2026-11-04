@@ -859,9 +859,8 @@ pub fn kv(ui: &mut Ui, label: &str, value: &str, tone: Tone, label_width: f32) -
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
     let base = baseline(rect, Font::DATA);
     let (a, b) = rect.split_left_right_at_x(rect.left() + label_width);
-    let x = Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - SPACE[2]));
-    let y = Text::new(value, Font::DATA).color(tone.color()).baseline(base).paint(ui, b);
-    let _ = (x, y);
+    Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - SPACE[2]));
+    Text::new(value, Font::DATA).color(tone.color()).baseline(base).paint(ui, b);
     resp
 }
 
@@ -1057,7 +1056,7 @@ pub fn confirm_box(ui: &mut Ui, width: f32, title: &str, body: &str, yes: &str, 
 /// A select field (the boards' dropdowns): the value in a dark glass box with a chevron; a press (either button)
 /// opens its rows under it in a deep panel, greyed rows take no pick, a press elsewhere closes it. Gives
 /// `Some(None)` when it opens and `Some(Some(value))` for a row picked.
-pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, String, bool)], size: Vec2, font: Font, ink: Color32) -> (Response, Option<Option<i32>>) {
+pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, impl AsRef<str>, bool)], size: Vec2, font: Font, ink: Color32) -> (Response, Option<Option<i32>>) {
     let k = tokens();
     let id = ui.id().with(id);
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -1094,6 +1093,7 @@ pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, 
         egui::ScrollArea::vertical().id_salt(id.with("scroll")).auto_shrink([false; 2]).show(&mut c, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (val, text, off) in rows {
+                let text = text.as_ref();
                 let (rr, row) = ui.allocate_exact_size(egui::vec2(size.x - 24.0, rh), Sense::click());
                 let hot = hover_t(ui.ctx(), row.id, row.hovered() && !off);
                 row_back(ui, rr, hot, text == value);

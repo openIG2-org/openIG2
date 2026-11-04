@@ -266,10 +266,10 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let dw = (inner.right() - 280.0 - 260.0 - 32.0 - x2).clamp(220.0, 460.0);
     label(ui, x2, dw, &v.labels.dest);
     let dd = Rect::from_min_size(pos2(x2, cy - 20.0), vec2(dw, 40.0));
-    let shown = if o.dest < 0 { "—".to_string() } else { o.dest_name.clone() };
-    let rows: Vec<(i32, String, bool)> = if v.ports.is_empty() { vec![(-1, v.line.clone(), true)] } else { v.ports.iter().map(|(p, n)| (*p, n.clone(), false)).collect() };
+    let shown = if o.dest < 0 { "—" } else { &o.dest_name };
+    let rows: Vec<(i32, &str, bool)> = if v.ports.is_empty() { vec![(-1, &v.line, true)] } else { v.ports.iter().map(|(p, n)| (*p, n.as_str(), false)).collect() };
     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(dd));
-    let (resp, picked) = c.add_enabled_ui(has, |ui| ds::select(ui, "tmh-dest", &shown, &rows, dd.size(), Font::BODY.sized(18.0), k.ink)).inner;
+    let (resp, picked) = c.add_enabled_ui(has, |ui| ds::select(ui, "tmh-dest", shown, &rows, dd.size(), Font::BODY.sized(18.0), k.ink)).inner;
     ds::tip(resp, ds::tip_text(&v.tips, 0x1b));
     match picked {
         Some(Some(p)) => acts.push(Act::Dest(p)),
