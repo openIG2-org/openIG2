@@ -94,14 +94,6 @@ const HEAD: egui::Vec2 = egui::Vec2::new(720.0, 405.0);
 const GAP: f32 = 40.0;
 const ROW_H: f32 = 96.0;
 
-fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
-        ui.set_min_size(rect.size());
-        ui.set_max_size(rect.size());
-        add(ui)
-    })
-}
-
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut bar = Vec::new();
     sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
@@ -116,42 +108,37 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     });
     let bottom = h - 40.0 * g;
     let inbox = Rect::from_min_max(pos2(EDGE, top), pos2(EDGE + INBOX_W.min(w * 0.3), bottom));
-    place(ctx, "mmh-inbox", inbox, |ui| inbox_panel(ui, v, inbox.size(), &mut acts));
+    ds::place(ctx, "mmh-inbox", inbox, |ui| inbox_panel(ui, v, inbox.size(), &mut acts));
     // Right of the inbox: the head and the message's card side by side, the text under them, the plates at the foot.
     let x0 = inbox.right() + GAP;
     let room = w - EDGE - x0;
     let head_w = HEAD.x.min(room * 0.6);
     let head = Rect::from_min_size(pos2(x0, top), vec2(head_w, (head_w * 9.0 / 16.0).min(HEAD.y)));
-    place(ctx, "mmh-head", head, |ui| {
+    ds::place(ctx, "mmh-head", head, |ui| {
         well(ui, head);
         st.well = Some(Rect::from_min_max(head.min * ctx.pixels_per_point(), head.max * ctx.pixels_per_point()));
     });
     let card = Rect::from_min_max(pos2(head.right() + GAP, top), pos2(w - EDGE, head.bottom()));
-    place(ctx, "mmh-card", card, |ui| card_panel(ui, v, card.size(), &mut acts));
+    ds::place(ctx, "mmh-card", card, |ui| card_panel(ui, v, card.size(), &mut acts));
     let plates = 48.0;
     // The board's 430-high text panel, shorter where the window is.
     let text_top = head.bottom() + 28.0 * g;
     let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - EDGE, (text_top + 430.0).min(bottom - plates - 24.0 * g)));
-    place(ctx, "mmh-text", text, |ui| text_panel(ui, v, text.size(), &mut acts));
+    ds::place(ctx, "mmh-text", text, |ui| text_panel(ui, v, text.size(), &mut acts));
     let full = Rect::from_min_size(pos2(x0, bottom - plates), vec2(260.0, plates));
-    place(ctx, "mmh-full", full, |ui| {
+    ds::place(ctx, "mmh-full", full, |ui| {
         let typing = v.open.as_ref().is_some_and(|o| o.typing);
-        if either(&ui.add_enabled(typing, ds::Plate::new(&v.labels.full_text).width(260.0).height(plates))) {
+        if ds::either(&ui.add_enabled(typing, ds::Plate::new(&v.labels.full_text).width(260.0).height(plates))) {
             acts.push(Act::Hurry);
         }
     });
     let exit = Rect::from_min_size(pos2(w - EDGE - 220.0, bottom - plates), vec2(220.0, plates));
-    place(ctx, "mmh-exit", exit, |ui| {
-        if either(&ui.add_enabled(v.leave, ds::Plate::new(&v.labels.exit).width(220.0).height(plates))) {
+    ds::place(ctx, "mmh-exit", exit, |ui| {
+        if ds::either(&ui.add_enabled(v.leave, ds::Plate::new(&v.labels.exit).width(220.0).height(plates))) {
             acts.push(Act::Leave);
         }
     });
     acts
-}
-
-/// A press with either button: the original's spots take both (`Messages_Main`).
-fn either(r: &egui::Response) -> bool {
-    r.clicked() || r.secondary_clicked()
 }
 
 /// The head's well: black in a cast-metal frame; the window draws the clip into it ([`State::well`]).
@@ -185,7 +172,7 @@ fn inbox_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
                 let d = r.width() * 0.22 * if up { -1.0 } else { 1.0 };
                 p.line(vec![m + vec2(-r.width() * 0.25, -d * 0.5), m + vec2(0.0, d * 0.5), m + vec2(r.width() * 0.25, -d * 0.5)], egui::Stroke::new(2.0f32, c));
             };
-            if either(&ds::tip(ds::round_button(ui, ds::Glyph::Custom(&draw), true, false), tip)) {
+            if ds::either(&ds::tip(ds::round_button(ui, ds::Glyph::Custom(&draw), true, false), tip)) {
                 acts.push(act);
             }
         });
@@ -208,7 +195,7 @@ fn inbox_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
         Text::new(&r.date, Font::DATA).right().baseline(ds::fit::baseline(top, Font::HEADING.sized(18.0))).color(k.info).paint(ui, top.with_min_x(top.right() - date_w));
         Text::new(&r.subject[0], Font::BODY.sized(15.0)).shrink(12.0).color(if r.unread { k.ink } else { k.ink_silver }).paint(ui, line(28.0, 20.0));
         Text::new(&r.subject[1], Font::DATA).shrink(11.0).color(if r.unread { k.ink_silver } else { k.ink_muted }).paint(ui, line(50.0, 20.0));
-        if either(&resp.on_hover_cursor(egui::CursorIcon::PointingHand)) {
+        if ds::either(&resp.on_hover_cursor(egui::CursorIcon::PointingHand)) {
             acts.push(Act::Row(r.k));
         }
     }
@@ -250,7 +237,7 @@ fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
         ds::lcd_window(ui.painter(), cap);
         Text::new(keys[i.min(3)], Font::READOUT.sized(18.0)).center().color(if *off { k.ink_muted } else { k.lcd_ink }).paint(ui, cap);
         Text::new(label, Font::DATA).lines(2).color(if *off { k.ink_off } else { k.ink }).paint(ui, Rect::from_min_max(pos2(cap.right() + 12.0, r.top() + 6.0), r.max - vec2(10.0, 4.0)));
-        if either(&resp.on_hover_cursor(if *off { egui::CursorIcon::NotAllowed } else { egui::CursorIcon::PointingHand })) {
+        if ds::either(&resp.on_hover_cursor(if *off { egui::CursorIcon::NotAllowed } else { egui::CursorIcon::PointingHand })) {
             acts.push(Act::Answer(i));
         }
     }
@@ -286,7 +273,7 @@ fn text_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     if o.typing {
         ui.ctx().request_repaint();
     }
-    if either(&resp) && o.typing {
+    if ds::either(&resp) && o.typing {
         acts.push(Act::Hurry);
     }
 }

@@ -141,11 +141,6 @@ const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 const STATUS: Font = Font::DATA.sized(14.0).tracking(0.10).upper(true);
 const TILE: Font = Font::DATA.sized(15.0).tracking(0.06);
 
-/// The original's buttons (start/stop, urgent, the categories) act on the press (`Mouse_Lenyom`, §4).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
 /// The categories' groups (ships and weapons with the special one, buildings, vehicles), in the board's order.
 const GROUPS: [&[usize]; 3] = [&[1, 2, 3, 4, 5, 12], &[6, 7, 8, 9], &[10, 11]];
 
@@ -308,7 +303,7 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
                         let on = v.urgent == urgent;
                         let b = ui.add(Plate::new(label).sub(cost).width(half).height(64.0).primary(on).font(Plate::FONT.sized(16.0).upper(true)));
                         // The urgent button flips the funding: a press on the other plate.
-                        if pressed(&ds::tip(b, &v.tips[2])) && !on {
+                        if ds::pressed(&ds::tip(b, &v.tips[2])) && !on {
                             acts.push(Act::Urgent);
                         }
                     }
@@ -318,7 +313,7 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
     }
     let label = if v.stop { &v.labels.stop } else { &v.labels.start };
     let b = ui.add_enabled(v.start_on, Plate::new(label).width(w).height(52.0).primary(v.stop));
-    if pressed(&ds::tip(b, &v.tips[0])) {
+    if ds::pressed(&ds::tip(b, &v.tips[0])) {
         acts.push(Act::StartStop);
     }
     // The running project: its name (a click shows it), its bar, its money and days.
@@ -406,7 +401,7 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
                 let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(tw, TILE_H))));
                 // Every category's button stays on, the chosen one too (`Forgotabla` clicks and turns it again).
                 let resp = tile(&mut c, a, a.n == v.area, vec2(tw, TILE_H));
-                if pressed(&resp) {
+                if ds::pressed(&resp) {
                     acts.push(Act::Area(a.n));
                 }
             }

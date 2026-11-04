@@ -209,10 +209,6 @@ fn hover(ui: &egui::Ui, r: Rect) -> bool {
     ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p))
 }
 
-fn down(ui: &egui::Ui) -> bool {
-    ui.ctx().input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
-}
-
 /// One frame of the panels over the starmap (after the HUD's).
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let ppp = ctx.pixels_per_point();
@@ -311,7 +307,7 @@ fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: 
             lcd(l);
             let br = Rect::from_min_size(pos2(b, row.center().y - 21.0), vec2(42.0, 42.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(br));
-            ds::forced(hot > 0.5, hot > 0.5 && down(ui), || ds::round_button(&mut child, ds::Glyph::Icon(icon), true, false));
+            ds::forced(hot > 0.5, hot > 0.5 && ds::any_down(ui.ctx()), || ds::round_button(&mut child, ds::Glyph::Icon(icon), true, false));
         }
     }
 }
@@ -320,7 +316,7 @@ fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: 
 fn plate(ui: &mut egui::Ui, r: Rect, text: &str) {
     let hot = hover(ui, r);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-    ds::forced(hot, hot && down(ui), || child.add_sized(r.size(), ds::Plate::new(text).width(r.width()).height(r.height()).font(EXIT)));
+    ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add_sized(r.size(), ds::Plate::new(text).width(r.width()).height(r.height()).font(EXIT)));
 }
 
 /// The capacity footer's label, bar and value from `x`.

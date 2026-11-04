@@ -60,6 +60,38 @@ fn tip_if(r: Response, cut: bool, text: &str) -> Response {
     if cut { r.on_hover_text(text) } else { r }
 }
 
+// ---- The boards' input and placing ----
+
+/// Clicked with the left or the right button (the original's spots take both).
+pub fn either(r: &Response) -> bool {
+    r.clicked() || r.secondary_clicked()
+}
+
+/// Pressed with either button while enabled: the original's buttons act on the press, not the release
+/// (`Mouse_Lenyom`, the hot-spots' one-shot `AktIkon2`).
+pub fn pressed(r: &Response) -> bool {
+    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
+}
+
+/// Either button held (a game hot-spot drawn pressed).
+pub fn any_down(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
+}
+
+/// A board's tooltip `id` of its text list, empty where it has none.
+pub fn tip_text(tips: &[String], id: u32) -> &str {
+    tips.get(id as usize).map_or("", |s| s.as_str())
+}
+
+/// `add` in a fixed rectangle of the screen (an area `id` of its own, top-down).
+pub fn place<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    egui::Area::new(Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
+        ui.set_min_size(rect.size());
+        ui.set_max_size(rect.size());
+        add(ui)
+    })
+}
+
 // ---- Plates and menu items ----
 
 /// The command plate (`.ig-plate`): a bevelled blue slab, 44 high, its label 500 20 / 0.16 em; `primary` lit

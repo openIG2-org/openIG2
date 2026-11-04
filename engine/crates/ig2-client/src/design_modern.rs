@@ -124,15 +124,6 @@ const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 const CLASS: Font = Font::LABEL.sized(12.0);
 const VALUE: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
 
-/// The original's buttons act on the press (`Mouse_Lenyom`, design.md §4).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
-fn tip(v: &View, id: u32) -> &str {
-    v.tips.get(id as usize).map_or("", |s| s.as_str())
-}
-
 /// One frame of the screen; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut bar = Vec::new();
@@ -166,7 +157,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE - 56.0 - 12.0)) };
     let console = egui::Area::new(egui::Id::new("dmh-console")).anchor(pivot, at).fade_in(false).show(ctx, |ui| console(ui, v, &mut acts));
     egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-        if pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
+        if ds::pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });
@@ -209,8 +200,8 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
             let kf = Font::DATA.sized(14.0).weight(Weight::Regular).tracking(0.06);
             let kw = Text::new(&r.kind, kf).right().color(if on { k.ink_silver } else { k.ink_muted }).baseline(base).paint(ui, inner.with_min_x(inner.right() - inner.width() * 0.45)).width;
             Text::new(&r.name, Font::BODY).color(if r.off { k.ink_muted } else { k.ink }).baseline(base).paint(ui, inner.with_max_x(inner.right() - kw - 12.0));
-            let resp = ds::tip(resp, tip(v, 9));
-            if pressed(&resp) {
+            let resp = ds::tip(resp, ds::tip_text(&v.tips, 9));
+            if ds::pressed(&resp) {
                 acts.push(Act::Row(r.n));
             }
             if r.n == v.pointer && ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowDown)) {
@@ -282,12 +273,12 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         c.spacing_mut().item_spacing.x = 8.0;
         let mut ctl_w = 0.0;
         if p.counts {
-            let plus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Plus), true, false), tip(v, 0x34));
+            let plus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Plus), true, false), ds::tip_text(&v.tips, 0x34));
             ds::lcd(&mut c, &p.count.to_string(), 22.0, 2);
-            let minus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Minus), true, false), tip(v, 0x33));
-            if pressed(&minus) {
+            let minus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Minus), true, false), ds::tip_text(&v.tips, 0x33));
+            if ds::pressed(&minus) {
                 st.count = Some((p.k, false));
-            } else if pressed(&plus) {
+            } else if ds::pressed(&plus) {
                 st.count = Some((p.k, true));
             }
             ctl_w = 156.0;
@@ -296,7 +287,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         } else if v.editing {
             let b = c.add(Plate::new(&v.labels.choose).height(34.0).font(Plate::FONT.sized(14.0).tracking(0.10)));
             ctl_w = b.rect.width();
-            if pressed(&ds::tip(b, tip(v, 0x54))) {
+            if ds::pressed(&ds::tip(b, ds::tip_text(&v.tips, 0x54))) {
                 acts.push(Act::Pod(p.k));
             }
         }
@@ -305,7 +296,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         Text::new(&p.class, CLASS).color(k.ink_muted).baseline(a.top() + 12.0).paint(ui, a);
         let (val, col) = if p.tech.is_empty() { (&v.labels.empty, k.ink_muted) } else { (&p.tech, k.ink.lerp_to_gamma(Color32::WHITE, hot)) };
         Text::new(val, VALUE).color(col).baseline(b.top() + 17.0).paint(ui, b);
-        if pressed(&ds::tip(resp.clone(), tip(v, 0x54))) {
+        if ds::pressed(&ds::tip(resp.clone(), ds::tip_text(&v.tips, 0x54))) {
             acts.push(Act::Pod(p.k));
         }
         // The chosen pod's tech list, inline under it (`DesigndSelectPodMode2`).
@@ -320,7 +311,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
                         ui.set_width(w - 40.0 - 12.0);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for (sel, name) in &pop.rows {
-                            if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)).selected(*sel != 0 && *name == p.tech))) {
+                            if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)).selected(*sel != 0 && *name == p.tech))) {
                                 acts.push(Act::Pick(*sel));
                             }
                         }
@@ -371,7 +362,7 @@ fn properties(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             ui.ctx().request_repaint();
         }
         let _ = fit;
-        if pressed(&ds::tip(resp, tip(v, 0x56))) {
+        if ds::pressed(&ds::tip(resp, ds::tip_text(&v.tips, 0x56))) {
             acts.push(Act::Name);
         }
     });
@@ -391,18 +382,18 @@ fn console(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let key = |ui: &mut Ui, i: Icon| ui.add(IconKey::icon(i).size(vec2(36.0, 52.0)));
-        if pressed(&key(ui, Icon::ChevronLeft)) {
+        if ds::pressed(&key(ui, Icon::ChevronLeft)) {
             acts.push(Act::Key(true));
         }
         for (id, label, on) in &v.buttons {
             let open = v.popup.as_ref().is_some_and(|p| p.button == *id);
             let b = ui.add_enabled(*on, Plate::new(label).width(70.0).height(48.0).primary(open || (*id == 5 && v.editing)).font(Plate::FONT.sized(17.0)));
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("dmh-button", *id)), b.rect));
-            if pressed(&ds::tip(b, tip(v, *id))) {
+            if ds::pressed(&ds::tip(b, ds::tip_text(&v.tips, *id))) {
                 acts.push(if open { Act::Close } else { Act::Button(*id) });
             }
         }
-        if pressed(&key(ui, Icon::ChevronRight)) {
+        if ds::pressed(&key(ui, Icon::ChevronRight)) {
             acts.push(Act::Key(false));
         }
     });
@@ -419,7 +410,7 @@ fn popup(ctx: &egui::Context, p: &Popup, at: egui::Pos2, pivot: Align2, acts: &m
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical().max_height(26.0 * 14.0).show(ui, |ui| {
                 for (sel, name) in &p.rows {
-                    if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
+                    if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
                         acts.push(Act::Pick(*sel));
                     }
                 }

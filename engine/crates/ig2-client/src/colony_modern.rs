@@ -419,16 +419,6 @@ fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Res
     .inner
 }
 
-/// Either button presses it (`AktIkon2`).
-fn either(r: &egui::Response) -> bool {
-    sm::either(r)
-}
-
-/// The info mode's buttons act on the press of either button (their hot-spots' one-shot `AktIkon2`, §12.2).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
 /// The top of the panels under the bar.
 fn top(ctx: &egui::Context) -> f32 {
     let bar = ["smh-left", "smh-right"].iter().filter_map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id)))).map(|r| r.bottom()).fold(44.0f32, f32::max);
@@ -462,7 +452,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
                     if a.on[i] {
                         let open = v.confirm.is_some() && ((id == 1) == v.confirm.as_ref().is_some_and(|c| c.price.is_some()));
                         let label = a.tips[i].split(['\n', '.']).next().unwrap_or("");
-                        if either(&round(ui, ic, open, label, &a.tips[i])) {
+                        if ds::either(&round(ui, ic, open, label, &a.tips[i])) {
                             acts.push(Act::Spot(id));
                         }
                     }
@@ -548,7 +538,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
             ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
         }
         let w = ds::tip(w, &b.cursor_tip);
-        if !b.pending && either(&w) {
+        if !b.pending && ds::either(&w) {
             acts.push(Act::Pick(-1));
         }
         let col = Rect::from_min_max(rect.min + vec2(16.0 + 150.0 + 16.0, 16.0), rect.max - vec2(16.0, 16.0));
@@ -631,7 +621,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
                 }
                 let cut = Text::new(&e.name, f).color(ink).baseline(base).paint(ui, name.with_max_x(name.right() - 8.0)).cut;
                 let resp = if cut { resp.on_hover_text(&e.name) } else { resp };
-                if either(&resp) {
+                if ds::either(&resp) {
                     acts.push(Act::Pick(e.tech));
                     st.tab = None;
                 }
@@ -691,7 +681,7 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                     if ds::tip(ui.add(IconKey::new(Glyph::Custom(&|p: &egui::Painter, r: Rect, col: Color32| ico(p, r, Ico::Info, col))).size(vec2(36.0, 32.0))), &v.details).clicked() {
                         acts.push(Act::Card(false));
                     }
-                    if !c.planet && v.actions.on[2] && either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
+                    if !c.planet && v.actions.on[2] && ds::either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
                         acts.push(Act::Spot(0x11));
                     }
                 });
@@ -779,7 +769,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                        if either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
+                        if ds::either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
                             acts.push(Act::Spot(*id));
                         }
                         let charge = match id {
@@ -845,7 +835,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                         ui.vertical_centered(|ui| {
                             if let Some((id, frame, t)) = retreat {
                                 let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                                if either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
+                                if ds::either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
                                     acts.push(Act::Spot(*id));
                                 }
                             } else {
@@ -889,7 +879,7 @@ fn notices(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
                 Text::new(&s, f).center().color(k.signal_red).paint(ui, r);
                 ui.ctx().request_repaint();
                 if let Some(c) = &d.cancel
-                    && either(&ui.add(ds::Plate::new(c).primary(true).font(ds::Plate::FONT.sized(15.0)).height(40.0).width(200.0)))
+                    && ds::either(&ui.add(ds::Plate::new(c).primary(true).font(ds::Plate::FONT.sized(15.0)).height(40.0).width(200.0)))
                 {
                     acts.push(Act::Spot(8));
                 }
@@ -995,13 +985,13 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
                     }
                 }
                 let r = ui.add(ds::Plate::new(&i.all).font(ds::Plate::FONT.sized(13.0)).height(40.0).width(80.0));
-                if pressed(&r) {
+                if ds::pressed(&r) {
                     acts.push(Act::Info(s.all));
                 }
                 if let Some((minus, plus)) = s.steps {
                     for (id, icon) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
                         ui.allocate_ui(vec2(44.0, 40.0), |ui| {
-                            if pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
+                            if ds::pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
                                 acts.push(Act::Info(id));
                             }
                         });
@@ -1021,7 +1011,7 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
         if ui.add(ds::Plate::new(&i.starmap).width(220.0)).clicked() {
             acts.push(Act::Card(true));
         }
-        if pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
+        if ds::pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
             acts.push(Act::Info(0x20));
         }
     });

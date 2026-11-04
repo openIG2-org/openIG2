@@ -122,14 +122,6 @@ const EXIT_W: f32 = 220.0;
 /// The menus whose rows open sub-menus (`run_cascade`); the others are one-level answers (`run_plain`).
 const CASCADES: [usize; 3] = [menu::MAIN, menu::EXCHANGE, menu::BLOCKED];
 
-fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
-        ui.set_min_size(rect.size());
-        ui.set_max_size(rect.size());
-        add(ui)
-    })
-}
-
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut bar = Vec::new();
     sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
@@ -153,10 +145,10 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         st.root = root;
     }
     let contacts = Rect::from_min_max(pos2(EDGE, top + 40.0), pos2(EDGE + CARD_W, MENUS_TOP * g - 16.0));
-    place(ctx, "dmh-contacts", contacts, |ui| contacts_panel(ui, v, st, contacts.size(), &mut acts));
+    ds::place(ctx, "dmh-contacts", contacts, |ui| contacts_panel(ui, v, st, contacts.size(), &mut acts));
     if let Some(info) = &v.info {
         let r = Rect::from_min_size(pos2(w - EDGE - INFO_W.min(w * 0.25), top + 28.0), vec2(INFO_W.min(w * 0.25), 156.0));
-        place(ctx, "dmh-info", r, |ui| info_panel(ui, v, info, r.size()));
+        ds::place(ctx, "dmh-info", r, |ui| info_panel(ui, v, info, r.size()));
     }
     // The cascade: the root, then each opened sub-menu beside the one before, its top level with the opening row.
     if let Some(root) = root {
@@ -171,7 +163,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             let width = if level == 0 { ROOT_W } else { SUB_W };
             let r = Rect::from_min_size(pos2(x, y), vec2(width, rows.len() as f32 * ROW_H + 20.0));
             let picked = st.path.get(level).map(|&(_, row)| row);
-            if let Some((row, off)) = place(ctx, &format!("dmh-menu{level}"), r, |ui| menu_panel(ui, rows, picked, r.size())).inner {
+            if let Some((row, off)) = ds::place(ctx, format!("dmh-menu{level}"), r, |ui| menu_panel(ui, rows, picked, r.size())).inner {
                 if off {
                     acts.push(Act::Click);
                     break;
@@ -194,9 +186,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     }
     let text = Rect::from_min_max(pos2(TEXT.left().max(w / 2.0 - 320.0), TEXT.top() * g), pos2(TEXT.right().min(w / 2.0 + 480.0), h - 60.0 * g));
     let plain: Vec<usize> = v.shown.iter().copied().filter(|m| !CASCADES.contains(m)).collect();
-    place(ctx, "dmh-text", text, |ui| text_panel(ui, v, st, &plain, text.size(), &mut acts));
+    ds::place(ctx, "dmh-text", text, |ui| text_panel(ui, v, st, &plain, text.size(), &mut acts));
     let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
-    place(ctx, "dmh-exit", exit, |ui| {
+    ds::place(ctx, "dmh-exit", exit, |ui| {
         if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(44.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }

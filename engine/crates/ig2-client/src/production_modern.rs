@@ -106,11 +106,6 @@ pub struct State {
     count: Option<(usize, usize, bool)>,
 }
 
-/// The original's buttons act on the press of either button (`Starmap_Main` on the latched hot-spot, §12.4).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
 /// The boards' gap to the screen's edges, a line panel's width, a slot's height and the gap between slots.
 const EDGE: f32 = 24.0;
 const PANEL_W: f32 = 600.0;
@@ -172,7 +167,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Ve
     egui::Area::new(egui::Id::new("pmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE + slide * 0.3)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(t);
         let exit = ui.add_enabled(!v.exit_locked, Plate::new(&v.exit).width(320.0).height(56.0));
-        if pressed(&ds::tip(exit, &v.tips[8])) {
+        if ds::pressed(&ds::tip(exit, &v.tips[8])) {
             acts.push(Act::Spot(9));
         }
     });
@@ -195,7 +190,7 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let prev = ds::key_group(ui, |ui| ui.add(IconKey::icon(Icon::ChevronLeft)));
-        if pressed(&ds::tip(prev, &v.tips[0])) {
+        if ds::pressed(&ds::tip(prev, &v.tips[0])) {
             acts.push(Act::Spot(0xc));
         }
         let plate = ds::title_plate(ui, &v.planet, PLATE_W);
@@ -208,7 +203,7 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             acts.push(Act::Spot(0x32));
         }
         ds::key_group(ui, |ui| {
-            if pressed(&ds::tip(ui.add(IconKey::icon(Icon::ChevronRight)), &v.tips[1])) {
+            if ds::pressed(&ds::tip(ui.add(IconKey::icon(Icon::ChevronRight)), &v.tips[1])) {
                 acts.push(Act::Spot(0xd));
             }
             if list(&ds::tip(ui.add(IconKey::icon(Icon::ChevronDown)), &v.tips[7])) {
@@ -299,19 +294,19 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     let plus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Plus), true, false), &v.tips[5])).inner;
     ds::lcd(&mut step, &slot.count.to_string(), 22.0, 3);
     let minus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Minus), true, false), &v.tips[4])).inner;
-    if pressed(&minus) {
+    if ds::pressed(&minus) {
         st.count = Some((l, s, false));
-    } else if pressed(&plus) {
+    } else if ds::pressed(&plus) {
         st.count = Some((l, s, true));
     }
     let mut lamps = row(ctl.bottom() - 26.0, 26.0);
     lamps.spacing_mut().item_spacing.x = 6.0;
     if let Some(f) = slot.into_fleet {
-        if pressed(&ds::tip(lamp(&mut lamps, &v.labels.into_fleet, f), &v.tips[3])) {
+        if ds::pressed(&ds::tip(lamp(&mut lamps, &v.labels.into_fleet, f), &v.tips[3])) {
             acts.push(Act::Spot(0x16 + s as u32));
         }
     }
-    if pressed(&ds::tip(lamp(&mut lamps, &v.labels.repeat, slot.repeat), &v.tips[2])) {
+    if ds::pressed(&ds::tip(lamp(&mut lamps, &v.labels.repeat, slot.repeat), &v.tips[2])) {
         acts.push(Act::Spot(0xe + 4 * l as u32 + s as u32));
     }
     // The texts between, on the board's three baselines; the head unit's bar under them.

@@ -179,10 +179,6 @@ fn pointer(ui: &egui::Ui) -> Option<Pos2> {
     ui.ctx().input(|i| i.pointer.hover_pos())
 }
 
-fn down(ui: &egui::Ui) -> bool {
-    ui.ctx().input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
-}
-
 /// One frame of the HUD over the battle (after the top bar).
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let ppp = ctx.pixels_per_point();
@@ -253,7 +249,7 @@ fn rail_key(ui: &egui::Ui, r: Rect, name: &str, charge: Option<f32>, lit: bool, 
     let radius = egui::CornerRadius { nw: ds::RADIUS_PANEL, sw: ds::RADIUS_PANEL, ne: 0, se: 0 };
     let hot = ds::hover_t(ui.ctx(), egui::Id::new(("bmh-key", name)), pointer(ui).is_some_and(|q| r.contains(q)));
     ds::shadow(p, r, radius, 4, 16, 0, Color32::from_black_alpha(160));
-    if lit || (hot > 0.5 && down(ui)) {
+    if lit || (hot > 0.5 && ds::any_down(ui.ctx())) {
         ds::vgrad(p, r, radius, &[(0.0, k.plate_high), (1.0, k.plate)]);
         ds::rim(p, r, radius, k.ink_silver);
     } else {
@@ -425,7 +421,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
         let hot = pointer(ui).is_some_and(|q| kr.contains(q));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(kr));
         let draw = move |p: &egui::Painter, r: Rect, c: Color32| crate::starmap_modern::icon(p, r, icon, c);
-        ds::forced(hot, hot && down(ui), || child.add(ds::IconKey::new(ds::Glyph::Custom(&draw)).size(key)));
+        ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add(ds::IconKey::new(ds::Glyph::Custom(&draw)).size(key)));
         st.spots.push((kr, id, None));
         let _ = n;
         x += key.x + 2.0;

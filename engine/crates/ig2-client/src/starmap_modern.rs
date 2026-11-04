@@ -538,11 +538,6 @@ pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egu
     })
 }
 
-/// Clicked with the left or the right button.
-pub(crate) fn either(r: &egui::Response) -> bool {
-    r.clicked() || r.secondary_clicked()
-}
-
 /// The boards' gap of the corner panels to the screen's edges (`left: 24px; bottom: 24px`).
 const GAP: f32 = 24.0;
 /// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).
@@ -647,12 +642,12 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
             // Pause and the speeds: one key block, the running one lit.
             ds::key_group(ui, |ui| {
                 let r = ui.add(IconKey::icon(ds::Icon::Pause).on(v.paused));
-                if either(&hand(tip(r, &v.labels.pause, &v.keys.pause, &ink))) {
+                if ds::either(&hand(tip(r, &v.labels.pause, &v.keys.pause, &ink))) {
                     acts.push(Act::Pause);
                 }
                 for (n, i) in [(1, ds::Icon::Play), (2, ds::Icon::Fast), (3, ds::Icon::Fastest)] {
                     let r = ui.add(IconKey::icon(i).on(!v.paused && v.speed + 1 == n));
-                    if either(&hand(tip(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n - 1], &ink))) {
+                    if ds::either(&hand(tip(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n - 1], &ink))) {
                         acts.push(Act::Speed(n as i32));
                     }
                 }
@@ -1006,7 +1001,7 @@ fn camera_buttons(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
         ds::key_group(ui, |ui| {
             for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
                 let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-                if either(&hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
+                if ds::either(&hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
                     acts.push(Act::View(spot));
                 }
             }
