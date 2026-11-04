@@ -6,7 +6,7 @@
 use std::path::Path;
 
 /// The `.desktop` file's text for `exe`.
-#[cfg_attr(not(unix), allow(dead_code))]
+#[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
 pub fn desktop_entry(app: &str, exe: &Path) -> String {
     let exe = exe.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
     format!(
