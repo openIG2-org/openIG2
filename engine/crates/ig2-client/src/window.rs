@@ -151,6 +151,21 @@ impl Gpu {
         self.renderer.draw(&f, out, size, t);
         frame
     }
+
+    /// One window frame: acquire the surface's texture, draw `frame` with `top` over it ([`Self::present_over`]) and
+    /// present it. Gives the frame back; on an error nothing is drawn (see [`App::surface_failed`]).
+    fn present(&mut self, frame: crate::render::Frame, top: Option<crate::render::Frame>, t: f32) -> Result<crate::render::Frame, wgpu::SurfaceError> {
+        let acquire = crate::prof::scope("acquire");
+        let out = self.surface.get_current_texture()?;
+        drop(acquire);
+        let draw = crate::prof::scope("draw");
+        let frame = self.present_over(frame, top, &out.texture, t);
+        drop(draw);
+        let _present = crate::prof::scope("present");
+        self.window.pre_present_notify();
+        out.present();
+        Ok(frame)
+    }
 }
 
 /// The open colony screen: its scene on the GPU, its view, the input state and the panel's turning building.
@@ -1264,6 +1279,15 @@ impl App {
         crate::prof::mark("spy scene");
         self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None, gui: crate::gui::Gui::new(format).install_fonts(&self.install) });
         Ok(())
+    }
+
+    /// A frame the surface couldn't take: a lost or outdated surface is configured again (the next frame draws),
+    /// anything else is logged.
+    fn surface_failed(&mut self, e: wgpu::SurfaceError) {
+        match e {
+            wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated => self.reconfigure(),
+            e => eprintln!("ig2-client: {e}"),
+        }
     }
 
     fn reconfigure(&mut self) {
@@ -3060,13 +3084,10 @@ impl App {
         } else if let Some(h) = &self.hud {
             ov.draw(&mut frame, h, size);
         }
-        let Ok(out) = g.surface.get_current_texture() else {
-            self.reconfigure();
+        if let Err(e) = g.present(frame, top, now as f32 / 1000.0) {
+            self.surface_failed(e);
             return;
-        };
-        g.present_over(frame, top, &out.texture, now as f32 / 1000.0);
-        g.window.pre_present_notify();
-        out.present();
+        }
         for o in mp_outs {
             self.front_mp_out(o);
         }
@@ -3649,12 +3670,8 @@ impl App {
             ov.draw(&mut frame, hud, size);
         }
         let done = h.s.done().is_some();
-        if let Ok(out) = g.surface.get_current_texture() {
-            g.present_over(frame, top, &out.texture, t);
-            g.window.pre_present_notify();
-            out.present();
-        } else {
-            self.reconfigure();
+        if let Err(e) = g.present(frame, top, t) {
+            self.surface_failed(e);
         }
         if done {
             if let Some(h) = self.help.take() {
@@ -3711,13 +3728,10 @@ impl App {
                 ov.draw(&mut frame, h, size);
             }
         }
-        let Ok(out) = g.surface.get_current_texture() else {
-            self.reconfigure();
+        if let Err(e) = g.present(frame, top, t) {
+            self.surface_failed(e);
             return;
-        };
-        g.present_over(frame, top, &out.texture, t);
-        g.window.pre_present_notify();
-        out.present();
+        }
         if let Some(crate::options::Act::Save(slot, name)) = act {
             self.options_save(slot, name);
         }
@@ -4417,6 +4431,10 @@ impl App {
         self.overlay = None;
         self.spy = None;
         self.diplomacy = None;
+        // Dropped, not `drop_design`: the old game's queued design orders must not reach the next world.
+        self.design = None;
+        self.trade = None;
+        self.trade_under_options = None;
         self.drop_research();
         self.stop_battle_loops();
         self.spacewar = None;
@@ -5913,10 +5931,9 @@ impl App {
                     ov.draw(&mut frame, h, size);
                 }
             }
-            if let Ok(out) = g.surface.get_current_texture() {
-                self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
-                g.window.pre_present_notify();
-                out.present();
+            match g.present(frame, top, t) {
+                Ok(shown) => self.backdrop.last = Some((shown, t)),
+                Err(e) => self.surface_failed(e),
             }
             // The original's screen menu is off in a battle (`topbar_menus` with the battle flag) but under `DEBUGX`.
             let debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
@@ -5962,11 +5979,11 @@ impl App {
             } else {
                 ov.draw(&mut frame, h, size);
             }
-            if let Ok(out) = g.surface.get_current_texture() {
-                self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
-                g.window.pre_present_notify();
-                out.present();
+            match g.present(frame, top, t) {
+                Ok(shown) => self.backdrop.last = Some((shown, t)),
+                Err(e) => self.surface_failed(e),
             }
+            self.spy_modern_apply();
             return;
         }
         if let (Some(s), Some(h), Some(m)) = (self.overlay, &mut self.hud, &mut self.frame_models) {
@@ -6277,26 +6294,10 @@ impl App {
             ov.draw(&mut f, h, size);
             top = Some(f);
         }
-        let acquire = crate::prof::scope("acquire");
-        let out = match g.surface.get_current_texture() {
-            Ok(out) => out,
-            Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                self.reconfigure();
-                return;
-            }
-            Err(e) => {
-                eprintln!("ig2-client: {e}");
-                return;
-            }
-        };
-        drop(acquire);
-        let draw = crate::prof::scope("draw");
-        self.backdrop.last = Some((g.present_over(frame, top, &out.texture, t), t));
-        drop(draw);
-        let present = crate::prof::scope("present");
-        g.window.pre_present_notify();
-        out.present();
-        drop(present);
+        match g.present(frame, top, t) {
+            Ok(shown) => self.backdrop.last = Some((shown, t)),
+            Err(e) => return self.surface_failed(e),
+        }
         self.frames += 1;
         if self.title_at.elapsed().as_secs_f32() >= 1.0 {
             let fps = self.frames as f32 / self.title_at.elapsed().as_secs_f32();
