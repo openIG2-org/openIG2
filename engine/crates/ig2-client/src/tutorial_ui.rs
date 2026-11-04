@@ -14,9 +14,9 @@ use ig2_sim::tutorial::{Effect, Tutorial, TutorialHost, COLS, ROWS, SCREEN_OPTIO
 use crate::font::{Align, Font, Virtual};
 use crate::render::{Frame, TexId};
 
-/// `tutorialpath` + `tutorialactpath` ("tutorial/" + "main/").
 /// `TutorialDisableHajokEladasa`.
 const SELL_SHIPS_OFF: u32 = 0xF66FFD;
+/// `tutorialpath` + `tutorialactpath` ("tutorial/" + "main/").
 const DIR: &str = "dataraw/tutorial/main/";
 /// `TutorialStart("main", n)`: `tutorial/main/script/main.tut`.
 const SCRIPT: &str = "dataraw/tutorial/main/script/main.tut";
@@ -191,13 +191,13 @@ impl TutorialUi {
         })
     }
 
-    /// The screens' entry events (re/rules/tutorial.md §4): `Starmap_Belep` 0x1a, `Colony_Belep` 7,
-    /// `Diplomacy_Belep` 0x28; `SpaceWar_Belep` ends `WAITFORBATTLE`.
     /// The screen the last tick saw (`entered`'s `AktKep`).
     pub fn screen(&self) -> i32 {
         self.kep
     }
 
+    /// The screens' entry events (re/rules/tutorial.md §4): `Starmap_Belep` 0x1a, `Colony_Belep` 7,
+    /// `Diplomacy_Belep` 0x28; `SpaceWar_Belep` ends `WAITFORBATTLE`.
     pub fn entered(&mut self, kep: i32, game: &mut ig2_sim::game::Game) {
         if kep == self.kep {
             return;

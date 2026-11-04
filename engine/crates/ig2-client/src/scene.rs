@@ -648,6 +648,11 @@ fn normal_matrix(m: &M3) -> M3 {
     cof
 }
 
+/// The cross product `a × b`.
+pub fn cross(a: V3, b: V3) -> V3 {
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+}
+
 pub fn normalise(v: V3) -> V3 {
     let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
     if l > 1e-12 {

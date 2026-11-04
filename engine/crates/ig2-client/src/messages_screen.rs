@@ -297,6 +297,9 @@ impl Dialogue {
         self.step = speed as f32 / OSZTO;
         // `PutColorCommand(ParbeszLength, EnVagyTe)`.
         let l = self.length.max(0) as usize;
+        if self.place.len() < l + 3 {
+            self.place.resize(l + 0x1000, 0);
+        }
         self.place[l..l + 3].copy_from_slice(&[b'|', b'C', self.speaker as u8]);
         self.length = (l + 3) as i32;
         let mut p = next_line(&self.txt, len, at);

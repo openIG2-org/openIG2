@@ -4,6 +4,7 @@
 //! draws libc `rand()` for all of it; the client keeps its own stream. The tables (`maxhanyefektparticle`,
 //! `fegyveralakok`, `hajtomuvek`) come from the user's `ig2.exe` (ADR 0004).
 
+use crate::scene::cross;
 use std::collections::HashMap;
 
 use ig2_rules::sounds::Table;
@@ -119,10 +120,6 @@ fn normalise(v: [f32; 3]) -> [f32; 3] {
     } else {
         v
     }
-}
-
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 
 fn dist2(a: [f32; 3], b: [f32; 3]) -> f32 {

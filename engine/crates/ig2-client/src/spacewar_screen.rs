@@ -7,6 +7,7 @@
 //! battle's state is `ig2-sim`'s [`Battle`]; a capture's dump (`run_spwc.py --grab-ticks`) carries the exe's slot as
 //! raw regions, decoded by [`ig2_sim::spacebattle_raw`].
 
+use crate::scene::cross;
 use std::collections::HashMap;
 
 use ig2_sim::spacebattle::{Battle, ShipType};
@@ -293,9 +294,6 @@ impl View {
 
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 fn normalise(v: [f32; 3]) -> [f32; 3] {
     let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
