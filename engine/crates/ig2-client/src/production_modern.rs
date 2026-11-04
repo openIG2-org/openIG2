@@ -131,7 +131,7 @@ const LAMP: Font = Font::LABEL.sized(11.0).tracking(0.12);
 
 /// One frame of the production view (after the HUD's, under its bar); the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Vec<Act> {
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let top = crate::starmap_modern::bar_bottom(ctx) + 20.0;
     let mut acts = Vec::new();
     st.wells.clear();
     // The panels slide in from their sides as the original's (`(1 − sin(f/12·π/2))·200`), over the open time.

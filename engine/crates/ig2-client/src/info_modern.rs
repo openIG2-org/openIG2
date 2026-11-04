@@ -300,15 +300,13 @@ const HEAD_UV: Rect = Rect { min: pos2(0.14, 0.08), max: pos2(0.86, 0.80) };
 const COLS: [f32; 4] = [92.0, 170.0, 130.0, 170.0];
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let top = sm::bar_bottom(ctx) + 20.0;
     // Shorter windows (a larger UI scale) close the board's gaps; the panels keep their sizes.
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     // The void behind the panels; the panel takes every press the parts don't.
     egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
         let r = ui.max_rect();

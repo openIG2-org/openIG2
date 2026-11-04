@@ -421,15 +421,12 @@ fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Res
 
 /// The top of the panels under the bar.
 fn top(ctx: &egui::Context) -> f32 {
-    let bar = ["smh-left", "smh-right"].iter().filter_map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id)))).map(|r| r.bottom()).fold(44.0f32, f32::max);
-    bar + 20.0
+    sm::bar_bottom(ctx) + 20.0
 }
 
 /// One frame of the panels over the colony; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     st.wells.clear();
     let ppp = ctx.pixels_per_point();
     let screen = ctx.screen_rect();

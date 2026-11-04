@@ -126,10 +126,8 @@ const VALUE: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
 
 /// One frame of the screen; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
+    let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row: the properties, the console buttons, the exit.
     let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {

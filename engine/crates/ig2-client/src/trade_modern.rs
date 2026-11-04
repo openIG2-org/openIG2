@@ -103,15 +103,13 @@ const ROW_H: f32 = 30.0;
 const EXIT_W: f32 = 240.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     if !v.live {
         return acts;
     }
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     let top = 72.0 * g;
     let list_w = LIST.x.min(w * 0.29);
     let list_h = LIST.y * g;

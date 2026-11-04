@@ -146,10 +146,8 @@ const GROUPS: [&[usize]; 3] = [&[1, 2, 3, 4, 5, 12], &[6, 7, 8, 9], &[10, 11]];
 
 /// One frame of the screen; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
+    let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row first: the panels above stop over it.
     let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| categories(ui, v, screen.width() - 2.0 * EDGE, &mut acts));

@@ -95,14 +95,12 @@ const GAP: f32 = 40.0;
 const ROW_H: f32 = 96.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + TOP - 44.0;
-    let g = (h / 1080.0).min(1.0);
+    let top = sm::bar_bottom(ctx) + TOP - 44.0;
+    let g = ds::squeeze(h);
     egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
         ui.allocate_rect(ui.max_rect(), Sense::click_and_drag());
     });

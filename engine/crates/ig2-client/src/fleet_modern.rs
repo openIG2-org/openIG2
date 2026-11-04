@@ -215,7 +215,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let screen = ctx.screen_rect();
     let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
     *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, tip: st.tip.take(), ..Default::default() };
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 28.0;
+    let top = crate::starmap_modern::bar_bottom(ctx) + 28.0;
     // Room down to the selection card (24 from the bottom, about 150 high).
     let room = (screen.bottom() - top - EDGE - 200.0).max(360.0);
     let t = ds::open_t(ctx, egui::Id::new("fmh-open"), true);

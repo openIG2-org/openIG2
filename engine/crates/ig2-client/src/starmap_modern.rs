@@ -615,9 +615,29 @@ pub(crate) fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
     ds::relief(p, r, radius);
 }
 
+/// The top bar's area, the boards sharing the bar place themselves under it ([`bar_bottom`]).
+pub(crate) const BAR_ID: &str = "smh-left";
+
+/// The top bar's rectangle (none before its first frame).
+pub(crate) fn bar_rect(ctx: &egui::Context) -> Option<Rect> {
+    ctx.memory(|m| m.area_rect(egui::Id::new(BAR_ID)))
+}
+
+/// The top bar's bottom edge (its height before its first frame).
+pub(crate) fn bar_bottom(ctx: &egui::Context) -> f32 {
+    bar_rect(ctx).map_or(BAR_H, |r| r.bottom())
+}
+
+/// The top bar over a board that shares it, its acts as the board's (`wrap`: the board's `Act::Bar`).
+pub(crate) fn board_bar<A>(ctx: &egui::Context, v: &View, st: &mut State, wrap: impl Fn(Act) -> A) -> Vec<A> {
+    let mut acts = Vec::new();
+    bar(ctx, v, st, &mut acts);
+    acts.into_iter().map(wrap).collect()
+}
+
 /// The top bar (`.ig-topbar` across the screen: the speed keys, money and date readouts, the message ticker, the
 /// research under way, the screens' keys), shared with the modern colony, info and research screens (ADR 0070–0072),
-/// who place themselves under the `smh-left` area; the frame's colours.
+/// who place themselves under the [`BAR_ID`] area; the frame's colours.
 pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<Act>) -> Ink {
     let ink = Ink::new(ctx, v.race);
     let k = ds::tokens();
@@ -630,7 +650,7 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
     });
     let screen = ctx.screen_rect();
     let mut status = Rect::NOTHING;
-    egui::Area::new(egui::Id::new("smh-left")).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new(BAR_ID)).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(screen.width(), BAR_H), Sense::hover());
         let p = ui.painter();
         ds::shadow(p, rect, 0, 3, 8, 0, Color32::from_black_alpha(204));
@@ -1673,7 +1693,7 @@ mod tests {
     /// The pause button is the top left plate's first; a click on it asks for the pause, nothing else.
     #[test]
     fn pause_click() {
-        let at = |ctx: &egui::Context| area(ctx, "smh-left").left_top() + vec2(BAR_PAD.x + 2.0 + KEY.x / 2.0, BAR_H / 2.0);
+        let at = |ctx: &egui::Context| area(ctx, BAR_ID).left_top() + vec2(BAR_PAD.x + 2.0 + KEY.x / 2.0, BAR_H / 2.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Pause]);
     }
@@ -1681,7 +1701,7 @@ mod tests {
     /// The screens are keys at the bar's right end: a click picks the screen.
     #[test]
     fn screen_icon_click() {
-        let at = |ctx: &egui::Context| area(ctx, "smh-left").right_top() + vec2(-BAR_PAD.x - 2.0 - KEY.x / 2.0, BAR_H / 2.0);
+        let at = |ctx: &egui::Context| area(ctx, BAR_ID).right_top() + vec2(-BAR_PAD.x - 2.0 - KEY.x / 2.0, BAR_H / 2.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Screen(3)]);
     }

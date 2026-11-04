@@ -150,6 +150,11 @@ pub const HOVER_TIME: f32 = 0.12;
 pub const GLIDE_TIME: f32 = 0.16;
 pub const OPEN_TIME: f32 = 0.18;
 
+/// How much a window shorter than the boards' 1080 lines squeezes their heights (1 from there up).
+pub fn squeeze(height: f32) -> f32 {
+    (height / crate::gui::POINTS_HIGH).min(1.0)
+}
+
 /// Oxanium's weights (the design's 400, 500, 600; 700 draws as 600).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Weight {

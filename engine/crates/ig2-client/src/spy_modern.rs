@@ -120,9 +120,7 @@ fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
 }
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     if !v.live {
         st.kill = false;
         return acts;
@@ -130,7 +128,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     // The pedestals: the name on the plate, the figure and plate take a press.
     for p in &v.pedestals {
         let plate = at(ctx, p.plate);

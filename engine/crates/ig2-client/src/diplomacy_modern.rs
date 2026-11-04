@@ -123,13 +123,11 @@ const EXIT_W: f32 = 220.0;
 const CASCADES: [usize; 3] = [menu::MAIN, menu::EXCHANGE, menu::BLOCKED];
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom());
-    let g = (h / 1080.0).min(1.0);
+    let top = sm::bar_bottom(ctx);
+    let g = ds::squeeze(h);
     if !v.live {
         st.path.clear();
         st.heading.clear();

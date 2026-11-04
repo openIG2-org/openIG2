@@ -185,8 +185,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let screen = ctx.screen_rect();
     let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
     *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], ..Default::default() };
-    let bar = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left")));
-    let top = bar.map_or(44.0, |r| r.bottom()) + 16.0;
+    let bar = crate::starmap_modern::bar_rect(ctx);
+    let top = crate::starmap_modern::bar_bottom(ctx) + 16.0;
     // The top bar takes its own presses (egui): none reaches the battlefield.
     st.panels.extend(bar);
     egui::Area::new(egui::Id::new("bmh")).order(egui::Order::Background).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
