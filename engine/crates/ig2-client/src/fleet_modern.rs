@@ -5,6 +5,7 @@
 //! more each step, right all), the scroll bar, the exit, the keys and the orders stay the original's. The units'
 //! models are the original's render target, cut out of it into the cards' wells ([`pictures`]).
 
+use ig2_sim::bytes::{cstr, f32_at, i16_at, i32_at};
 use egui::{pos2, vec2, Color32, Pos2, Rect, Stroke, Vec2};
 use ig2_sim::save::{va, SaveState, TECH_SIZE};
 
@@ -668,22 +669,6 @@ pub(crate) fn well_sprite(f: &mut crate::render::Frame, tex: crate::render::TexI
     let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
     i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
     f.push(tex, blend, i);
-}
-
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 impl crate::ui::Hud {
