@@ -269,7 +269,7 @@ pub fn parse_fleets(text: &str) -> Fleets {
     let mut scratch_design = 0;
     for (i, line) in lines(text).enumerate() {
         let lineno = i + 1;
-        if line.len() >= 5 && line[..5].eq_ignore_ascii_case("level") {
+        if line.get(..5).is_some_and(|p| p.eq_ignore_ascii_case("level")) {
             level = atoi(&line[5..]).clamp(0, 10) as usize;
             if !(1..=FLEET_LEVELS).contains(&level) {
                 out.rejected.push((lineno, format!("level out of range: {line}")));
@@ -418,6 +418,8 @@ mod tests {
         assert_eq!((f.fleets[2].story, f.fleets[2].fleet, f.fleets[2].design), (590, 9140, -7));
         assert_eq!(f.designs.designs.len(), 1);
         assert_eq!(f.designs.designs[0].id, Some(11));
+        // A multibyte character across byte 5 isn't a `level` line.
+        assert_eq!(parse_fleets("l\u{e9}v\u{e9}l3\r\n").fleets.len(), 0);
     }
 
     #[test]

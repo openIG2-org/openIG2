@@ -126,7 +126,7 @@ fn boxes(b: &[u8]) -> impl Iterator<Item = Result<([u8; 4], &[u8])>> + '_ {
             0 => (8, (b.len() - p) as u64),
             s => (8, s),
         };
-        let end = p as u64 + size;
+        let end = (p as u64).saturating_add(size);
         if size < header as u64 || end > b.len() as u64 {
             p = b.len();
             return Some(Err(format_err("mp4", format!("bad box size {size}"))));
@@ -156,7 +156,7 @@ pub fn parse(file: &[u8]) -> Result<Mp4> {
         if &k != b"trak" {
             continue;
         }
-        let track = parse_trak(trak)?;
+        let track = parse_trak(trak, file.len())?;
         let slot = match track.codec {
             Codec::Avc { .. } => &mut out.video,
             Codec::Aac { .. } => &mut out.audio,
@@ -167,7 +167,8 @@ pub fn parse(file: &[u8]) -> Result<Mp4> {
     Ok(out)
 }
 
-fn parse_trak(trak: &[u8]) -> Result<Track> {
+/// `file_len` bounds the sample count of a fixed-size `stsz`, which has no table to run out.
+fn parse_trak(trak: &[u8], file_len: usize) -> Result<Track> {
     fn need<'a>(b: Option<&'a [u8]>, what: &str) -> Result<&'a [u8]> {
         b.ok_or_else(|| format_err("mp4", format!("no {what} box")))
     }
@@ -191,6 +192,10 @@ fn parse_trak(trak: &[u8]) -> Result<Track> {
     r.take(4)?;
     let fixed = r.u32()?;
     let count = r.u32()? as usize;
+    let fits = if fixed != 0 { count as u64 * fixed as u64 <= file_len as u64 } else { count <= r.rest().len() / 4 };
+    if !fits {
+        return Err(format_err("mp4", format!("{count} samples do not fit")));
+    }
     let sizes: Vec<u32> = if fixed != 0 { vec![fixed; count] } else { (0..count).map(|_| r.u32()).collect::<Result<_>>()? };
 
     // Chunk offsets and the sample-to-chunk runs → each sample's offset.
@@ -236,29 +241,29 @@ fn parse_trak(trak: &[u8]) -> Result<Track> {
     let mut i = 0;
     let mut t = 0u64;
     for _ in 0..r.u32()? {
-        let n = r.u32()?;
-        let delta = r.u32()? as u64;
-        for _ in 0..n {
-            if let Some(s) = samples.get_mut(i) {
-                s.dts = t;
-            }
-            t += delta;
-            i += 1;
+        if i >= samples.len() {
+            break;
         }
+        let n = r.u32()? as usize;
+        let delta = r.u32()? as u64;
+        for s in samples.iter_mut().skip(i).take(n) {
+            s.dts = t;
+            t = t.saturating_add(delta);
+        }
+        i = i.saturating_add(n);
     }
     if let Some(b) = child(stbl, b"ctts")? {
         let mut r = Reader::new(b);
         r.take(4)?;
         let mut i = 0;
         for _ in 0..r.u32()? {
-            let n = r.u32()?;
-            let off = r.u32()? as i32;
-            for _ in 0..n {
-                if let Some(s) = samples.get_mut(i) {
-                    s.cts = off;
-                }
-                i += 1;
+            if i >= samples.len() {
+                break;
             }
+            let n = r.u32()? as usize;
+            let off = r.u32()? as i32;
+            samples.iter_mut().skip(i).take(n).for_each(|s| s.cts = off);
+            i = i.saturating_add(n);
         }
     }
     if let Some(b) = child(stbl, b"stss")? {
@@ -266,7 +271,8 @@ fn parse_trak(trak: &[u8]) -> Result<Track> {
         r.take(4)?;
         samples.iter_mut().for_each(|s| s.sync = false);
         for _ in 0..r.u32()? {
-            if let Some(s) = samples.get_mut(r.u32()? as usize - 1) {
+            let n = r.u32()? as usize;
+            if let Some(s) = n.checked_sub(1).and_then(|i| samples.get_mut(i)) {
                 s.sync = true;
             }
         }
@@ -361,6 +367,56 @@ mod tests {
         avc_to_annexb(&[0, 0, 0, 2, 0x65, 1, 0, 0, 0, 1, 0x41], 4, &mut out).unwrap();
         assert_eq!(out, [0, 0, 0, 1, 0x65, 1, 0, 0, 0, 1, 0x41]);
         assert!(avc_to_annexb(&[0, 0, 0, 5, 1], 4, &mut out).is_err());
+    }
+
+    fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
+        let mut v = (8 + body.len() as u32).to_be_bytes().to_vec();
+        v.extend_from_slice(kind);
+        v.extend_from_slice(body);
+        v
+    }
+
+    fn words(w: &[u32]) -> Vec<u8> {
+        w.iter().flat_map(|x| x.to_be_bytes()).collect()
+    }
+
+    #[test]
+    fn largesize_past_u64_is_an_error() {
+        let mut b = bx(b"free", &[]);
+        b.extend_from_slice(&1u32.to_be_bytes());
+        b.extend_from_slice(b"free");
+        b.extend_from_slice(&u64::MAX.to_be_bytes());
+        b.resize(32, 0);
+        let mut it = boxes(&b);
+        assert!(matches!(it.next(), Some(Ok((k, []))) if &k == b"free"));
+        assert!(matches!(it.next(), Some(Err(_))));
+    }
+
+    /// Two samples in one chunk; `stts` and `ctts` list more samples than there are, `stss` holds a 0.
+    #[test]
+    fn sample_tables_out_of_range() {
+        let mdhd = words(&[0, 0, 0, 1000, 2]);
+        let stsd = [words(&[0, 1]), bx(b"none", &[])].concat();
+        let stbl = [
+            bx(b"stsd", &stsd),
+            bx(b"stsz", &words(&[0, 0, 2, 3, 4])),
+            bx(b"stco", &words(&[0, 1, 100])),
+            bx(b"stsc", &words(&[0, 1, 1, 2, 1])),
+            bx(b"stts", &words(&[0, 2, u32::MAX, u32::MAX, 5, 1])),
+            bx(b"ctts", &words(&[0, 2, u32::MAX, 7, 5, 1])),
+            bx(b"stss", &words(&[0, 2, 0, 2])),
+        ]
+        .concat();
+        let mdia = [bx(b"mdhd", &mdhd), bx(b"minf", &bx(b"stbl", &stbl))].concat();
+        let t = parse_trak(&bx(b"mdia", &mdia), 1000).unwrap();
+        let got: Vec<_> = t.samples.iter().map(|s| (s.offset, s.size, s.dts, s.cts, s.sync)).collect();
+        assert_eq!(got, [(100, 3, 0, 7, false), (103, 4, u32::MAX as u64, 7, true)]);
+        // A fixed sample size whose count can't fit in the file.
+        let big = stbl.windows(4).position(|w| w == b"stsz").unwrap() + 8;
+        let mut stbl = stbl.clone();
+        stbl[big..big + 8].copy_from_slice(&words(&[1, u32::MAX]));
+        let mdia = [bx(b"mdhd", &mdhd), bx(b"minf", &bx(b"stbl", &stbl))].concat();
+        assert!(parse_trak(&bx(b"mdia", &mdia), 1000).is_err());
     }
 
     /// Every video in the user's install demuxes: an AVC track, and AAC except the race-choice loops.

@@ -1,9 +1,9 @@
 //! Print an `.xv` archive's scene tree: per node its frame count, per child its index (`GetSubMeshid`), name and
-//! content (mesh: vertices, faces, frames, materials).
+//! content (mesh: vertices, faces, frames, materials), then each material member's textures and flags.
 //!
 //! `cargo run --release -p ig2-formats --example xvtree -- <install> <dataraw/…/name.xv>`
 
-use ig2_formats::xv::{Archive, ChildContent, Mesh, Node};
+use ig2_formats::xv::{Archive, ChildContent, Material, Mesh, Node};
 use ig2_formats::text::Lang;
 use ig2_formats::Install;
 
@@ -33,6 +33,13 @@ fn main() {
     let bytes = install.read(&a[2]).expect("read");
     let archive = Archive::parse(&bytes).expect("parse");
     let stem = a[2].rsplit('/').next().unwrap().trim_end_matches(".xv");
-    let scene = archive.scene(Some(stem)).expect("scene").expect("root");
-    walk(&scene, 0);
+    match archive.scene(Some(stem)).expect("scene") {
+        Some(n) => walk(&n, 0),
+        None => println!("no root"),
+    }
+    for m in archive.members.iter().filter(|m| m.name.to_ascii_lowercase().ends_with(".xvm")) {
+        if let Ok(mat) = Material::parse(m.data) {
+            println!("material {}: texture {:?} texture2 {:?} flags {:?}", m.name, mat.texture, mat.texture2, mat.flags);
+        }
+    }
 }

@@ -62,10 +62,11 @@ impl ColonyMap {
         let tiles = take(SIDE * SIDE).to_vec();
         let heights = take(SIDE * SIDE * 2).chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect();
         let n = u32::from_le_bytes(take(4).try_into().unwrap()) as usize;
-        if b.len() != FIXED_LEN + 4 * n + 4 {
+        let list = n.checked_mul(4).filter(|&l| b.len() - FIXED_LEN - 4 == l);
+        let Some(list) = list else {
             return Err(err(&format!("size {} doesn't match list count {n}", b.len())));
-        }
-        let extra = take(4 * n).chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
+        };
+        let extra = take(list).chunks_exact(4).map(|c| f32::from_le_bytes(c.try_into().unwrap())).collect();
         let base = f32::from_le_bytes(take(4).try_into().unwrap());
         Ok(Self { mask_a, mask_b, tiles, heights, extra, base })
     }
@@ -274,5 +275,7 @@ mod tests {
         assert_eq!(m.tile(7, 3), 42);
         assert_eq!(m.extra, [1.5, 2.5]);
         assert_eq!(m.base, -7.0);
+        f[n_off..n_off + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(ColonyMap::parse(&f).is_err());
     }
 }

@@ -149,11 +149,16 @@ impl<'a> Pvr<'a> {
     }
 }
 
+/// The low `bits` (at most 32) set.
+fn mask(bits: u8) -> u64 {
+    (1u64 << bits) - 1
+}
+
 fn expand(v: u32, bits: u8) -> u8 {
     match bits {
         0 => 0,
         8 => v as u8,
-        b => ((v * 255 + ((1 << b) - 1) / 2) / ((1 << b) - 1)) as u8,
+        b => ((v as u64 * 255 + mask(b) / 2) / mask(b)) as u8,
     }
 }
 
@@ -177,7 +182,7 @@ fn decode_generic(src: &[u8], w: u32, h: u32, channels: [u8; 4], bits: [u8; 4]) 
                 px[i] as u32
             } else {
                 shift -= b as u32;
-                (word >> shift) & ((1 << b) - 1)
+                ((word as u64 >> shift) & mask(b)) as u32
             };
             let v = expand(v, b);
             match ch {
@@ -275,6 +280,17 @@ mod tests {
         }
         let img = Pvr::parse(&f).unwrap().decode_rgba8().unwrap();
         assert_eq!(img.pixels, [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255]);
+    }
+
+    #[test]
+    fn single_32_bit_channel() {
+        let pf = u64::from_le_bytes(*b"r\0\0\0\x20\0\0\0");
+        let mut f = header(pf, 2, 1);
+        for c in [u32::MAX, 0] {
+            f.extend_from_slice(&c.to_le_bytes());
+        }
+        let img = Pvr::parse(&f).unwrap().decode_rgba8().unwrap();
+        assert_eq!(img.pixels, [255, 0, 0, 255, 0, 0, 0, 255]);
     }
 
     #[test]
