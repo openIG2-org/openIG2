@@ -131,7 +131,7 @@ impl World<'_> {
                     // exe 0x4b522a..0x4b5249: NaN passes both compares (and truncates to i32::MIN).
                     let m = if x < 0.0 { 0.0 } else { x };
                     let r = if m > cf { cf } else { m };
-                    q2[at..at + 4].copy_from_slice(&super::cvtt(r as f64).to_le_bytes());
+                    q2[at..at + 4].copy_from_slice(&crate::cvt::cvtt_f64(r as f64).to_le_bytes());
                 }
                 if copy {
                     for k in 0..4 {

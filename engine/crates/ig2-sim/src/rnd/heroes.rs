@@ -1065,7 +1065,7 @@ pub(super) fn maps_185(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abor
                         // precision, the sum stored as f32 and truncated (`cvttss2si`).
                         let (qx, qy) = w.planet_xy(q);
                         let (dx, dy) = ((qx - px) as f64, (qy - py) as f64);
-                        let dd = super::cvtt(((dy * dy) as f32 as f64 + dx * dx) as f32 as f64);
+                        let dd = crate::cvt::cvtt_f64(((dy * dy) as f32 as f64 + dx * dx) as f32 as f64);
                         if dd < d {
                             d = dd;
                         }

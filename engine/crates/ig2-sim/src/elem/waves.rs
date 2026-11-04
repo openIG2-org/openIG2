@@ -6,7 +6,7 @@ use super::message;
 use crate::begin::{delete_fleet, move_to_planet, planet_distance};
 use crate::brnd::nearest_fleet;
 use crate::elem::spies::empire_distance;
-use crate::rnd::cvtt;
+use crate::cvt::cvtt_f64;
 use crate::story::{flag, last_fn, Abort, InfoLine, Story, StoryEvent, StoryWorld, STREAM};
 
 fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, y: f32) {
@@ -16,7 +16,7 @@ fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, 
 /// `st_fGetNearest((int) fx, (int) fy, EN)` from fleet `f`'s position.
 fn nearest_to(f: i32, w: &dyn StoryWorld) -> i32 {
     let (fx, fy) = w.fleet_xy(f);
-    nearest_fleet(cvtt(fx as f64), cvtt(fy as f64), w.human(), w)
+    nearest_fleet(cvtt_f64(fx as f64), cvtt_f64(fy as f64), w.human(), w)
 }
 
 // ---------------------------------------------------------------- 836: empire 1's three waves

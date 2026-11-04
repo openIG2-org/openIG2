@@ -21,6 +21,7 @@ pub mod fleets;
 pub mod refit;
 pub mod units;
 
+use crate::cvt::cvtt_f64;
 use crate::colony::{production_base, Planet};
 use crate::colony_side::{Treasury, EMPIRES};
 use crate::fleet::{Starmap, StarmapContext};
@@ -322,11 +323,6 @@ impl World<'_> {
     }
 }
 
-/// SSE `cvttsd2si`: truncation, out of range or NaN → `0x80000000`.
-fn cvtt(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x <= -2147483649.0 { i32::MIN } else { x as i32 }
-}
-
 /// Wealth class 1..=5 of a planet (spec §3.2).
 fn wealth_class(g: i32) -> usize {
     match g {
@@ -453,8 +449,8 @@ impl AiState {
                 count += 1;
             }
             if count > 0 {
-                self.centre_x[e] = cvtt((sx / count as f32) as f64);
-                self.centre_y[e] = cvtt((sy / count as f32) as f64);
+                self.centre_x[e] = cvtt_f64((sx / count as f32) as f64);
+                self.centre_y[e] = cvtt_f64((sy / count as f32) as f64);
             } else {
                 self.centre_x[e] = 0;
                 self.centre_y[e] = 0;
@@ -578,7 +574,7 @@ impl AiState {
             let sh = &mut m.share;
             let sum = ((s[1] + 0.0) + s[2]) + s[3];
             for i in 1..=5 {
-                sh[i] = cvtt(s[i] * 100.0 / sum) as f64 / 100.0;
+                sh[i] = cvtt_f64(s[i] * 100.0 / sum) as f64 / 100.0;
             }
             let mut t;
             loop {
@@ -745,7 +741,7 @@ impl AiState {
 /// Spec §5.3: the bucket of a design's `+0x3c` (`(int)((f64)(f32)(x · 100) + 0.5)`, 0..=16).
 fn scrap_bucket(r: &[u8; 0x84]) -> usize {
     let x = f32::from_le_bytes(r[0x3c..0x40].try_into().unwrap());
-    cvtt((x * 100.0) as f64 + 0.5).clamp(0, 16) as usize
+    cvtt_f64((x * 100.0) as f64 + 0.5).clamp(0, 16) as usize
 }
 
 /// Ships that can be scrapped: none of the design flags `+0x34`, `+0x35`, `+0x37`, `+0x38`.
@@ -765,7 +761,7 @@ fn scrap(w: &mut World, e: usize) {
         let Some(r) = w.design(e, s.design as i32).filter(|r| scrappable(r)) else { continue };
         let b = scrap_bucket(r);
         let p = rd_i32(r, 0x2c).wrapping_mul(rd_i32(r, 0x30));
-        let weight = cvtt((p as f32 as f64).sqrt() as f32 as f64);
+        let weight = cvtt_f64((p as f32 as f64).sqrt() as f32 as f64);
         sum[b] = sum[b].wrapping_add(weight);
         total = total.wrapping_add(weight);
     }
@@ -811,7 +807,7 @@ pub(crate) fn sale_divisor(r: &[u8; 0x84], story_resale: bool, human_empire: usi
 
 /// A price over the resale divisor: `trunc((f32)price / div)`, 0 when unsellable.
 pub(crate) fn sale_price(price: i32, div: f32) -> i32 {
-    if div < 0.0 { 0 } else { cvtt((price as f32 / div) as f64) }
+    if div < 0.0 { 0 } else { cvtt_f64((price as f32 / div) as f64) }
 }
 
 /// `FRISSIT_MI_FEJLESZTES(e)` (`production-research.md` §2.2).
@@ -1022,7 +1018,7 @@ fn possible(w: &mut World, e: usize, m: usize, t: usize, p1: i16, p2: i16) -> bo
         spy::mission::TECH_REPORT => (1..=LAST_TECH).any(|x| tech.status(x, t) == 5 && !tech.seen(x, e, t)),
         spy::mission::STEAL_MONEY => {
             let a = w.spy.colony.money[t].available(0);
-            a >= 100.0 && cvtt(a * 0.25 / 100.0 * 100.0) > 0
+            a >= 100.0 && cvtt_f64(a * 0.25 / 100.0 * 100.0) > 0
         }
         spy::mission::SABOTAGE => {
             let (p1, p2) = (p1 as i32, p2 as i32);

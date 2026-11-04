@@ -486,7 +486,7 @@ impl SpyScreen {
                 }
             }
             self.rotation += self.turn_speed as f64 / 5.0;
-            if (mx < 5.0 || mx > 635.0) && my > 49.0 && my < 241.0 {
+            if !(5.0..=635.0).contains(&mx) && my > 49.0 && my < 241.0 {
                 self.settled = self.selected_pedestal(d).map_or(-1, |p| p as i32);
             } else {
                 self.turn_speed *= 0.92;

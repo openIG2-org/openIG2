@@ -4,6 +4,7 @@
 //! The charts are kept as the original's `f32` cells (`[10 charts][8 empires][55 months]`, the newest last), so a
 //! save round-trips bit for bit. [`InfoWorld`] holds what the sampler reads from the other systems.
 
+use crate::cvt::cvtt_f64;
 use crate::colony_side::{TechTable, EMPIRES};
 use crate::spacewar::{Design, Ship, Vehicle};
 use crate::spy::Spies;
@@ -47,11 +48,6 @@ pub struct InfoWorld {
     pub opinion: Vec<[i16; EMPIRES]>,
 }
 
-/// `cvttss2si` / `cvttsd2si`: out of range and NaN give `i32::MIN`.
-fn trunc(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x <= -2147483649.0 { i32::MIN } else { x as i32 }
-}
-
 impl InfoWorld {
     /// `sqrt(hp · attack)` of empire `e`'s design `d` and its `+0x36` flag (a vehicle that fights in space).
     fn design(&self, e: usize, d: i16) -> Option<(f32, bool)> {
@@ -66,7 +62,7 @@ impl InfoWorld {
     fn add_vehicles(&self, e: usize, f: i16, space: bool, mut acc: i32) -> i32 {
         for v in self.vehicles.iter().skip(1).filter(|v| v.fleet == f) {
             if let Some((s, _)) = self.design(e, v.design).filter(|x| x.1 == space) {
-                acc = trunc((s * v.count as f32 + acc as f32) as f64);
+                acc = cvtt_f64((s * v.count as f32 + acc as f32) as f64);
             }
         }
         acc
@@ -78,7 +74,7 @@ impl InfoWorld {
         let mut acc = 0;
         for s in self.ships.iter().skip(1).filter(|s| s.fleet as i32 == f as i32) {
             if let Some((x, _)) = self.design(e, s.design) {
-                acc = trunc((x + acc as f32) as f64);
+                acc = cvtt_f64((x + acc as f32) as f64);
             }
         }
         self.add_vehicles(e, f as i16, true, acc)
@@ -118,7 +114,7 @@ impl InfoWorld {
             + spies as f64 * 10.0)
             / 10.0
             + battles.wrapping_mul(10) as f64;
-        [tax, pop, planets, space, ground, techs, spies, battles, opinion, trunc(score)]
+        [tax, pop, planets, space, ground, techs, spies, battles, opinion, cvtt_f64(score)]
     }
 }
 

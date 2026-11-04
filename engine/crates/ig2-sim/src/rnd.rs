@@ -17,6 +17,7 @@ mod heroes;
 pub(crate) mod relations;
 pub(crate) mod spies;
 
+use crate::cvt::cvtt_f64;
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{fleet_strength, random_tech, ship_fleet};
 use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
@@ -198,15 +199,6 @@ fn campaign_id(w: &dyn StoryWorld, campaign: i32, id: i32, other: i32) -> i32 {
         other
     } else {
         id
-    }
-}
-
-/// `cvttsd2si`: out of range and NaN give `i32::MIN`.
-pub(crate) fn cvtt(x: f64) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
-        i32::MIN
-    } else {
-        x as i32
     }
 }
 
@@ -662,7 +654,7 @@ fn tech_offer(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         }
     }
     if answered(s, 0x6a6, 2) || answered(s, 0x125e, 2) {
-        let money = cvtt(w.money(en));
+        let money = cvtt_f64(w.money(en));
         let price = s.v_get(PRICE);
         let pay = if price < money { price } else { money };
         add_money(w, pay.wrapping_neg() as f64);

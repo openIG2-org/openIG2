@@ -8,6 +8,7 @@ pub mod brnd;
 pub mod campaign;
 pub mod colony;
 pub mod colony_side;
+mod cvt;
 pub mod diplomacy;
 pub mod elem;
 pub mod fable;

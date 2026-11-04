@@ -7,6 +7,7 @@
 //! planet's owner may instead guard its fortresses. Air strikes go to the cell with the most enemies and
 //! the fewest own units nearby.
 
+use crate::cvt::cvtt_f32;
 use super::{flag, weapon, War, NONE};
 use crate::colony::flag as bflag;
 use crate::rng::stream;
@@ -68,11 +69,6 @@ fn sqrt32(x: f32) -> f32 {
 fn dist2(a: (i32, i32), b: (i32, i32)) -> i32 {
     let (dx, dy) = (a.0.wrapping_sub(b.0), a.1.wrapping_sub(b.1));
     dy.wrapping_mul(dy).wrapping_add(dx.wrapping_mul(dx))
-}
-
-/// `cvttss2si`: truncation, NaN and out of range → `i32::MIN`.
-fn cvtt(x: f32) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x < -2147483648.0 { i32::MIN } else { x as i32 }
 }
 
 /// `VektorNormalizal` inlined (§5.4): `(dx, dy)` scaled so its larger component is `s` (product first).
@@ -187,7 +183,7 @@ impl War<'_> {
             if u.flags & (flag::TURRET | flag::MINE) != 0 || u.flags & 0x500 == 0 || u.owner != e {
                 continue;
             }
-            if cvtt(sqrt32(dist2(u.dest, u.cell) as f32)) > 0 && u.move_state.0 < 2 {
+            if cvtt_f32(sqrt32(dist2(u.dest, u.cell) as f32)) > 0 && u.move_state.0 < 2 {
                 moving[0] = true;
                 if u.rt.ai_group > 0 {
                     moving[u.rt.ai_group as usize] = true;
@@ -849,8 +845,8 @@ mod tests {
         // An uninitialised destination: the squares wrap to a negative sum, sqrt → NaN → INT_MIN: not moving.
         let d = dist2((1781186419, 930819277), (124, 120));
         assert!(d < 0);
-        assert_eq!(cvtt(sqrt32(d as f32)), i32::MIN);
-        assert_eq!(cvtt(sqrt32(dist2((13, 10), (10, 10)) as f32)), 3);
+        assert_eq!(cvtt_f32(sqrt32(d as f32)), i32::MIN);
+        assert_eq!(cvtt_f32(sqrt32(dist2((13, 10), (10, 10)) as f32)), 3);
     }
 
     #[test]

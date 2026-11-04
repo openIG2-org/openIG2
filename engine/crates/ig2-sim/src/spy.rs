@@ -8,6 +8,7 @@
 //! through [`World`]. Messages, story and tutorial hooks and `FelfedezBirodalom` are [`SpyEvent`]s; story
 //! missions ask [`World::story`].
 
+use crate::cvt::cvtt_f64;
 use crate::colony::EconomyContext;
 use crate::colony_side::{status, ColonyWorld, SideEvent, SideRules, EMPIRES};
 use crate::diplomacy::{field, Relation};
@@ -557,11 +558,6 @@ impl World<'_> {
     }
 }
 
-/// x87 `ftol` truncation (out of range → `0x80000000`).
-fn ftol(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x <= -2147483649.0 { i32::MIN } else { x as i32 }
-}
-
 impl Spies {
     /// A fresh roster with the missions' enabled flags from the rules.
     pub fn new(rules: &SpyRules, enabled: &[u8]) -> Self {
@@ -717,7 +713,7 @@ impl Spies {
             let g = s.xp as f64 * 0.03 + 1.0;
             let r = w.r(50, 100);
             let d = if r as f64 <= g { w.r(50, 100) as f64 } else { g };
-            self.spy_mut(e, k).xp = ftol(s.xp as f64 + d);
+            self.spy_mut(e, k).xp = cvtt_f64(s.xp as f64 + d);
         }
         // §3.3 double-agent exposure.
         let s = *self.spy(e, k);
@@ -1101,7 +1097,7 @@ impl Spies {
                 true
             }
             mission::STEAL_MONEY => {
-                let r = w.r(0, ftol(w.colony.money[t].total));
+                let r = w.r(0, cvtt_f64(w.colony.money[t].total));
                 let x = r / 100 * 100;
                 if x < 1 && w.ctx.human(t) {
                     report[0] = x;

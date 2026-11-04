@@ -14,6 +14,7 @@
 //! The real-time battle (spec §11) lives in `ground/{realtime, battle, tick, path, voices}.rs`, its
 //! transporters (the dropships and the landing orders, §11.16) in `ground/transport.rs`.
 
+use crate::cvt::cvtt_f64;
 use crate::colony::{flag as bflag, Building};
 use crate::rng::{stream, Streams};
 use crate::spacewar::{CombatWorld, Design, DesignRules, Vehicle, NO_DESIGN};
@@ -633,15 +634,6 @@ pub struct War<'a> {
     pub voices: Option<&'a mut Voices>,
     /// The mute byte `TankHozzaadas` (exe 0x9B2EBC) without [`War::voices`]: the game keeps it in the state.
     pub muted: bool,
-}
-
-/// `cvttsd2si`: out of range or NaN → `i32::MIN` (the "integer indefinite" value).
-fn cvtt(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x <= -2147483649.0 {
-        i32::MIN
-    } else {
-        x as i32
-    }
 }
 
 fn design_of(designs: &[Vec<Design>], owner: i32, d: i32) -> Option<&Design> {
@@ -1522,7 +1514,7 @@ impl<'a> War<'a> {
         }
         let mut dmg = dmg;
         if by != NONE && self.alive(by) && self.u(by).owner == self.ctx.human && !self.ctx.multiplayer {
-            dmg = cvtt((self.ctx.story_bonus + 100).wrapping_mul(dmg) as f64 / 100.0);
+            dmg = cvtt_f64((self.ctx.story_bonus + 100).wrapping_mul(dmg) as f64 / 100.0);
         }
         if u >= 0 {
             if (self.libc)() % 15 == 0 {
@@ -1961,7 +1953,7 @@ impl<'a> War<'a> {
     fn air_hit(&mut self, t: i32, w: [i32; 4], k: usize) -> bool {
         self.stats.shots[k] += 1;
         let r = self.draw(w[0], w[1]);
-        let dmg = cvtt(r as f64 * self.u(t).bonus());
+        let dmg = cvtt_f64(r as f64 * self.u(t).bonus());
         if self.damage(t, dmg, 0) {
             self.remove_group(t);
             self.remove_target(t);
@@ -2004,7 +1996,7 @@ impl<'a> War<'a> {
                 self.stats.shots[k] += 1;
                 let r = self.draw(w[0], w[1]);
                 let a = self.u(i);
-                let dmg = cvtt(r as f64 * a.bonus() * a.size() as f64 * a.pods as f64);
+                let dmg = cvtt_f64(r as f64 * a.bonus() * a.size() as f64 * a.pods as f64);
                 if self.damage(t, dmg, 0) {
                     self.kill(t);
                     *any = true;
@@ -2015,7 +2007,7 @@ impl<'a> War<'a> {
         if weapons & weapon::AMMO != 0 && due(w) {
             self.stats.shots[2] += 1;
             let r = self.draw(w[0], w[1]);
-            let dmg = cvtt(r as f64 * self.u(i).bonus());
+            let dmg = cvtt_f64(r as f64 * self.u(i).bonus());
             if self.damage(t, dmg, 0) {
                 self.kill(t);
                 *any = true;
@@ -2032,7 +2024,7 @@ impl<'a> War<'a> {
                     // A dead `t` (killed by an earlier gun) is read from its freed object.
                     let ts = self.u(t).size();
                     let roll = self.draw(0, 100);
-                    if roll <= cvtt(size as f64 * 40.0 / ts as f64) {
+                    if roll <= cvtt_f64(size as f64 * 40.0 / ts as f64) {
                         // Writes to a dead `t` land in its freed object: no effect.
                         let live = self.alive(t);
                         if bit == weapon::PARALYSER {
@@ -2068,7 +2060,7 @@ impl<'a> War<'a> {
             } else {
                 let r = self.draw(w[0], w[1]);
                 let a = self.u(i);
-                let dmg = cvtt(r as f64 * a.bonus() * a.size() as f64);
+                let dmg = cvtt_f64(r as f64 * a.bonus() * a.size() as f64);
                 if self.damage(t, dmg, 0) {
                     self.kill(t);
                     *any = true;
@@ -2080,7 +2072,7 @@ impl<'a> War<'a> {
             self.stats.shots[1] += 1;
             let r = self.draw(w[0], w[1]);
             let a = self.u(i);
-            let dmg = cvtt(r as f64 * a.bonus() * a.size() as f64);
+            let dmg = cvtt_f64(r as f64 * a.bonus() * a.size() as f64);
             if self.damage(t, dmg, 0) {
                 self.kill(t);
                 *any = true;
