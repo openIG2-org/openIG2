@@ -7,6 +7,7 @@
 //!
 //! Everything here is UI state; what the orders change is the sim's (`ig2_sim::spy`).
 
+use ig2_sim::bytes::cstr;
 use ig2_net::{Command, SpyOrder};
 use ig2_sim::save::{va, SaveState, PLANET_SIZE, TECH_SIZE};
 use ig2_sim::spy::{self, Spies, Spy};
@@ -89,10 +90,6 @@ impl SpyTexts {
 
 fn get(v: &[Vec<u8>], i: i64) -> &[u8] {
     usize::try_from(i).ok().and_then(|i| v.get(i)).map_or(&[], |x| x.as_slice())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 fn cat(parts: &[&[u8]]) -> Vec<u8> {

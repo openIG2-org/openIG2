@@ -9,6 +9,7 @@
 //! (`HajoDelete`, `FlottaDelete`), `production` (`FlottaNew`, `TankNew`) and `fleet` (`FlottaMozgat`); this module
 //! keeps both fleet views and the garrisons in step, as the AI needs.
 
+use crate::bytes::{cstr, i32_at};
 use super::{AiEvent, AiHooks, World, EMPIRES};
 use crate::fleet::{flag, Fleet, StarmapEvent, DELETED};
 use crate::spacewar::{CombatEvent, CombatFleet, Design, FleetTotals, Vehicle, FLAG_DESIGN28, NO_DESIGN};
@@ -17,15 +18,6 @@ use crate::spacewar::{CombatEvent, CombatFleet, Design, FleetTotals, Vehicle, FL
 const MAX_VEHICLES: usize = crate::production::MAX_VEHICLE_ENTRIES;
 /// `OsszHanySajatFlotta[0xFF]` is `Tankok[96].count` (exe 0xBB40B0 + 0x3FC = 0xBB44AC).
 const COUNTER_OVERFLOW_VEHICLE: usize = 96;
-
-/// The name up to its terminating NUL (C `strcmp` semantics).
-pub(crate) fn cstr(name: &[u8]) -> &[u8] {
-    &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())]
-}
-
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
 
 impl World<'_> {
     /// Copy fleet `f`'s record fields into its combat view and the totals into the record.
@@ -65,7 +57,7 @@ impl World<'_> {
 
     /// A raw i32 of design `d` of `e` (0 outside the table).
     pub(crate) fn des_i32(&self, e: usize, d: i32, o: usize) -> i32 {
-        self.des(e, d).map_or(0, |x| rd_i32(&x.raw, o))
+        self.des(e, d).map_or(0, |x| i32_at(&x.raw, o))
     }
 
     fn human_controlled(&self, e: u8) -> bool {

@@ -1,6 +1,7 @@
 //! What the story scripts do to the rest of the game (`StoryEvent`, `re/rules/new-game.md` §15), carried out the
 //! moment a script asks, as the exe calls the system there: later reads of the same script see it.
 
+use crate::bytes::i32_at;
 use super::story_world::GameStory;
 use super::{Game, GameEvent, TradeView, ViewMode};
 use crate::colony_side::{status, EMPIRES};
@@ -14,9 +15,6 @@ const FUGITIVE_NAME: i32 = 232;
 
 fn rd_i16(b: &[u8], o: usize) -> i32 {
     i16::from_le_bytes([b[o], b[o + 1]]) as i32
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 /// `strcpy` into a record field of `dst.len()` bytes (the terminator included; the bytes after it keep theirs).
 fn strcpy(dst: &mut [u8], src: &[u8]) {
@@ -98,11 +96,11 @@ impl GameStory<'_, '_> {
                 self.with_game(|g| crate::trade::Market::recompute_design(&mut TradeView { game: g }, empire as usize, design as usize, true))
             }
             StoryEvent::DesignCostTimes5 { empire, design } => self.design_edit(empire, design, |r| {
-                let v = rd_i32(r, 0x20).wrapping_mul(5);
+                let v = i32_at(r, 0x20).wrapping_mul(5);
                 r[0x20..0x24].copy_from_slice(&v.to_le_bytes());
             }),
             StoryEvent::DesignPriceDiv { empire, design, div } if div != 0 => self.design_edit(empire, design, |r| {
-                let v = rd_i32(r, 0x24) / div;
+                let v = i32_at(r, 0x24) / div;
                 r[0x24..0x28].copy_from_slice(&v.to_le_bytes());
             }),
             StoryEvent::DesignForSale { empire, design } => {
@@ -112,7 +110,7 @@ impl GameStory<'_, '_> {
                     for (k, v) in date.iter().enumerate() {
                         r[0x74 + 4 * k..0x78 + 4 * k].copy_from_slice(&v.to_le_bytes());
                     }
-                    let price = rd_i32(r, 0x24) / 3;
+                    let price = i32_at(r, 0x24) / 3;
                     r[0x24..0x28].copy_from_slice(&price.to_le_bytes());
                 });
                 if let Some(r) = self.design(empire, design).copied() {
@@ -179,7 +177,7 @@ impl GameStory<'_, '_> {
             }),
             StoryEvent::PlanetExtraFlag { planet, on } => self.planet_edit(planet, |r| r[0x187] = on as u8),
             StoryEvent::PlanetMorale { planet, delta } => self.planet_edit(planet, |r| {
-                let v = rd_i32(r, 0x174).wrapping_add(delta);
+                let v = i32_at(r, 0x174).wrapping_add(delta);
                 r[0x174..0x178].copy_from_slice(&v.to_le_bytes());
                 r[0x178..0x17c].copy_from_slice(&6i32.to_le_bytes());
             }),
@@ -266,7 +264,7 @@ impl GameStory<'_, '_> {
             StoryEvent::SpyTarget { slot, empire } => self.spy_edit(en, slot, |r| r[0x18] = empire as u8),
             StoryEvent::SpyState { slot, state } => self.spy_edit(en, slot, |r| r[0x10..0x12].copy_from_slice(&(state as i16).to_le_bytes())),
             StoryEvent::SpyExperience { slot, add } => self.spy_edit(en, slot, |r| {
-                let v = rd_i32(r, 0x3c).wrapping_add(add);
+                let v = i32_at(r, 0x3c).wrapping_add(add);
                 r[0x3c..0x40].copy_from_slice(&v.to_le_bytes());
             }),
             StoryEvent::KillSpy { empire, slot } => self.spy_edit(empire, slot, |r| r[0x10..0x12].fill(0)),
@@ -346,7 +344,7 @@ impl GameStory<'_, '_> {
             StoryEvent::TradePrices { cheap } => {
                 let mut t = self.game.state.trade();
                 for o in t.offers.iter_mut() {
-                    let v = (rd_i32(o, 0x24) as f64 * if cheap { 0.8 } else { 1.25 }) as i32;
+                    let v = (i32_at(o, 0x24) as f64 * if cheap { 0.8 } else { 1.25 }) as i32;
                     o[0x24..0x28].copy_from_slice(&v.to_le_bytes());
                 }
                 self.game.state.store_trade(&t);
@@ -555,7 +553,7 @@ impl GameStory<'_, '_> {
             if self.design_colony(en, d) {
                 self.design_edit(en, d, |r| {
                     for o in [0x24, 0x20] {
-                        let v = f(rd_i32(r, o));
+                        let v = f(i32_at(r, o));
                         r[o..o + 4].copy_from_slice(&v.to_le_bytes());
                     }
                 });
@@ -565,7 +563,7 @@ impl GameStory<'_, '_> {
             let mut r = self.planet(p);
             let d = rd_i16(&r, 0x78);
             if r[0x20] as i32 == en && d > 0 && self.design_colony(en, d) {
-                let v = f(rd_i32(&r, 0xa0));
+                let v = f(i32_at(&r, 0xa0));
                 r[0xa0..0xa4].copy_from_slice(&v.to_le_bytes());
                 self.game.state.mem.write(va::PLANETS + (p as usize * PLANET_SIZE) as u32, &r);
             }
@@ -835,7 +833,7 @@ impl Game<'_> {
         };
         let name = self.state.mem.read(va::TECHS + (5 * crate::save::TECH_SIZE) as u32, 0x20);
         strcpy(&mut r[..0x16], &name);
-        let price = (rd_i32(&r, 0x24) as f64 * 0.5) as i32;
+        let price = (i32_at(&r, 0x24) as f64 * 0.5) as i32;
         r[0x24..0x28].copy_from_slice(&price.to_le_bytes());
         t.offers[slot] = r;
         self.state.store_trade(&t);

@@ -1,6 +1,7 @@
 //! `st_Rnd_include`: a spy mission (127, part 2a), spy recruits (138) and a colony to spy out (174, part 2c; spec
 //! `re/rules/campaign.md` §8.13).
 
+use crate::bytes::cstr;
 use super::{answered, message, param, read};
 use crate::brnd::random_empire;
 use crate::rng::stream::SPY as SPY_STREAM;
@@ -140,10 +141,6 @@ fn recruits(w: &dyn StoryWorld) -> i32 {
             spy.race == 14 && spy.state > 0
         })
         .count() as i32
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 /// 138: a planet of spies (the nearest unknown of 11001..11015, id 1381, message 0x565, shown, hidden from the

@@ -8,6 +8,7 @@
 //! through [`World`]. Messages, story and tutorial hooks and `FelfedezBirodalom` are [`SpyEvent`]s; story
 //! missions ask [`World::story`].
 
+use crate::bytes::{i16_at, i32_at};
 use crate::cvt::cvtt_f64;
 use crate::colony::EconomyContext;
 use crate::colony_side::{status, ColonyWorld, SideEvent, SideRules, EMPIRES};
@@ -128,38 +129,31 @@ impl Default for Spy {
     }
 }
 
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
 impl Spy {
     pub fn from_bytes(b: &[u8]) -> Self {
         Self {
             name: b[..16].try_into().unwrap(),
-            state: rd_i16(b, 0x10),
+            state: i16_at(b, 0x10),
             race: b[0x12],
             b13: b[0x13],
-            w14: rd_i16(b, 0x14),
-            applicant: rd_i16(b, 0x16),
+            w14: i16_at(b, 0x14),
+            applicant: i16_at(b, 0x16),
             master: b[0x18],
             b19: b[0x19],
-            mission: rd_i16(b, 0x1a) as u16,
+            mission: i16_at(b, 0x1a) as u16,
             target: b[0x1c],
             b1d: b[0x1d],
-            param1: rd_i16(b, 0x1e),
-            param2: rd_i16(b, 0x20),
-            w22: rd_i16(b, 0x22),
-            length: rd_i32(b, 0x24),
-            left: rd_i32(b, 0x28),
-            catch_at: rd_i32(b, 0x2c),
+            param1: i16_at(b, 0x1e),
+            param2: i16_at(b, 0x20),
+            w22: i16_at(b, 0x22),
+            length: i32_at(b, 0x24),
+            left: i32_at(b, 0x28),
+            catch_at: i32_at(b, 0x2c),
             b30: b[0x30],
             skills: b[0x31..0x35].try_into().unwrap(),
             b35: b[0x35..0x38].try_into().unwrap(),
-            points: rd_i32(b, 0x38),
-            xp: rd_i32(b, 0x3c),
+            points: i32_at(b, 0x38),
+            xp: i32_at(b, 0x3c),
             rank: b[0x40],
             known_to: b[0x41..0x4c].try_into().unwrap(),
         }
@@ -553,7 +547,7 @@ impl World<'_> {
             return None;
         }
         let d = self.combat.designs.get(t)?.get(sh.design.max(0) as usize)?;
-        let hidden = rd_i32(&d.raw, 0x80) != 0;
+        let hidden = i32_at(&d.raw, 0x80) != 0;
         (!hidden && (p1 == 0 || p1 == d.hull_tech)).then_some(d.hull_tech)
     }
 }

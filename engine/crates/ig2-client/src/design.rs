@@ -11,6 +11,7 @@
 //! Part 3 (the 3D buttons' press frames, the pods' boxes, lights and pick, the tech models opening out of a pod, the
 //! pod and tech rows' `DesignKeret2` frames) is [`crate::design_pods`]; the opening's lasers are below.
 
+use ig2_sim::bytes::{i16_at, i32_at};
 use ig2_formats::Install;
 use ig2_rules::sounds::Table;
 use ig2_sim::colony_side::TechTable;
@@ -119,14 +120,6 @@ pub fn mask(install: &Install) -> Vec<u8> {
 
 fn en(state: &SaveState) -> usize {
     state.mem.i32(va::EN).clamp(0, 18) as usize
-}
-
-fn i16_at(r: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([r[o], r[o + 1]])
-}
-
-fn i32_at(r: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
 }
 
 /// The designs of empire `e` (`Tervek[e][0..=OsszHanyTerv[e]]`).

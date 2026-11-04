@@ -5,6 +5,7 @@
 //! production (§7) lives in [`crate::production`]. Arrival side effects owned by other systems (battles, colonisation,
 //! terraforming, ship transfer on merges, story hooks, money) are reported as [`StarmapEvent`]s.
 
+use crate::bytes::cstr;
 use crate::radar::{RadarRules, RadarTables, ShipDesign};
 use crate::rng::Streams;
 use crate::time::slowed_down;
@@ -264,11 +265,6 @@ impl StarmapContext {
         self.speed_mult = slowed_down(self.speed_mult, self.multiplayer, self.speed_locked, self.program_speed);
         self.slowed = true;
     }
-}
-
-/// The name up to its terminating NUL (C `strcmp` semantics).
-fn cstr(name: &[u8]) -> &[u8] {
-    &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())]
 }
 
 /// Systems a fleet arrival hands over to **inside** the movement loop (spec §4.3 cases 1–2): their effects

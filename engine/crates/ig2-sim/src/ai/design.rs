@@ -1,6 +1,7 @@
 //! `FRISSIT_MI_DESIGN(e, all)` (exe 0x50abf0): the AI's design per slot, with `TervNew`, `TervClear` and
 //! `TervAutoDesign` (`re/rules/ai-empire.md` §10).
 
+use crate::bytes::{i16_at, i32_at};
 use super::{AiEvent, AiHooks, AiRules, AiState, World, BEST, DESIGN_SLOTS, SPECIAL};
 use crate::colony_side::TechTable;
 use crate::spacewar::{Design, DesignRules};
@@ -37,13 +38,6 @@ pub fn generated_name(text: &mut dyn FnMut(i32) -> Vec<u8>, e: i32, hull: i32, s
     s
 }
 
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
 impl World<'_> {
     /// `OsszHanyTerv[e]`: the highest design index of `e`.
     pub(crate) fn design_count(&self, e: usize) -> usize {
@@ -77,7 +71,7 @@ impl World<'_> {
     /// `TervNew(e, id)` (§10.2): the lowest deleted design, else a new record at the end. Returns its index.
     pub(crate) fn new_design(&mut self, e: usize, id: i32, hooks: &mut dyn AiHooks) -> usize {
         let n = self.design_count(e);
-        let free = (1..=n).find(|&k| self.des(e, k as i32).is_some_and(|x| rd_i16(&x.raw, 0x16) < 0));
+        let free = (1..=n).find(|&k| self.des(e, k as i32).is_some_and(|x| i16_at(&x.raw, 0x16) < 0));
         let d = match free {
             Some(k) => k,
             None => {
@@ -138,9 +132,9 @@ impl World<'_> {
         for p in self.spy.colony.planets.iter_mut().skip(1).filter(|p| p.owner as usize == e) {
             for l in 0..2 {
                 let q = &mut p.production;
-                if rd_i16(q, 8 * l) as i32 == d as i32 {
+                if i16_at(q, 8 * l) as i32 == d as i32 {
                     let o = 0x28 + 4 * l;
-                    let left = rd_i32(q, o).wrapping_sub(old).wrapping_add(new).max(0);
+                    let left = i32_at(q, o).wrapping_sub(old).wrapping_add(new).max(0);
                     q[o..o + 4].copy_from_slice(&left.to_le_bytes());
                 }
             }
@@ -184,8 +178,8 @@ pub fn auto_design_record(rules: &AiRules, tech: &TechTable, debug: bool, raw: &
         _ => 1,
     };
 
-    let hull = rd_i32(raw, 0x44);
-    let pt = rd_i16(raw, 0x40);
+    let hull = i32_at(raw, 0x44);
+    let pt = i16_at(raw, 0x40);
     let hu = hull.max(0) as usize;
     let hull_tech = rules.design.hulls.get(hu).map_or(0, |h| h.tech);
     let ground = GROUND_HULLS.contains(&(rules.design.role(hull_tech.max(0) as usize) as i32));
@@ -288,7 +282,7 @@ impl AiState {
                     for k in super::design::FIRST_OWN..=n.max(0) as usize {
                         let Some(x) = w.des(e, k as i32) else { continue };
                         let r = &x.raw;
-                        if v == BEST && rd_i16(r, 0x16) >= 0 && r[0x18] != 0 && r[0x19] == 0 && w.rules.design.hull_role(rd_i32(r, 0x44).max(0) as usize) == s {
+                        if v == BEST && i16_at(r, 0x16) >= 0 && r[0x18] != 0 && r[0x19] == 0 && w.rules.design.hull_role(i32_at(r, 0x44).max(0) as usize) == s {
                             d = k as i32;
                         }
                     }
@@ -357,7 +351,7 @@ impl AiState {
         if self.no_upgrade[e] == 0 {
             let mut k = FIRST_OWN;
             while k <= w.design_count(e) {
-                let live = w.des(e, k as i32).is_some_and(|x| rd_i16(&x.raw, 0x16) >= 0 && x.raw[0x18] != 0);
+                let live = w.des(e, k as i32).is_some_and(|x| i16_at(&x.raw, 0x16) >= 0 && x.raw[0x18] != 0);
                 let used = (1..=HULL_SLOTS).any(|s| self.designs[BEST][e][s] as usize == k || self.designs[SPECIAL][e][s] as usize == k);
                 if live && !used {
                     let old = w.des_i32(e, k as i32, 0x20);

@@ -6,6 +6,7 @@
 //! it are whatever the slot held before, and a save round-trips only with them. The sim posts; the UI takes the
 //! next text off the line at its own pace ([`Ticker::pop`]).
 
+pub use crate::bytes::cstr;
 use std::collections::BTreeMap;
 
 /// One list entry.
@@ -42,11 +43,6 @@ impl Default for Ticker {
     fn default() -> Self {
         Self { main: vec![0; LIST], count: 0, history: vec![0; LIST], history_count: 0, on_screen: vec![0; ON_SCREEN], on_screen_important: 0, tutorial: false }
     }
-}
-
-/// The C string at the start of `b`.
-pub fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 /// Copy `text` and its NUL to the start of `b` (`strcpy`: the rest of `b` keeps its bytes).

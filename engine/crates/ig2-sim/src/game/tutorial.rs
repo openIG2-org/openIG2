@@ -2,6 +2,7 @@
 //! `TutorialGetNextCommand` (exe 0x60c570) makes in place. The others (new fleets, vehicles and ships, the trade
 //! market's destroyers, the diplomacy talk, messages, the clock, a save load) go to the systems that own them.
 
+use crate::bytes::cstr;
 use super::{va, Game};
 use crate::colony_side::EMPIRES;
 use crate::save::{PLANET_SIZE, TECH_SIZE};
@@ -167,6 +168,3 @@ impl Game<'_> {
     }
 }
 
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
-}

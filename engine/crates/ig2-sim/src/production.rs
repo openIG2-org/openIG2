@@ -6,6 +6,7 @@
 //! Not ported: the colony UI refresh flags and the ground-war placement of new garrison vehicles
 //! (reported as [`ProductionEvent`]s); freed waypoint chains are left to the fleet port.
 
+use crate::bytes::cstr;
 use crate::colony_side::{Treasury, EMPIRES};
 use crate::fleet::{flag, order, Fleet, DELETED};
 use crate::spacewar::{Design, FleetTotals, Ship, Vehicle, FLAG_DESIGN28, NO_DESIGN};
@@ -208,11 +209,6 @@ pub enum ProductionEvent {
     /// A follower of a deleted fleet lost its order.
     FollowerStopped { fleet: usize },
     FleetDeleted { fleet: usize, owner: u8 },
-}
-
-/// The name up to its terminating NUL (C `strcmp` semantics).
-fn cstr(name: &[u8]) -> &[u8] {
-    &name[..name.iter().position(|&c| c == 0).unwrap_or(name.len())]
 }
 
 fn ai_income(ctx: &ProductionContext, e: usize) -> Option<f64> {

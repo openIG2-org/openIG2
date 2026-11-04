@@ -5,6 +5,7 @@
 pub mod ai;
 pub mod begin;
 pub mod brnd;
+pub mod bytes;
 pub mod campaign;
 pub mod colony;
 pub mod colony_side;

@@ -2,6 +2,7 @@
 //! 3D pass), `StarmapGfx2D_1`'s fader box and the minimap's dark window, `StarmapGfx2D_3`'s short info of the
 //! selected planet or fleet (`StarmapRovidInfoKiir`) and the minimap (`GFX_StarmapRadar`).
 
+use ig2_sim::bytes::cstr;
 use ig2_formats::Install;
 use ig2_sim::save::{va, SaveState};
 
@@ -365,10 +366,6 @@ impl InfoTexts<'_> {
 
 fn cat(parts: &[&[u8]]) -> Vec<u8> {
     parts.concat()
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 impl InfoBox {

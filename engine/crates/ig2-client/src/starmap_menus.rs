@@ -4,6 +4,7 @@
 //! its tax, auto-build and priority settings, the select menus (`StarmapGfx2D_2` 0x6de1b0 boxes, `StarmapGfx2D_4`
 //! 0x6d6b20 texts) and the production view's planet list. Every order goes out as a `MULTIGET_Starmap` message.
 
+use ig2_sim::bytes::{cstr, f32_at, i16_at, i32_at};
 use std::cell::Cell;
 
 use ig2_sim::game::StarmapOrder;
@@ -30,22 +31,6 @@ const DRAWN_FRAME: f32 = crate::starmap_panels::PANEL_FRAME;
 
 pub(crate) fn planet(state: &SaveState, p: usize) -> Vec<u8> {
     state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
-}
-
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 fn en(state: &SaveState) -> u8 {

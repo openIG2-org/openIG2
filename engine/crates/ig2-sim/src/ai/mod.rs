@@ -21,6 +21,7 @@ pub mod fleets;
 pub mod refit;
 pub mod units;
 
+use crate::bytes::{i16_at, i32_at};
 use crate::cvt::cvtt_f64;
 use crate::colony::{production_base, Planet};
 use crate::colony_side::{Treasury, EMPIRES};
@@ -82,23 +83,16 @@ pub struct Category {
     pub queued: [i32; 2],
 }
 
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
 impl Category {
     pub fn from_bytes(b: &[u8]) -> Self {
         Self {
-            w0: rd_i16(b, 0),
-            design: [rd_i16(b, 2), rd_i16(b, 4)],
+            w0: i16_at(b, 0),
+            design: [i16_at(b, 2), i16_at(b, 4)],
             b6: b[6..12].try_into().unwrap(),
-            units: [rd_i32(b, 0xc), rd_i32(b, 0x10)],
-            want: rd_i32(b, 0x14),
-            w18: rd_i32(b, 0x18),
-            queued: [rd_i32(b, 0x1c), rd_i32(b, 0x20)],
+            units: [i32_at(b, 0xc), i32_at(b, 0x10)],
+            want: i32_at(b, 0x14),
+            w18: i32_at(b, 0x18),
+            queued: [i32_at(b, 0x1c), i32_at(b, 0x20)],
         }
     }
 
@@ -313,7 +307,7 @@ impl World<'_> {
         self.spy.combat.designs.get(e)?.get(usize::try_from(d).ok()?).map(|x| &x.raw)
     }
     fn design_i32(&self, e: usize, d: i32, o: usize) -> i32 {
-        self.design(e, d).map_or(0, |r| rd_i32(r, o))
+        self.design(e, d).map_or(0, |r| i32_at(r, o))
     }
     fn mission(&self, m: usize) -> MissionRule {
         self.spy.rules.missions.get(m).copied().unwrap_or_default()
@@ -345,7 +339,7 @@ fn planet_word(p: &Planet, off: i32) -> i16 {
             let o = (off - 0x70) as usize;
             i16::from_le_bytes([b[o], b[o + 1]])
         }
-        0x78..=0xb6 => rd_i16(&p.production, (off - 0x78) as usize),
+        0x78..=0xb6 => i16_at(&p.production, (off - 0x78) as usize),
         _ => 0,
     }
 }
@@ -622,7 +616,7 @@ impl AiState {
                     let d = cat.design[j];
                     let mut queued = 0;
                     if d > 0 {
-                        let row = w.design(e, d as i32).map_or(0, |r| rd_i16(r, 0x16) as i32) - 1;
+                        let row = w.design(e, d as i32).map_or(0, |r| i16_at(r, 0x16) as i32) - 1;
                         for &p in &mine {
                             let pl = &w.spy.colony.planets[p];
                             queued += (0..4).filter(|k| planet_word(pl, 0x78 + 8 * row + 2 * k) == d).count() as i32;
@@ -760,7 +754,7 @@ fn scrap(w: &mut World, e: usize) {
         }
         let Some(r) = w.design(e, s.design as i32).filter(|r| scrappable(r)) else { continue };
         let b = scrap_bucket(r);
-        let p = rd_i32(r, 0x2c).wrapping_mul(rd_i32(r, 0x30));
+        let p = i32_at(r, 0x2c).wrapping_mul(i32_at(r, 0x30));
         let weight = cvtt_f64((p as f32 as f64).sqrt() as f32 as f64);
         sum[b] = sum[b].wrapping_add(weight);
         total = total.wrapping_add(weight);
@@ -788,17 +782,17 @@ fn scrap(w: &mut World, e: usize) {
 
 /// `CsokkentettTervAr` with `GetTervEladasOszto` (spec §5.3).
 fn resale(r: &[u8; 0x84], ctx: &AiContext, human_empire: usize) -> i32 {
-    sale_price(rd_i32(r, 0x24), sale_divisor(r, ctx.story_resale, human_empire))
+    sale_price(i32_at(r, 0x24), sale_divisor(r, ctx.story_resale, human_empire))
 }
 
 /// `GetTervEladasOszto(e, d)` (exe 0x4b4370): 2, 10 for `+0x36`, 0.5 for the story hero's ship (`StoryAdat+0xac`,
 /// hull 5, original owner the human), −1 (unsellable) for the story designs `+0x80` in 0x6a5..3000 but a few.
 pub(crate) fn sale_divisor(r: &[u8; 0x84], story_resale: bool, human_empire: usize) -> f32 {
     let mut f: f32 = if r[0x36] != 0 { 10.0 } else { 2.0 };
-    if story_resale && rd_i32(r, 0x44) == 5 && rd_i16(r, 0x40) as i32 == human_empire as i32 {
+    if story_resale && i32_at(r, 0x44) == 5 && i16_at(r, 0x40) as i32 == human_empire as i32 {
         f = 0.5;
     }
-    let id = rd_i32(r, 0x80);
+    let id = i32_at(r, 0x80);
     if (0x6a5..3000).contains(&id) && ![0x8fc, 0x8fd, 0x906].contains(&id) && !(0x924..=0x937).contains(&id) {
         f = -1.0;
     }

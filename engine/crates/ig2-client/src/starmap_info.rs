@@ -7,6 +7,7 @@
 //! `SellShipMehet` 0x6f40c0, `SellTankMenuSor` 0x6f4910, `SellTankMehet` 0x6f4800) whose release sends
 //! `MULTIGET_Design`'s 0x34 (sell) and 0x35 (refit).
 
+use ig2_sim::bytes::{cstr, f32_at, i16_at, i32_at};
 use ig2_sim::save::{va, SaveState, PLANET_SIZE, TECH_SIZE};
 
 use crate::kit::design_frame::DesignFrame;
@@ -16,22 +17,6 @@ use crate::orders::Selection;
 use crate::render::Frame;
 use crate::scene::{self, M3, V3};
 use crate::starmap_panels::Draw2d;
-
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
-}
 
 fn en(state: &SaveState) -> u8 {
     state.mem.i32(va::EN).clamp(0, 18) as u8

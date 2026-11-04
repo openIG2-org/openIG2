@@ -12,6 +12,7 @@
 //! [`SaveState::chunks`] turns the state back into the save's chunks by name, to compare a replay with the exe's own
 //! saves of the same tick.
 
+use crate::bytes::{f32_at, i16_at, i32_at};
 use std::collections::BTreeMap;
 
 use ig2_formats::save::SaveGame;
@@ -804,15 +805,6 @@ pub const INBOX_REGIONS: [(u32, usize); 11] = [
     (0xD909BA, 2),
 ];
 
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_f32(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
 fn put(b: &mut [u8], o: usize, v: &[u8]) {
     b[o..o + v.len()].copy_from_slice(v);
 }
@@ -883,18 +875,18 @@ impl SaveState {
         for (name, data) in &template {
             match name.as_str() {
                 "GameInfo.text" => game_info.push(GameInfo { text: data.clone(), ..Default::default() }),
-                "GameInfo.0" => game_info.last_mut().expect("a GameInfo text first").index = rd_i32(data, 0),
-                "GameInfo.8" => game_info.last_mut().expect("a GameInfo text first").colour = rd_i32(data, 0),
+                "GameInfo.0" => game_info.last_mut().expect("a GameInfo text first").index = i32_at(data, 0),
+                "GameInfo.8" => game_info.last_mut().expect("a GameInfo text first").colour = i32_at(data, 0),
                 _ => {}
             }
             if let Some(q) = QUEUES.iter().position(|q| name.strip_suffix(".key") == Some(q)) {
-                pending = Some((q, rd_i32(data, 0)));
+                pending = Some((q, i32_at(data, 0)));
                 continue;
             }
             if let Some(q) = QUEUES.iter().position(|q| name.strip_suffix(".value") == Some(q)) {
                 let (pq, key) = pending.take().expect("a queue key before its value");
                 assert_eq!(pq, q);
-                let value = rd_i32(data, 0);
+                let value = i32_at(data, 0);
                 match q {
                     0 => story.buckets[(key as u32 & 0xff) as usize].entries.push((key, value)),
                     1 => story.history.entries.push((key, value)),
@@ -1213,40 +1205,40 @@ pub fn group_chunks(save: &SaveGame) -> BTreeMap<String, Vec<u8>> {
 /// A planet record and its building slots (`colony-economy.md` §2).
 pub fn planet_from(r: &[u8], slots: &[[u8; BUILDING_SIZE]], unrest: i32) -> Planet {
     let mut p = Planet {
-        x: rd_f32(r, 0x18),
-        y: rd_f32(r, 0x1c),
+        x: f32_at(r, 0x18),
+        y: f32_at(r, 0x1c),
         owner: r[0x20],
         race: r[0x21],
         surface: r[0x22],
         colony_map: r[0x23],
-        richness: rd_i32(r, 0x24),
-        population: rd_i32(r, 0x28),
-        population_change: rd_i32(r, 0x2c),
-        morale: rd_i32(r, 0x30),
+        richness: i32_at(r, 0x24),
+        population: i32_at(r, 0x28),
+        population_change: i32_at(r, 0x2c),
+        morale: i32_at(r, 0x30),
         tax_level: r[0x34],
-        gdp_acc: rd_i32(r, 0x38),
-        gdp_last: rd_i32(r, 0x3c),
-        tax_acc: rd_i32(r, 0x40),
-        tax_last: rd_i32(r, 0x44),
-        energy_produced: rd_i32(r, 0x48),
-        energy_demand: rd_i32(r, 0x4c),
-        workers_demand: rd_i32(r, 0x50),
+        gdp_acc: i32_at(r, 0x38),
+        gdp_last: i32_at(r, 0x3c),
+        tax_acc: i32_at(r, 0x40),
+        tax_last: i32_at(r, 0x44),
+        energy_produced: i32_at(r, 0x48),
+        energy_demand: i32_at(r, 0x4c),
+        workers_demand: i32_at(r, 0x50),
         field_54: u16::from_le_bytes([r[0x54], r[0x55]]),
-        field_58: rd_i32(r, 0x58),
-        field_5c: rd_i32(r, 0x5c),
-        field_60: rd_i32(r, 0x60),
+        field_58: i32_at(r, 0x58),
+        field_5c: i32_at(r, 0x5c),
+        field_60: i32_at(r, 0x60),
         protected: r[0x64] != 0,
-        autobuild_counter: rd_i32(r, 0x68),
+        autobuild_counter: i32_at(r, 0x68),
         autobuild_mode: r[0x6c],
         autobuild_aggr: r[0x6d],
-        ship_capacity: rd_i32(r, 0x70),
-        vehicle_capacity: rd_i32(r, 0x74),
+        ship_capacity: i32_at(r, 0x70),
+        vehicle_capacity: i32_at(r, 0x74),
         production: r[0x78..0xb8].try_into().unwrap(),
-        epidemic: rd_i16(r, 0xb8),
-        stations: std::array::from_fn(|k| rd_i16(r, 0x100 + 2 * k)),
-        field_114: rd_i32(r, 0x114),
-        morale_penalty: rd_i32(r, 0x174),
-        morale_penalty_rate: rd_i32(r, 0x178),
+        epidemic: i16_at(r, 0xb8),
+        stations: std::array::from_fn(|k| i16_at(r, 0x100 + 2 * k)),
+        field_114: i32_at(r, 0x114),
+        morale_penalty: i32_at(r, 0x174),
+        morale_penalty_rate: i32_at(r, 0x178),
         loyal: r[0x186] != 0,
         ai_proof: r[0x187] != 0,
         unrest,
@@ -1254,13 +1246,13 @@ pub fn planet_from(r: &[u8], slots: &[[u8; BUILDING_SIZE]], unrest: i32) -> Plan
     };
     p.spies.copy_from_slice(&r[0xc4..0xc4 + 19]);
     for e in 0..19 {
-        p.visibility[e] = rd_i16(r, 0xd8 + 2 * e);
+        p.visibility[e] = i16_at(r, 0xd8 + 2 * e);
     }
     for k in 1..p.problems.len() {
-        p.problems[k] = rd_i32(r, 0x118 + 4 * k);
+        p.problems[k] = i32_at(r, 0x118 + 4 * k);
     }
     for k in 0..5 {
-        p.events[k] = rd_i16(r, 0x16a + 2 * k);
+        p.events[k] = i16_at(r, 0x16a + 2 * k);
     }
     p.buildings = slots.iter().map(|s| building_from(s)).collect();
     p
@@ -1316,16 +1308,16 @@ pub fn building_from(s: &[u8]) -> Building {
     Building {
         kind: s[0],
         owner: s[1],
-        damage: rd_i32(s, 4),
+        damage: i32_at(s, 4),
         work_left: u16::from_le_bytes([s[8], s[9]]),
         planet: s[0xa],
-        x: rd_f32(s, 0xc),
-        y: rd_f32(s, 0x10),
+        x: f32_at(s, 0xc),
+        y: f32_at(s, 0x10),
         yield_pct: s[0x18],
         flags: s[0x19],
-        shown_energy: rd_i16(s, 0x1a),
-        shown_workers: rd_i16(s, 0x1c),
-        efficiency: rd_i16(s, 0x1e),
+        shown_energy: i16_at(s, 0x1a),
+        shown_workers: i16_at(s, 0x1c),
+        efficiency: i16_at(s, 0x1e),
     }
 }
 
@@ -1372,24 +1364,24 @@ pub fn combat_fleet(r: &[u8]) -> CombatFleet {
     CombatFleet {
         owner: r[0x15],
         flags: u16::from_le_bytes([r[0x52], r[0x53]]),
-        x: rd_f32(r, 0x30),
-        y: rd_f32(r, 0x34),
+        x: f32_at(r, 0x30),
+        y: f32_at(r, 0x34),
         totals: FleetTotals::from_record(r),
-        colony_ships: rd_i16(r, 0x4c),
-        terraformers: rd_i16(r, 0x4e),
+        colony_ships: i16_at(r, 0x4c),
+        terraformers: i16_at(r, 0x4e),
     }
 }
 
 pub fn wormhole_from(w: &[u8]) -> Wormhole {
     Wormhole {
-        ax: rd_f32(w, 0),
-        ay: rd_f32(w, 4),
+        ax: f32_at(w, 0),
+        ay: f32_at(w, 4),
         revealed_a: w[8] != 0,
-        fleet_a: rd_i16(w, 10),
-        bx: rd_f32(w, 0xc),
-        by: rd_f32(w, 0x10),
+        fleet_a: i16_at(w, 10),
+        bx: f32_at(w, 0xc),
+        by: f32_at(w, 0x10),
         revealed_b: w[0x14] != 0,
-        fleet_b: rd_i16(w, 0x16),
+        fleet_b: i16_at(w, 0x16),
         tint: [w[0x18], w[0x19], w[0x1a]],
     }
 }
@@ -1407,7 +1399,7 @@ pub fn put_wormhole(r: &mut [u8], w: &Wormhole) {
 }
 
 fn message(b: &[u8], o: usize) -> Message {
-    Message { cat: rd_i32(b, o), sub: rd_i32(b, o + 4), value: rd_i32(b, o + 8), sub2: rd_i32(b, o + 12), value2: rd_i32(b, o + 16) }
+    Message { cat: i32_at(b, o), sub: i32_at(b, o + 4), value: i32_at(b, o + 8), sub2: i32_at(b, o + 12), value2: i32_at(b, o + 16) }
 }
 fn put_message(b: &mut [u8], o: usize, m: &Message) {
     for (k, v) in [m.cat, m.sub, m.value, m.sub2, m.value2].into_iter().enumerate() {
@@ -1418,9 +1410,9 @@ fn put_message(b: &mut [u8], o: usize, m: &Message) {
 /// An answer record (`diplomacy.md` §10.1) at `o`.
 fn answer(b: &[u8], o: usize) -> Answer {
     Answer {
-        from: rd_i32(b, o),
-        to: rd_i32(b, o + 4),
-        msg: Message { cat: rd_i32(b, o + 8), sub: rd_i32(b, o + 0x14), value: rd_i32(b, o + 0x18), sub2: rd_i32(b, o + 0x1c), value2: rd_i32(b, o + 0x20) },
+        from: i32_at(b, o),
+        to: i32_at(b, o + 4),
+        msg: Message { cat: i32_at(b, o + 8), sub: i32_at(b, o + 0x14), value: i32_at(b, o + 0x18), sub2: i32_at(b, o + 0x1c), value2: i32_at(b, o + 0x20) },
         counter: b[o + 0x10] != 0,
         reply: b[o + 0x11] != 0,
         yes: b[o + 0x12] != 0,
@@ -1447,16 +1439,16 @@ fn put_answer(b: &mut [u8], o: usize, a: &Answer) {
 
 pub fn player_slot(b: &[u8]) -> PlayerSlot {
     PlayerSlot {
-        empire: rd_i32(b, 0),
-        controller: rd_i32(b, 4),
+        empire: i32_at(b, 0),
+        controller: i32_at(b, 4),
         screen: b[0x0c],
-        sent_at: rd_i32(b, 0x10),
+        sent_at: i32_at(b, 0x10),
         open: b[0x14],
         asked: b[0x16],
         waiting: b[0x17],
         answered: b[0x18],
         countered: b[0x2c],
-        letter: Letter { from: rd_i32(b, 0x38), to: rd_i32(b, 0x3c), declaration: b[0x30] != 0, msg: message(b, 0x40) },
+        letter: Letter { from: i32_at(b, 0x38), to: i32_at(b, 0x3c), declaration: b[0x30] != 0, msg: message(b, 0x40) },
         cancelled: b[0x58],
         answer: answer(b, 0x64),
         counter_answer: answer(b, 0x94),
@@ -1500,7 +1492,7 @@ impl SaveState {
 
     /// `SearchBuilding(p, kind, true)`: finished (`+8 == 0`), working (`+0x19 & 1`) buildings of a kind on `p`.
     pub fn working_buildings(&self, p: usize, kind: u8) -> i32 {
-        self.slots(p).iter().filter(|b| b[0] == kind && rd_i16(&b[..], 8) == 0 && b[0x19] & 1 != 0).count() as i32
+        self.slots(p).iter().filter(|b| b[0] == kind && i16_at(&b[..], 8) == 0 && b[0x19] & 1 != 0).count() as i32
     }
 
     pub fn human_controlled(&self) -> [bool; EMPIRES] {
@@ -1948,19 +1940,19 @@ impl SaveState {
                 let r = self.planet_record(p);
                 let slots = if p == 0 { &[][..] } else { self.slots(p) };
                 let count = |kind: u8| {
-                    slots.iter().filter(|s| s[0] == kind && rd_i16(&s[..], 8) == 0 && s[0x19] & 1 != 0).count() as i32
+                    slots.iter().filter(|s| s[0] == kind && i16_at(&s[..], 8) == 0 && s[0x19] & 1 != 0).count() as i32
                 };
                 StarPlanet {
-                    x: rd_f32(&r, 0x18),
-                    y: rd_f32(&r, 0x1c),
+                    x: f32_at(&r, 0x18),
+                    y: f32_at(&r, 0x1c),
                     owner: r[0x20],
-                    epidemic: rd_i16(&r, 0xb8),
+                    epidemic: i16_at(&r, 0xb8),
                     trade_centres: count(48),
                     banks: count(49),
                     trade_ports: count(50),
                     radar_level: r[0x6e],
-                    has_hub: slots.iter().any(|s| s[0] == 1 && rd_i16(&s[..], 8) == 0),
-                    visible: std::array::from_fn(|e| rd_i16(&r, 0xd8 + 2 * e)),
+                    has_hub: slots.iter().any(|s| s[0] == 1 && i16_at(&s[..], 8) == 0),
+                    visible: std::array::from_fn(|e| i16_at(&r, 0xd8 + 2 * e)),
                     notice: r[0xbb],
                 }
             })
@@ -1968,7 +1960,7 @@ impl SaveState {
         let nw = m.i32(va::WORMHOLE_COUNT).max(0) as usize;
         let mut s = crate::fleet::Starmap {
             fleets: self.fleets.iter().map(|r| Fleet::from_record(r)).collect(),
-            waypoints: self.waypoints.iter().map(|w| Waypoint { x: rd_f32(w, 0), y: rd_f32(w, 4), next: rd_i16(w, 8) }).collect(),
+            waypoints: self.waypoints.iter().map(|w| Waypoint { x: f32_at(w, 0), y: f32_at(w, 4), next: i16_at(w, 8) }).collect(),
             wormholes: (0..=nw).map(|i| wormhole_from(&m.read(va::WORMHOLES + 0x1c * i as u32, 0x1c))).collect(),
             planets,
             colony_ship_pool: m.i32s(va::COLONY_SHIP_POOL),
@@ -2039,13 +2031,13 @@ impl SaveState {
             .iter()
             .skip(1)
             .filter_map(|h| {
-                let (f, d) = (rd_i16(h, 0), rd_i16(h, 2));
+                let (f, d) = (i16_at(h, 0), i16_at(h, 2));
                 if d == 0x7fff || f < 1 || f as usize >= self.fleets.len() {
                     return None;
                 }
                 let owner = self.fleets[f as usize][0x15] as usize;
                 let rec = self.designs.get(owner)?.get(d as usize)?;
-                Some(ShipDesign { fleet: f as usize, speed: rd_f32(rec, 0x3c), design_type: rd_i32(rec, 0x48), radar: rec[0x6a], stealth: rec[0x6b] })
+                Some(ShipDesign { fleet: f as usize, speed: f32_at(rec, 0x3c), design_type: i32_at(rec, 0x48), radar: rec[0x6a], stealth: rec[0x6b] })
             })
             .collect()
     }
@@ -2057,8 +2049,8 @@ impl SaveState {
         let tanks = m.read(va::VEHICLES, 8 * (nt + 1));
         crate::spacewar::CombatWorld {
             fleets: self.fleets.iter().map(|r| combat_fleet(r)).collect(),
-            ships: self.ships.iter().map(|c| Ship { fleet: rd_i16(c, 0), design: rd_i16(c, 2) }).collect(),
-            vehicles: tanks.chunks(8).map(|c| Vehicle { fleet: rd_i16(c, 0), design: rd_i16(c, 2), count: rd_i32(c, 4) }).collect(),
+            ships: self.ships.iter().map(|c| Ship { fleet: i16_at(c, 0), design: i16_at(c, 2) }).collect(),
+            vehicles: tanks.chunks(8).map(|c| Vehicle { fleet: i16_at(c, 0), design: i16_at(c, 2), count: i32_at(c, 4) }).collect(),
             designs: self.designs.iter().map(|d| d.iter().map(|r| Design::from_bytes(r)).collect()).collect(),
             human_controlled: self.human_controlled(),
             colony_ship_pool: m.i32s(va::COLONY_SHIP_POOL),

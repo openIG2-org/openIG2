@@ -5,6 +5,7 @@
 //! `MegkeresHozzavaloTalalmanyok` 0x501cc0, `CheckIfTalalmanyfolottvan` 0x501380, `KijelolTalalmany` 0x500dc0,
 //! `KiszamolErtek`, `PodKiurito`), their list rows with the `DesignKeret2` frames, and the opening's lasers.
 
+use ig2_sim::bytes::{i16_at, i32_at};
 use ig2_sim::ai::design::tech_fits;
 
 use crate::design::{field, pod_count, Design, POD};
@@ -147,14 +148,14 @@ impl Design {
     /// some t in 1..=0xc0.
     pub(crate) fn techs_on(&self, c: &Ctx, k: usize) -> bool {
         let Some(d) = self.edited(c.state) else { return false };
-        let (hull, pt) = (rd_i32(d, field::HULL).max(0) as usize, rd_i16(d, field::RACE));
+        let (hull, pt) = (i32_at(d, field::HULL).max(0) as usize, i16_at(d, field::RACE));
         k != 0 && (1..0xc1).any(|t| tech_fits(c.sim, c.techs, c.debug, hull, t, k, 5, c.en(), pt))
     }
 
     /// The techs the chosen pod takes at status ≥ `min` (`TalalmanyRarakhato(…, min, …)`, t = 1..=0xc0).
     fn pod_techs(&self, c: &Ctx, min: u8) -> Vec<usize> {
         let Some(d) = self.edited(c.state) else { return Vec::new() };
-        let (hull, pt) = (rd_i32(d, field::HULL).max(0) as usize, rd_i16(d, field::RACE));
+        let (hull, pt) = (i32_at(d, field::HULL).max(0) as usize, i16_at(d, field::RACE));
         (1..0xc1).filter(|&t| tech_fits(c.sim, c.techs, c.debug, hull, t, self.pod, min, c.en(), pt)).collect()
     }
 
@@ -271,7 +272,7 @@ impl Design {
         self.pods.hand = false;
         self.pods.frames2.clear();
         self.pods.outlines.clear();
-        let n = self.edited(c.state).map_or(0, |d| pod_count(c.rules, rd_i16(d, field::RACE), self.loaded.max(0)));
+        let n = self.edited(c.state).map_or(0, |d| pod_count(c.rules, i16_at(d, field::RACE), self.loaded.max(0)));
         self.pods.no_techs = (0..n).map(|k| !self.techs_on(c, k + 1)).collect();
         // The 3D button: +7 a frame up to 10, then −7 back to 0 (the frame isn't reset by a new press).
         if self.opened && !self.closing && self.frame >= 60.0 {
@@ -370,7 +371,7 @@ impl Design {
             return;
         }
         let Some(d) = self.edited(c.state) else { return };
-        let n = pod_count(c.rules, rd_i16(d, field::RACE), self.loaded);
+        let n = pod_count(c.rules, i16_at(d, field::RACE), self.loaded);
         let r = c.rules.design_screen.scale.get(self.loaded as usize).copied().unwrap_or(0.0) * 50.0;
         if self.add_zoom != 0.0 || self.sub_zoom != 0.0 || self.pods.sub2 != 0.0 {
             return;
@@ -532,14 +533,6 @@ impl Design {
         }
         self.pods.marked = false;
     }
-}
-
-fn rd_i32(r: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
-}
-
-fn rd_i16(r: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([r[o], r[o + 1]])
 }
 
 #[cfg(test)]
