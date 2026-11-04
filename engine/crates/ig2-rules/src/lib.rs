@@ -920,13 +920,15 @@ impl Rules {
         let img = PeImage::parse(exe)?;
         let tab = |(va, stride, n): (u32, usize, usize)| img.read(va, stride * n).map(|b| (b, stride, n));
         let ints = |t| -> Result<Vec<i32>> { let (b, _, n) = tab(t)?; Ok((0..n).map(|i| i32_at(b, 4 * i)).collect()) };
+        let records = |t| -> Result<std::slice::ChunksExact<'_, u8>> { let (b, s, _) = tab(t)?; Ok(b.chunks_exact(s)) };
         let floats = |t| -> Result<Vec<f32>> { Ok(ints(t)?.into_iter().map(|x| f32::from_bits(x as u32)).collect()) };
 
         let firepower = ints(layout::TECH_FIREPOWER)?;
-        let (tb, ts, tn) = tab(layout::TECHS)?;
-        let techs = (0..tn)
-            .map(|i| {
-                let r = &tb[i * ts..(i + 1) * ts];
+        let (tb, ts, _) = tab(layout::TECHS)?;
+        let techs = tb
+            .chunks_exact(ts)
+            .enumerate()
+            .map(|(i, r)| {
                 Tech {
                     index: i,
                     name: cstr(&r[..20]),
@@ -948,10 +950,9 @@ impl Rules {
             })
             .collect();
 
-        let (bb, bs, bn) = tab(layout::BUILDINGS)?;
-        let buildings = (0..bn)
-            .map(|i| {
-                let r = &bb[i * bs..(i + 1) * bs];
+        let buildings = records(layout::BUILDINGS)?
+            .enumerate()
+            .map(|(i, r)| {
                 Building {
                     index: i,
                     tech: r[0],
@@ -971,10 +972,9 @@ impl Rules {
             })
             .collect();
 
-        let (pb, ps, pn) = tab(layout::POD_TYPES)?;
-        let pod_types = (0..pn)
-            .map(|i| {
-                let r = &pb[i * ps..(i + 1) * ps];
+        let pod_types = records(layout::POD_TYPES)?
+            .enumerate()
+            .map(|(i, r)| {
                 PodType {
                     index: i,
                     id: i32_at(r, 0),
@@ -1000,17 +1000,15 @@ impl Rules {
             let (b, s, n) = tab(t)?;
             Ok((0..n).map(|i| (0..s / 4).map(|k| i32_at(b, i * s + 4 * k)).collect()).collect())
         };
-        let (db, ds, dn) = tab(layout::DESIGNS)?;
-        let designs = (0..dn)
-            .map(|i| {
-                let r = &db[i * ds..(i + 1) * ds];
+        let designs = records(layout::DESIGNS)?
+            .enumerate()
+            .map(|(i, r)| {
                 DesignTemplate { index: i, name: cstr(&r[..20]), raw: r.to_vec() }
             })
             .collect();
-        let (hb, hs, hn) = tab(layout::HULLS)?;
-        let hulls = (0..hn)
-            .map(|i| {
-                let r = &hb[i * hs..(i + 1) * hs];
+        let hulls = records(layout::HULLS)?
+            .enumerate()
+            .map(|(i, r)| {
                 Hull {
                     index: i,
                     class: i16::from_le_bytes([r[0], r[1]]),
@@ -1022,11 +1020,10 @@ impl Rules {
                 }
             })
             .collect();
-        let (wb, ws, wn) = tab(layout::SPACE_WEAPONS)?;
         let f32_at = |r: &[u8], o: usize| f32::from_bits(i32_at(r, o) as u32);
-        let space_weapons = (0..wn)
-            .map(|i| {
-                let r = &wb[i * ws..(i + 1) * ws];
+        let space_weapons = records(layout::SPACE_WEAPONS)?
+            .enumerate()
+            .map(|(i, r)| {
                 SpaceWeapon {
                     index: i,
                     kind: i32_at(r, 0),
@@ -1070,10 +1067,9 @@ impl Rules {
             designs,
             space_weapons,
             shot_forms: {
-                let (b, s, n) = tab(layout::SHOT_FORMS)?;
-                (0..n)
-                    .map(|i| {
-                        let r = &b[i * s..(i + 1) * s];
+                records(layout::SHOT_FORMS)?
+                    .enumerate()
+                    .map(|(i, r)| {
                         ShotForm { index: i, model: cstr(&r[..0x10]), size: f32::from_bits(i32_at(r, 0x10) as u32), slots: i32_at(r, 0x14) }
                     })
                     .collect()
@@ -1120,10 +1116,7 @@ impl Rules {
             },
             road_scale: floats(layout::ROAD_SCALE)?,
             scaffold_heights: floats(layout::SCAFFOLD_HEIGHTS)?,
-            scaffold_masks: {
-                let (b, s, n) = tab(layout::SCAFFOLD_MASKS)?;
-                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
-            },
+            scaffold_masks: records(layout::SCAFFOLD_MASKS)?.map(<[u8]>::to_vec).collect(),
             scaffold_scales: floats(layout::SCAFFOLD_SCALES)?,
             charset: {
                 let t = ints(layout::CHAR_TABLES)?;
@@ -1140,18 +1133,9 @@ impl Rules {
                 }
             },
             race_name_x: ints(layout::RACE_NAME_X)?,
-            pictures: {
-                let (b, s, n) = tab(layout::PICTURES)?;
-                (0..n).map(|i| cstr(&b[i * s..i * s + 0x100])).collect()
-            },
-            colony_brushes: {
-                let (b, s, n) = tab(layout::COLONY_BRUSHES)?;
-                (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
-            },
-            starmap_brushes: {
-                let (b, s, n) = tab(layout::STARMAP_BRUSHES)?;
-                (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
-            },
+            pictures: records(layout::PICTURES)?.map(|r| cstr(&r[..0x100])).collect(),
+            colony_brushes: records(layout::COLONY_BRUSHES)?.map(Brush::from_record).collect(),
+            starmap_brushes: records(layout::STARMAP_BRUSHES)?.map(Brush::from_record).collect(),
             mouse_hotspot: ints(layout::MOUSE_HOTSPOT)?,
             unit_models: {
                 let models = |t| -> Result<Vec<UnitModel>> {
@@ -1181,10 +1165,7 @@ impl Rules {
                 scale: floats(layout::DESIGN_HULL_SCALE)?,
                 pod_slots: ints(layout::DESIGN_POD_SLOTS)?,
                 pod_table: ints(layout::DESIGN_POD_TABLE_OF_RACE)?,
-                brushes: {
-                    let (b, s, n) = tab(layout::DESIGN_BRUSHES)?;
-                    (0..n).map(|i| Brush::from_record(&b[i * s..(i + 1) * s])).collect()
-                },
+                brushes: records(layout::DESIGN_BRUSHES)?.map(Brush::from_record).collect(),
             },
             research_screen: {
                 let w = ints(layout::RESEARCH_WHEEL)?;
@@ -1222,10 +1203,8 @@ impl Rules {
             },
             declare_war_unreliability: ints(layout::DECLARE_WAR_UNRELIABILITY)?,
             spy_missions: {
-                let (b, s, n) = tab(layout::SPY_MISSIONS)?;
-                (0..n)
-                    .map(|i| {
-                        let r = &b[i * s..(i + 1) * s];
+                records(layout::SPY_MISSIONS)?
+                    .map(|r| {
                         SpyMission {
                             enabled: r[0],
                             kind: i32_at(r, 4),
@@ -1247,10 +1226,7 @@ impl Rules {
             },
             spy_outcome_state: ints(layout::SPY_OUTCOME_STATE)?,
             spy_rank_points: ints(layout::SPY_RANK_POINTS)?,
-            spy_templates: {
-                let (b, s, n) = tab(layout::SPY_TEMPLATES)?;
-                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
-            },
+            spy_templates: records(layout::SPY_TEMPLATES)?.map(<[u8]>::to_vec).collect(),
             spy_rank_xp: ints(layout::SPY_RANK_XP)?,
             ground_weapons: ints(layout::GROUND_WEAPONS)?.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect(),
             ground_hull_hp: ints(layout::GROUND_HULL_HP)?,
@@ -1261,14 +1237,8 @@ impl Rules {
             ground_armour: floats(layout::GROUND_ARMOUR)?,
             campaign_words: ints(layout::CAMPAIGN)?,
             production_template: tab(layout::PRODUCTION_TEMPLATE)?.0.to_vec(),
-            design_templates: {
-                let (b, s, n) = tab(layout::DESIGN_TEMPLATES)?;
-                (0..n).map(|i| b[i * s..(i + 1) * s].to_vec()).collect()
-            },
-            story_recruit_names: {
-                let (b, s, n) = tab(layout::STORY_RECRUITS)?;
-                (0..n).map(|i| b[i * s..(i + 1) * s].iter().take_while(|&&c| c != 0).copied().collect()).collect()
-            },
+            design_templates: records(layout::DESIGN_TEMPLATES)?.map(<[u8]>::to_vec).collect(),
+            story_recruit_names: records(layout::STORY_RECRUITS)?.map(|r| r.iter().take_while(|&&c| c != 0).copied().collect()).collect(),
             ground_slope_limits: floats(layout::GROUND_SLOPE_LIMITS)?,
             diplomacy_screen: {
                 let names = |t| -> Result<Vec<String>> {
@@ -1303,11 +1273,10 @@ impl Rules {
             ai_build_min: tab(layout::AI_BUILD_MIN)?.0.to_vec(),
             ai_build_max: tab(layout::AI_BUILD_MAX)?.0.to_vec(),
             ship_types: {
-                let (b, s, n) = tab(layout::SHIP_TYPES)?;
                 let f = |r: &[u8], o: usize| f32::from_bits(i32_at(r, o) as u32);
-                (0..n)
-                    .map(|i| {
-                        let r = &b[i * s..(i + 1) * s];
+                records(layout::SHIP_TYPES)?
+                    .enumerate()
+                    .map(|(i, r)| {
                         ShipTypeRecord {
                             index: i,
                             name: cstr(&r[..0x10]),
