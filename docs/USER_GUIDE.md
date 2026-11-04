@@ -59,6 +59,13 @@ In the room every empire is a row: its colour, the race's picture, the race, the
 galaxy settings with the arrows; "Take seat" moves you to a free slot; the host copies the join code with "Copy join
 code". If you press Start as host while someone is not ready, the room says so and the button becomes "Start anyway";
 pressing it again readies everyone and starts.
+With Discord running on the same computer, your Discord profile shows what you do in the game: the menu page,
+the multiplayer room and its seats, or the game's mode, race, difficulty, screen, date and your empire's planets,
+population, ships, credits and score. As the host of a room that isn't private and has a free seat, your profile
+also carries a Join button: a friend who presses it (or asks to join and gets accepted at once) has their game
+started if it isn't running, and it opens the connection page and joins your room with its join code (a password
+room still asks for the password). "Discord status" (Options, Game) turns it off, shows the status only, or the
+status with the Join button (the default).
 For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
 (race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
 Start begins a generated galaxy. The full single-player path is still there.

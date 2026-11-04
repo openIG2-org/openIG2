@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Discord Rich Presence: your Discord profile shows the menu page, the multiplayer room, or the game's mode, race, difficulty, screen, date and empire numbers; a host's open room has a Join button that starts a friend's game and joins it (Options, Game: off, status, or with join; ADR 0080).
 - Modern starmap HUD: the selected planet shows its own turning globe in the card and the long info's header, the date reads as in the original's top bar, and the screen keys stay on a narrow screen.
 - Production view, research screen and ship design screen compared with their design boards and fixed: tech stats as table rows, labels that fit their columns in every language, every fitting tech listed for a pod, evenly spaced count buttons, and the hand pointer over every button, row and tile (ADR 0071, ADR 0075).
 - Modern messages screen (Options, Interface; on by default): the inbox, the talking head in a metal frame, the message's card with its answers as buttons and the text typed out in wide, readable lines with a blinking caret, a "Full text" button and Exit; the same rows, arrows, answers and keys as the original (ADR 0076).
