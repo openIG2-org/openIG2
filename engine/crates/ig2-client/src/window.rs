@@ -1884,18 +1884,23 @@ impl App {
         self.world.send(Command::Research { order: ig2_net::ResearchCmd::Start { tech: t } });
     }
 
+    /// No main menu, battle, spy screen, help or Options is up over the game's own screens (the modern pages of
+    /// the starmap, colony and the overlay screens show only then).
+    fn nothing_over(&self) -> bool {
+        self.front.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none()
+    }
+
     /// Ours (ADR 0065): the modern starmap HUD is up (its option on, the starmap shown with nothing over it).
     fn modern_up(&self) -> bool {
-        self.display.modern_starmap && self.front.is_none() && self.colony.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.view.is_some()
+        self.display.modern_starmap && self.nothing_over() && self.colony.is_none() && self.overlay.is_none() && self.view.is_some()
     }
 
     /// Ours (ADR 0070): the modern colony screen is up (its option on, the colony shown with nothing over it; the planet
     /// info mode's long info is its own panel, ADR 0074).
     fn colony_modern_up(&self) -> bool {
-        self.display.modern_colony && self.front.is_none() && self.overlay.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.world.colony_curr.is_some() && self.colony.is_some()
+        self.display.modern_colony && self.nothing_over() && self.overlay.is_none() && self.world.colony_curr.is_some() && self.colony.is_some()
     }
 
-    /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
     /// Ours (ADR 0078): the modern main menu's page is up (it sees the pointer; a press over its panel is its own).
     fn main_menu_modern_up(&self) -> bool {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.s.panel().is_some())
@@ -1916,8 +1921,9 @@ impl App {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| (f.s.new_game_up() || f.s.name_page_up()) && f.mp.is_none() && f.mods.is_none())
     }
 
+    /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
     fn info_modern_up(&self) -> bool {
-        self.display.modern_info && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Info) && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+        self.display.modern_info && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Info) && self.hud.is_some()
     }
 
     /// The modern info screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the classic
@@ -1978,7 +1984,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern messages screen is up (its option on, the screen shown with nothing over it).
     fn messages_modern_up(&self) -> bool {
-        self.display.modern_messages && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Messages) && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+        self.display.modern_messages && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Messages) && self.hud.is_some()
     }
 
     /// The modern messages screen's acts of its last frame: the bar's as the starmap HUD's, the rest as the original's
@@ -2013,7 +2019,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern diplomacy screen is up (its option on, the screen shown with nothing over it).
     fn diplomacy_modern_up(&self) -> bool {
-        self.display.modern_diplomacy && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Diplomacy) && self.diplomacy.is_some() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+        self.display.modern_diplomacy && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Diplomacy) && self.diplomacy.is_some() && self.hud.is_some()
     }
 
     /// Ours (ADR 0076): one of the modern diplomacy, spy or trade screens is up; their panels own the whole screen.
@@ -2023,7 +2029,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern trade screen is up (its option on, the screen shown with nothing over it).
     fn trade_modern_up(&self) -> bool {
-        self.display.modern_trade && self.front.is_none() && self.overlay == Some(crate::ui::Screen::Trade) && self.trade.is_some() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+        self.display.modern_trade && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Trade) && self.trade.is_some() && self.hud.is_some()
     }
 
     /// The modern trade screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the
@@ -2123,12 +2129,12 @@ impl App {
 
     /// Ours (ADR 0071): the modern research screen is up (its option on, the screen shown with nothing over it).
     fn research_modern_up(&self) -> bool {
-        self.display.modern_research && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some() && self.front.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none()
+        self.display.modern_research && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some()
     }
 
     /// Ours (ADR 0075): the modern design screen is up (its option on, the screen shown with nothing over it).
     fn design_modern_up(&self) -> bool {
-        self.display.modern_design && self.overlay == Some(crate::ui::Screen::Design) && self.design.is_some() && self.front.is_none() && self.spacewar.is_none() && self.spy.is_none() && self.help.is_none() && self.options.is_none()
+        self.display.modern_design && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Design) && self.design.is_some()
     }
 
     /// Ours (ADR 0071): the modern production view is up (under the modern starmap HUD).
@@ -3195,13 +3201,7 @@ impl App {
                 if let Some(f) = &self.front {
                     let name = String::from_utf8_lossy(&f.s.player).into_owned();
                     self.settings.set("MultiplayerNev", &name);
-                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
-                    own.set("MultiplayerNev", &name);
-                    if let Some(p) = ig2_formats::options::Options::own_path() {
-                        if let Err(e) = ig2_formats::userfs::write(&p, own.to_bytes()) {
-                            eprintln!("ig2-client: {}: {e}", p.display());
-                        }
-                    }
+                    crate::display::update_own_settings(|own| own.set("MultiplayerNev", &name));
                 }
             }
             // `MainScr_Main` 0x23 / 0x22: the server path and the remaster's matchmaking; ours: our MP screens
@@ -4164,13 +4164,7 @@ impl App {
     /// `SaveGlobalRegistrySettings`: the screen's settings into the remake's own settings file (beside the original's
     /// `options.dat`, which stays untouched), and the rows' values for the next time.
     fn store_settings_from(&mut self, s: &crate::options::OptionsScreen) {
-        let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
-        s.store(&mut own);
-        if let Some(p) = ig2_formats::options::Options::own_path() {
-            if let Err(e) = ig2_formats::userfs::write(&p, own.to_bytes()) {
-                eprintln!("ig2-client: {}: {e}", p.display());
-            }
-        }
+        crate::display::update_own_settings(|own| s.store(own));
         s.store(&mut self.settings);
         if let (Some(m), Some(f)) = (&s.modern, &mut self.front) {
             f.s.player = m.name.clone();
@@ -5049,13 +5043,7 @@ impl App {
                 StoryUi::Storyline { campaign, value } => {
                     let key = format!("Fable_{campaign}");
                     self.settings.set(&key, &value.to_string());
-                    let mut own = ig2_formats::options::Options::own_path().and_then(|p| ig2_formats::userfs::read(p).ok()).map(|b| ig2_formats::options::Options::parse(&b)).unwrap_or_default();
-                    own.set(&key, &value.to_string());
-                    if let Some(path) = ig2_formats::options::Options::own_path() {
-                        if let Err(e) = ig2_formats::userfs::write(&path, own.to_bytes()) {
-                            eprintln!("ig2-client: {}: {e}", path.display());
-                        }
-                    }
+                    crate::display::update_own_settings(|own| own.set(&key, &value.to_string()));
                     continue;
                 }
                 StoryUi::Earthquake(p) => {
