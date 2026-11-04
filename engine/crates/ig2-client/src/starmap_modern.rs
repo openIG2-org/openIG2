@@ -947,9 +947,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
         // The card itself is the info box (hot-spot 8): left and right click as the original's.
         let card = ui.interact(body.response.rect, ui.id().with("smh-info-card"), Sense::click());
         let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
-        if hot > 0.0 {
-            ds::rim(ui.painter(), body.response.rect.expand(6.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-        }
+        ds::hover_rim(ui.painter(), body.response.rect.expand(6.0), ds::RADIUS_PLATE, hot);
         let card = hand(card).on_hover_text(&info.tip);
         if card.clicked() {
             acts.push(Act::Info(false));
@@ -1343,9 +1341,7 @@ fn planet_list(ui: &egui::Ui, s: &Select, plate: Rect, current: &str) -> Vec<Lis
             ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
             ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
         }
-        if hot > 0.0 {
-            ds::rim(p, row.shrink(1.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-        }
+        ds::hover_rim(p, row.shrink(1.0), ds::RADIUS_PLATE, hot);
         Text::new(&r.text, font).color(k.ink).shrink(12.0).paint_only(ui, row.shrink2(vec2(16.0, 0.0)));
         // The drawn row reaches its whole height (the margins included).
         rows.push((row.expand2(vec2(6.0, 2.0)), [r.rect[0] + r.rect[2] / 2.0, r.rect[1] + r.rect[3] / 2.0]));
@@ -1452,7 +1448,7 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option
             ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
         }
         if current.is_some() && hot > 0.0 {
-            ds::rim(p, row.shrink(1.0), ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+            ds::hover_rim(p, row.shrink(1.0), ds::RADIUS_PLATE, hot);
         }
         let inner = row.shrink2(vec2(6.0, 0.0));
         let base = crate::gui::ds::fit::baseline(inner, font);
@@ -1571,9 +1567,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
                 let r = next(LI_ALL, 36.0);
                 let (hot, down) = state(all_id);
                 ds::plate_fill(ui.painter(), r, ds::RADIUS_PLATE, down);
-                if hot > 0.0 {
-                    ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-                }
+                ds::hover_rim(ui.painter(), r, ds::RADIUS_PLATE, hot);
                 Text::new(&calm(all), Font::LABEL.tracking(0.12).upper(false)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
                 spots.push((all_id, r));
                 for (id, glyph) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {

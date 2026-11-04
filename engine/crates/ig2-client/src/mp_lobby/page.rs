@@ -187,7 +187,7 @@ fn tab_well(ui: &mut egui::Ui, labels: &[String], selected: usize) -> Option<usi
         if i == selected {
             ds::plate_fill(ui.painter(), r, ds::RADIUS_PLATE, false);
         } else {
-            ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+            ds::hover_rim(ui.painter(), r, ds::RADIUS_PLATE, hover);
         }
         let c = if i == selected { k.ink } else { k.ink_muted.lerp_to_gamma(k.ink_silver, hover) };
         Text::new(s, f).color(c).center().paint(ui, r);
@@ -218,7 +218,7 @@ fn row_look(ui: &egui::Ui, rect: Rect, on: bool, hover: f32) {
         ds::hgrad(ui.painter(), rect, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(36)), (1.0, Color32::from_white_alpha(5))]);
         ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, k.ink_silver);
     } else {
-        ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+        ds::hover_rim(ui.painter(), rect, ds::RADIUS_PLATE, hover);
     }
 }
 

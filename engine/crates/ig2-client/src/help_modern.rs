@@ -254,8 +254,8 @@ impl Page {
                         if sel {
                             ds::hgrad(p, rr, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(41)), (1.0, Color32::from_white_alpha(5))]);
                             ds::rim(p, rr, ds::RADIUS_PLATE, k.ink_silver);
-                        } else if hover > 0.0 {
-                            ds::rim(p, rr, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+                        } else {
+                            ds::hover_rim(p, rr, ds::RADIUS_PLATE, hover);
                         }
                         if resp.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);

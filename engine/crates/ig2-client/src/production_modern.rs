@@ -345,9 +345,7 @@ fn lamp(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
         p.rect_filled(r, ds::RADIUS_PLATE, k.plate_high.gamma_multiply(lit));
         ds::shadow(p, r, ds::RADIUS_PLATE, 0, 6, 0, k.info.gamma_multiply(0.25 * lit));
     }
-    if hot > 0.0 {
-        ds::rim(p, r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(p, r, ds::RADIUS_PLATE, hot);
     Text::new(label, LAMP).center().color(k.ink_silver.lerp_to_gamma(k.ink, lit.max(hot))).paint(ui, r.shrink2(vec2(4.0, 0.0)));
     resp
 }

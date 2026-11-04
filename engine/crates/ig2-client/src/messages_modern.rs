@@ -228,9 +228,7 @@ fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
         let resp = ui.interact(r, ui.id().with(("mmh-answer", i)), Sense::click());
         let hot = ds::hover_t(ui.ctx(), resp.id, !off && resp.hovered());
         ds::plate_fill(ui.painter(), r, ds::RADIUS_PLATE, resp.is_pointer_button_down_on());
-        if hot > 0.0 {
-            ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-        }
+        ds::hover_rim(ui.painter(), r, ds::RADIUS_PLATE, hot);
         let cap = Rect::from_min_size(r.min + vec2(10.0, (ah - 28.0) / 2.0), vec2(28.0, 28.0));
         ds::lcd_window(ui.painter(), cap);
         Text::new(keys[i.min(3)], Font::READOUT.sized(18.0)).center().color(if *off { k.ink_muted } else { k.lcd_ink }).paint(ui, cap);

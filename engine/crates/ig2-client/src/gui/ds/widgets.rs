@@ -49,9 +49,9 @@ fn glide(ui: &Ui, id: Id, to: f32) -> f32 {
 }
 
 /// The hover rim (`inset 0 0 0 1px --rim-bright`) at `t`.
-fn hover_rim(ui: &Ui, rect: Rect, r: u8, t: f32) {
+pub fn hover_rim(p: &egui::Painter, rect: Rect, r: impl Into<egui::CornerRadius>, t: f32) {
     if t > 0.0 {
-        rim(ui.painter(), rect, r, tokens().rim_bright.gamma_multiply(t));
+        rim(p, rect, r, tokens().rim_bright.gamma_multiply(t));
     }
 }
 
@@ -147,7 +147,7 @@ impl Widget for Plate<'_> {
         let p = ui.painter();
         let k = tokens();
         plate_fill(p, rect, RADIUS_PANEL, self.primary || l.down);
-        hover_rim(ui, rect, RADIUS_PANEL, l.hover);
+        hover_rim(ui.painter(), rect, RADIUS_PANEL, l.hover);
         if l.focus {
             focus_mark(p, rect, RADIUS_PANEL as f32, 2.0);
         }
@@ -226,7 +226,7 @@ pub fn menu(ui: &mut Ui, id: impl std::hash::Hash, style: MenuStyle, entries: &[
         if l.down && selected != Some(i) {
             ui.painter().rect_filled(rect, RADIUS_PLATE, k.plate_low);
         }
-        hover_rim(ui, rect, RADIUS_PLATE, l.hover * (selected != Some(i)) as u8 as f32);
+        hover_rim(ui.painter(), rect, RADIUS_PLATE, l.hover * (selected != Some(i)) as u8 as f32);
         if l.focus {
             focus_mark(ui.painter(), rect, RADIUS_PLATE as f32, 2.0);
         }
@@ -510,7 +510,7 @@ pub fn row_back(ui: &Ui, rect: Rect, hover: f32, selected: bool) {
         hgrad(ui.painter(), rect, RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
         rim(ui.painter(), rect, RADIUS_PLATE, k.ink_silver);
     } else {
-        hover_rim(ui, rect, RADIUS_PLATE, hover);
+        hover_rim(ui.painter(), rect, RADIUS_PLATE, hover);
     }
 }
 
@@ -595,7 +595,7 @@ pub fn option_row_in<R>(ui: &mut Ui, height: f32, font: Font, label: &str, focus
     if focused {
         ui.painter().rect_filled(rect, RADIUS_PLATE, k.rim_bright.gamma_multiply(0.12));
     }
-    hover_rim(ui, rect, RADIUS_PLATE, if focused { 1.0 } else { hover * 0.6 });
+    hover_rim(ui.painter(), rect, RADIUS_PLATE, if focused { 1.0 } else { hover * 0.6 });
     let inner = rect.shrink2(Vec2::new(SPACE[1], 0.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(Align::Center)));
     if !enabled {

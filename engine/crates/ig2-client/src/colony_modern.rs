@@ -529,8 +529,8 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
         }
         if b.cursor {
             ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.lcd_ink.gamma_multiply(0.7));
-        } else if hot > 0.0 {
-            ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+        } else {
+            ds::hover_rim(ui.painter(), w.rect, ds::RADIUS_PLATE, hot);
         }
         let w = ds::tip(w, &b.cursor_tip);
         if !b.pending && ds::either(&w) {
@@ -578,7 +578,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
             let on = i == tab;
             ds::plate_fill(ui.painter(), r, ds::RADIUS_PANEL, on || resp.is_pointer_button_down_on());
             if hot > 0.0 && !on {
-                ds::rim(ui.painter(), r, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
+                ds::hover_rim(ui.painter(), r, ds::RADIUS_PANEL, hot);
             }
             let cut = Text::new(h, f).center().shrink(9.0).color(if on { k.ink } else { k.ink_silver.lerp_to_gamma(k.ink, hot) }).paint(ui, r.shrink2(vec2(4.0, 0.0))).cut;
             let resp = if cut { resp.on_hover_text(h) } else { resp };
@@ -711,9 +711,7 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
     let card = ui.interact(rect, ui.id().with("cmh-card-body"), Sense::click());
     let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
-    if hot > 0.0 {
-        ds::rim(ui.painter(), rect, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(ui.painter(), rect, ds::RADIUS_PANEL, hot);
     let card = if c.tip.is_empty() { card } else { card.on_hover_text(&c.tip) };
     if card.clicked() {
         acts.push(Act::Card(false));

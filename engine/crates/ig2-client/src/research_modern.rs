@@ -467,8 +467,8 @@ fn tile(ui: &mut Ui, a: &Area, on: bool, size: egui::Vec2) -> egui::Response {
     ds::plate_fill(p, r, ds::RADIUS_PLATE, on || resp.is_pointer_button_down_on());
     if sel > 0.0 {
         ds::rim(p, r, ds::RADIUS_PLATE, k.ink.gamma_multiply(sel));
-    } else if hot > 0.0 {
-        ds::rim(p, r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+    } else {
+        ds::hover_rim(p, r, ds::RADIUS_PLATE, hot);
     }
     let enabled = a.known > 0;
     let count = format!("{}/{}", a.owned, a.known);

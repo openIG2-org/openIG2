@@ -1245,7 +1245,7 @@ impl Modern {
                     ds::hgrad(p, rect, ds::RADIUS_PLATE, &[(0.0, egui::Color32::from_white_alpha(41)), (1.0, egui::Color32::from_white_alpha(5))]);
                     ds::rim(p, rect, ds::RADIUS_PLATE, k.ink_silver);
                 } else {
-                    ds::rim(p, rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+                    ds::hover_rim(p, rect, ds::RADIUS_PLATE, hover);
                 }
                 if self.keyed && self.focus == i {
                     ds::focus_mark(p, rect, ds::RADIUS_PLATE as f32, 2.0);

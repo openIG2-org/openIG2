@@ -252,9 +252,7 @@ fn rail_key(ui: &egui::Ui, r: Rect, name: &str, charge: Option<f32>, lit: bool, 
         ds::rim(p, r, radius, k.ink_silver);
     } else {
         p.rect_filled(r, radius, Color32::from_rgba_unmultiplied(0, 12, 20, 204));
-        if hot > 0.0 {
-            ds::rim(p, r, radius, k.rim_bright.gamma_multiply(hot));
-        }
+        ds::hover_rim(p, r, radius, hot);
     }
     let bar = charge.map(|_| 10.0).unwrap_or(0.0);
     let two = name.contains(' ') && Text::new(name, RAIL).layout(ui.ctx(), f32::INFINITY).width > r.width() - 8.0;
@@ -296,9 +294,7 @@ fn card(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) {
     let p = ui.painter().clone();
     let hot = ds::hover_t(ui.ctx(), egui::Id::new("bmh-card"), pointer(ui).is_some_and(|q| r.contains(q)));
     ds::paint_panel(&p, r, ds::PanelKind::Deep, 0.88);
-    if hot > 0.0 {
-        ds::rim(&p, r, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(&p, r, ds::RADIUS_PANEL, hot);
     st.panels.push(r);
     let inner = r.shrink2(vec2(16.0, 14.0));
     let side = Rect::from_min_size(inner.min, vec2(96.0, 96.0));
