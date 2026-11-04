@@ -815,16 +815,9 @@ impl Renderer {
             let (w, h) = (size.0 as f32 / 2.0, size.1 as f32 / 2.0);
             (tex, Instance::new(kind::SPRITE, [w, h], [w, h], [c, c, c, 1.0]))
         });
-        let mut all;
-        let bytes: &[u8] = match backdrop {
-            Some((_, i)) => {
-                all = frame.instances.clone();
-                all.push(i);
-                bytemuck::cast_slice(&all)
-            }
-            None => bytemuck::cast_slice(&frame.instances),
-        };
-        let need = (bytes.len() as u64).max(std::mem::size_of::<Instance>() as u64);
+        let bytes: &[u8] = bytemuck::cast_slice(&frame.instances);
+        let extra = backdrop.map_or(0, |_| std::mem::size_of::<Instance>() as u64);
+        let need = (bytes.len() as u64 + extra).max(std::mem::size_of::<Instance>() as u64);
         if self.instances.as_ref().is_none_or(|(_, cap)| *cap < need) {
             let cap = need.next_power_of_two();
             let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -838,6 +831,9 @@ impl Renderer {
         let (buf, _) = self.instances.as_ref().unwrap();
         if !bytes.is_empty() {
             self.queue.write_buffer(buf, 0, bytes);
+        }
+        if let Some((_, i)) = &backdrop {
+            self.queue.write_buffer(buf, bytes.len() as u64, bytemuck::bytes_of(i));
         }
         let (view, raw) = (target.create_view(&Default::default()), raw_view(target));
         let mut enc = self.device.create_command_encoder(&Default::default());
