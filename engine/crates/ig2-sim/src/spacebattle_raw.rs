@@ -4,6 +4,7 @@
 //! [`Battle`]. The trace replay (`tests/spacebattle_trace.rs`) and the client's battle screen
 //! (`ig2-client::spacewar_screen`, from a capture's dump) share it.
 
+pub use crate::bytes::{f32_at, i16_at, i32_at, u32_at};
 use std::collections::{BTreeMap, HashMap};
 
 use crate::spacebattle::*;
@@ -19,18 +20,6 @@ pub const MOUNT: usize = 0x70;
 
 pub fn unhex(s: &str) -> Vec<u8> {
     (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap()).collect()
-}
-pub fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-pub fn u32_at(b: &[u8], o: usize) -> u32 {
-    u32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-pub fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-pub fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 pub fn v4_at(b: &[u8], o: usize) -> V4 {
     V4 { x: f32_at(b, o), y: f32_at(b, o + 4), z: f32_at(b, o + 8), w: 0.0 }

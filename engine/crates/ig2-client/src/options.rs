@@ -188,6 +188,8 @@ pub struct Slot {
     pub file: PathBuf,
     /// The remake's own format (`.ig2s`) rather than an original save.
     pub ours: bool,
+    /// When the file was written, as read with the slots (none where the file system can't tell).
+    pub modified: Option<std::time::SystemTime>,
 }
 
 /// The save folder (`GetSavePath` exe 0x5579c0: the folder of `options.dat`); `IG2_SLOT_DIR` overrides it.
@@ -285,16 +287,17 @@ pub fn read_slots(dir: Option<&Path>) -> Vec<Option<Slot>> {
     let mut out = vec![None; SLOTS + 1];
     let Some(dir) = dir else { return out };
     for (n, slot) in out.iter_mut().enumerate().skip(1) {
+        let modified = |f: &Path| std::fs::metadata(f).and_then(|m| m.modified()).ok();
         let ours = dir.join(format!("save{n}.ig2s"));
         if let Some((name, date)) = ig2_formats::userfs::read(&ours).ok().and_then(|b| our_title(&b)) {
-            *slot = Some(Slot { name, date, file: ours, ours: true });
+            *slot = Some(Slot { name, date, modified: modified(&ours), file: ours, ours: true });
             continue;
         }
         let orig = dir.join(format!("save{n}.sav"));
         let head = ig2_formats::userfs::read_head(&orig, 80).ok().and_then(|b| ig2_formats::save::Header::read(&b).ok());
         if let Some(h) = head {
             let name = h.name[..30].iter().take_while(|&&c| c != 0).copied().collect();
-            *slot = Some(Slot { name, date: [h.year, h.month, h.day], file: orig, ours: false });
+            *slot = Some(Slot { name, date: [h.year, h.month, h.day], modified: modified(&orig), file: orig, ours: false });
         }
     }
     out
@@ -1520,7 +1523,7 @@ mod tests {
         ];
         let s = Settings { music: 100, sound: 50, gamma: 0, gamma_enabled: false, page: 0, slot: 1, gfx_detail: 0 };
         let mut slots = vec![None; SLOTS + 1];
-        slots[24] = Some(Slot { name: b"Autosave 2328 1 1".to_vec(), date: [2328, 1, 1], file: PathBuf::new(), ours: false });
+        slots[24] = Some(Slot { name: b"Autosave 2328 1 1".to_vec(), date: [2328, 1, 1], file: PathBuf::new(), ours: false, modified: None });
         OptionsScreen::enter(&texts, rows, &s, false, false, slots)
     }
 

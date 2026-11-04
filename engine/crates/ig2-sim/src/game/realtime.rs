@@ -333,8 +333,7 @@ impl Game<'_> {
             planet_record: planet_record.as_ref(),
             defence_fleets: None,
         };
-        let mut rules = self.rules.space.setup_rules();
-        rules.weapons = self.live_weapons().0;
+        let rules = self.rules.space.setup_rules(self.live_weapons().0.clone());
         if self.realtime.types.is_empty() {
             self.realtime.types = self.rules.space.ship_types.clone();
         }
@@ -463,8 +462,7 @@ impl Game<'_> {
             planet_record: None,
             defence_fleets: None,
         };
-        let mut rules = self.rules.space.setup_rules();
-        rules.weapons = self.live_weapons().0;
+        let rules = self.rules.space.setup_rules(self.live_weapons().0.clone());
         if self.realtime.types.is_empty() {
             self.realtime.types = self.rules.space.ship_types.clone();
         }
@@ -477,17 +475,13 @@ impl Game<'_> {
         self.state.store_rng(&rng);
     }
 
-    /// The tick's switches (`BattleRules`) from the state.
     /// The weapon table as `InitSpaceWar` leaves it (`fegyverszamol`: the damages from the techs' firepower), and its
-    /// records' words.
-    fn live_weapons(&self) -> (Vec<WeaponRules>, Vec<Vec<i32>>) {
-        let (mut w, mut words) = (self.rules.space.weapons.clone(), self.rules.space.weapon_words.clone());
-        let space = &self.rules.space;
-        let added: Vec<_> = space.added_weapons.iter().map(|&(t, w)| (t, w, self.rules.ai.design.role(t))).collect();
-        crate::spacebattle::fegyverszamol(&mut w, &mut words, &self.rules.ai.design.firepower, &added);
-        (w, words)
+    /// records' words. Made from the rules alone, so once per game.
+    fn live_weapons(&self) -> &(Vec<WeaponRules>, Vec<Vec<i32>>) {
+        live_weapons(&self.live_weapons, self.rules)
     }
 
+    /// The tick's switches (`BattleRules`) from the state, with the live weapon table.
     fn battle_rules(&self) -> BattleRules {
         let m = &self.state.mem;
         let adat = |o: u32| m.i32(va::STORY_ADAT + o);
@@ -504,7 +498,7 @@ impl Game<'_> {
             story_retreat_lock_b: m.u8(va::TUTORIAL_PAUSED) != 0,
             // No screen fades in the canonical view.
             fade: if canonical { 0.0 } else { self.sp_battles.fade },
-            ..self.rules.space.tick_rules()
+            ..self.rules.space.tick_rules(self.live_weapons().0.clone())
         }
     }
 
@@ -512,8 +506,7 @@ impl Game<'_> {
     /// (ships, fleets, the battle planet, destroyed buildings, the follow-ups of deleted fleets).
     fn with_battle<T>(&mut self, slot: usize, f: impl FnOnce(&mut Battle, &mut Tick) -> T) -> T {
         let g = self.globals();
-        let (weapons, words) = self.live_weapons();
-        let rules = BattleRules { weapons, ..self.battle_rules() };
+        let rules = self.battle_rules();
         let bp = self.realtime.slots[slot].planet.max(0) as usize;
         let mut world = StateWorld {
             combat: self.state.combat(),
@@ -533,7 +526,8 @@ impl Game<'_> {
         let mut rng = self.state.rng();
         let mut events = Vec::new();
         let out = {
-            let mut t = Tick { rules: &rules, weapon_words: &words, rng: &mut rng, world: &mut world, events: &mut events };
+            let words = &live_weapons(&self.live_weapons, self.rules).1;
+            let mut t = Tick { rules: &rules, weapon_words: words, rng: &mut rng, world: &mut world, events: &mut events };
             f(&mut self.realtime.slots[slot], &mut t)
         };
         self.state.store_rng(&rng);
@@ -945,4 +939,16 @@ impl Game<'_> {
         let planets: Vec<usize> = (1..=self.state.planet_count()).filter(|&p| self.state.ground_field(p).is_some()).collect();
         self.with_wars(&planets, |w| w.dropships());
     }
+}
+
+/// [`Game::live_weapons`] from the game's cache, made on first use (a borrow of the cache alone, beside the
+/// battle slots).
+fn live_weapons<'a>(cache: &'a std::sync::OnceLock<super::LiveWeapons>, rules: &GameRules) -> &'a super::LiveWeapons {
+    cache.get_or_init(|| {
+        let space = &rules.space;
+        let (mut w, mut words) = (space.weapons.clone(), space.weapon_words.clone());
+        let added: Vec<_> = space.added_weapons.iter().map(|&(t, w)| (t, w, rules.ai.design.role(t))).collect();
+        crate::spacebattle::fegyverszamol(&mut w, &mut words, &rules.ai.design.firepower, &added);
+        (w, words)
+    })
 }

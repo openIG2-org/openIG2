@@ -12,6 +12,7 @@
 // The loops follow the exe's 1-based tables (empires, planets, constellations).
 #![allow(clippy::needless_range_loop)]
 
+use crate::bytes::{f32_at, i16_at};
 use ig2_formats::save::SaveGame;
 
 use super::{Game, GameRules, Libc};
@@ -232,13 +233,6 @@ fn planet_hash(p: usize, s: u8) -> u32 {
 fn put_i32(r: &mut [u8], o: usize, v: i32) {
     r[o..o + 4].copy_from_slice(&v.to_le_bytes());
 }
-fn rd_f32(r: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(r[o..o + 4].try_into().unwrap())
-}
-fn rd_i16(r: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([r[o], r[o + 1]])
-}
-
 impl<'r> Game<'r> {
     /// A new campaign (`CampaignGameStart` → `InitNewGame(seed, 0, campaign, difficulty)`), as its state right
     /// after the start (tick 0, before the first frame).
@@ -1178,7 +1172,7 @@ impl<'r> Game<'r> {
             peopled(self, h, e, pop);
             for k in 1..count {
                 let r = self.prec(h);
-                let q = self.nearest_free(rd_f32(&r, 0x18) as i32, rd_f32(&r, 0x1c) as i32);
+                let q = self.nearest_free(f32_at(&r, 0x18) as i32, f32_at(&r, 0x1c) as i32);
                 self.generate_planet(q, e, e as u8, true, false, &prod);
                 let pop = if count < 3 {
                     first[count as usize] + self.rnd_stream(1, 0, 600) - 300
@@ -1308,7 +1302,7 @@ impl<'r> Game<'r> {
         let n = self.state.planet_count();
         let mine: Vec<usize> = (1..=n).filter(|&p| {
             let r = self.prec(p);
-            r[0x20] as usize == e && rd_i16(&r, 0xd8 + 2 * en) >= 0
+            r[0x20] as usize == e && i16_at(&r, 0xd8 + 2 * en) >= 0
         }).collect();
         let k = self.rnd_stream(stream, 1, mine.len() as i32);
         if k >= 1 { mine.get(k as usize - 1).copied().unwrap_or(0) } else { 0 }
@@ -1320,10 +1314,10 @@ impl<'r> Game<'r> {
         let (mut best, mut pick) = (i32::MAX, 0);
         for p in 1..=self.state.planet_count() {
             let r = self.prec(p);
-            if r[0x20] != 0 || rd_i16(&r, 0xd8 + 2 * en) < 0 {
+            if r[0x20] != 0 || i16_at(&r, 0xd8 + 2 * en) < 0 {
                 continue;
             }
-            let (dy, dx) = (y as f32 - rd_f32(&r, 0x1c), x as f32 - rd_f32(&r, 0x18));
+            let (dy, dx) = (y as f32 - f32_at(&r, 0x1c), x as f32 - f32_at(&r, 0x18));
             let d = dy * dy + dx * dx;
             if d < best as f32 {
                 best = d as i32;
@@ -1374,7 +1368,7 @@ impl<'r> Game<'r> {
         if p == 0 || self.prec(p)[0x20] != 0 {
             let h = self.random_planet_of(e, story::STREAM);
             let r = self.prec(h);
-            p = self.nearest_free(rd_f32(&r, 0x18) as i32, rd_f32(&r, 0x1c) as i32);
+            p = self.nearest_free(f32_at(&r, 0x18) as i32, f32_at(&r, 0x1c) as i32);
         }
         let race = self.state.races()[e];
         let prod = self.state.mem.read(PGYARTAS0, 0x40);
@@ -1427,7 +1421,7 @@ impl<'r> Game<'r> {
             let mut yard = self.shipyard();
             self.fresh_fleet_slot(&mut yard);
             let mut ev = Vec::new();
-            let f = yard.new_fleet(&name, e as u8, 0, rd_f32(&r, 0x18), rd_f32(&r, 0x1c) - 15.0, 0.0, &ctx, &mut ev);
+            let f = yard.new_fleet(&name, e as u8, 0, f32_at(&r, 0x18), f32_at(&r, 0x1c) - 15.0, 0.0, &ctx, &mut ev);
             // The third destroyer: not for empire 5 in a multiplayer game.
             let mut ships = if g.multiplayer && e == 5 { vec![0x2b, 0x2b] } else { vec![0x2b, 0x2b, 0x2b] };
             if !g.multiplayer && g.human[e] {
@@ -1487,8 +1481,8 @@ impl<'r> Game<'r> {
         let mut count = 0;
         for p in 1..=self.state.planet_count() {
             let r = self.prec(p);
-            if rd_i16(&r, 0xd8 + 2 * en) > 0 || r[0x20] as usize == en {
-                let (x, y) = (rd_f32(&r, 0x18), rd_f32(&r, 0x1c));
+            if i16_at(&r, 0xd8 + 2 * en) > 0 || r[0x20] as usize == en {
+                let (x, y) = (f32_at(&r, 0x18), f32_at(&r, 0x1c));
                 max_x = max_x.max(x);
                 min_x = min_x.min(x);
                 max_y = max_y.max(y);
@@ -1853,7 +1847,7 @@ impl<'r> Game<'r> {
         let list: Vec<(usize, usize)> = (1..=8)
             .filter(|&e| alive[e])
             .flat_map(|e| (DESIGN_TEMPLATES..self.state.designs[e].len()).map(move |i| (e, i)))
-            .filter(|&(e, i)| rd_i16(&self.state.designs[e][i], 0x16) >= 0)
+            .filter(|&(e, i)| i16_at(&self.state.designs[e][i], 0x16) >= 0)
             .collect();
         self.with_ai(|_, w, _| {
             for &(e, i) in &list {
@@ -1878,7 +1872,7 @@ impl<'r> Game<'r> {
             }
             for i in DESIGN_TEMPLATES..self.state.designs[e].len() {
                 let r = self.state.designs[e][i];
-                if rd_i16(&r, 0x16) < 0 {
+                if i16_at(&r, 0x16) < 0 {
                     continue;
                 }
                 let t = i32::from_le_bytes(r[0x48..0x4c].try_into().unwrap()).clamp(0, TECHS as i32 - 1) as u32;
@@ -1904,7 +1898,7 @@ impl<'r> Game<'r> {
             let used = self.state.mem.i32(va::BUILDING_SLOTS + 4 * p as u32).max(0) as usize;
             for j in 1..=used {
                 let r = self.state.buildings[p][j];
-                if r[0] != 0 && rd_i16(&r, 8) == 0 {
+                if r[0] != 0 && i16_at(&r, 8) == 0 {
                     self.with_war(p, |w| {
                         w.add_building_turrets(r[0], owner as i32, j as i32);
                         w.building_built(j as i32);
@@ -1913,7 +1907,7 @@ impl<'r> Game<'r> {
             }
         }
         for f in self.state.fleets.iter_mut().skip(1) {
-            if rd_i16(f, 0x52) & 0x400 != 0 {
+            if i16_at(f, 0x52) & 0x400 != 0 {
                 f[0x15] = 0xff;
             }
         }
@@ -1982,7 +1976,7 @@ impl<'r> Game<'r> {
         .min(15);
         let pos: Vec<(f32, f32)> = (0..=n).map(|p| {
             let r = self.prec(p);
-            (rd_f32(&r, 0x18), rd_f32(&r, 0x1c))
+            (f32_at(&r, 0x18), f32_at(&r, 0x1c))
         }).collect();
         let d2 = |a: usize, b: usize| {
             let (dx, dy) = (pos[a].0 - pos[b].0, pos[a].1 - pos[b].1);
@@ -2187,7 +2181,7 @@ impl<'r> Game<'r> {
         let first = self.rnd_stream(1, 1, n as i32);
         let pos: Vec<(f32, f32)> = (0..=n).map(|p| {
             let r = self.prec(p);
-            (rd_f32(&r, 0x18), rd_f32(&r, 0x1c))
+            (f32_at(&r, 0x18), f32_at(&r, 0x1c))
         }).collect();
         let mut home = [0usize; 9];
         home[1] = first.max(0) as usize;
@@ -2670,7 +2664,7 @@ impl StoryWorld for InitWorld<'_, '_, '_> {
     }
     fn planet_visibility(&self, p: i32) -> i32 {
         let en = self.mem().i32(va::EN).max(0) as usize;
-        rd_i16(&self.game.prec(p.max(0) as usize), 0xd8 + 2 * en) as i32
+        i16_at(&self.game.prec(p.max(0) as usize), 0xd8 + 2 * en) as i32
     }
     fn fleet_count(&self) -> i32 {
         self.game.state.fleets.len() as i32 - 1
@@ -2679,7 +2673,7 @@ impl StoryWorld for InitWorld<'_, '_, '_> {
         self.game.state.fleets.get(f.max(0) as usize).map_or(0xff, |r| r[0x15] as i32)
     }
     fn fleet_id(&self, f: i32) -> i32 {
-        self.game.state.fleets.get(f.max(0) as usize).map_or(0, |r| rd_i16(r, 0x16) as i32)
+        self.game.state.fleets.get(f.max(0) as usize).map_or(0, |r| i16_at(r, 0x16) as i32)
     }
     fn empire_alive(&self, e: i32) -> bool {
         self.game.state.alive().get(e.max(0) as usize).copied().unwrap_or(false)

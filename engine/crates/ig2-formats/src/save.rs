@@ -284,9 +284,8 @@ impl SaveGame {
     /// Parse a `save<n>.sav` file.
     pub fn parse(file: &[u8]) -> Result<Self> {
         let header = Header::read(file)?;
-        let start = if header.en.is_some() { 80 } else { 72 };
-        let end = start + header.compressed_len as usize;
-        let Some(z) = file.get(start..end) else {
+        let start: usize = if header.en.is_some() { 80 } else { 72 };
+        let Some(z) = start.checked_add(header.compressed_len as usize).and_then(|end| file.get(start..end)) else {
             return Err(format_err(FMT, "zlib stream runs past the file"));
         };
         let body = inflate(z)?;
@@ -306,8 +305,8 @@ impl SaveGame {
         if blob.len() < 8 {
             return Err(format_err(FMT, "multiplayer blob too short"));
         }
-        let clen = rd_i32(blob, 0) as usize;
-        let Some(z) = blob.get(8..8 + clen) else {
+        let z = usize::try_from(rd_i32(blob, 0)).ok().and_then(|clen| blob.get(8..8usize.checked_add(clen)?));
+        let Some(z) = z else {
             return Err(format_err(FMT, "zlib stream runs past the blob"));
         };
         Self::parse_stream(inflate(z)?, true)
@@ -1112,5 +1111,12 @@ mod tests {
         body[4 + 4] = 5; // "Ev" length prefix (second chunk) 4 -> 5
         let e = SaveGame::parse_stream(body, false).unwrap_err().to_string();
         assert!(e.contains("Ev"), "{e}");
+    }
+
+    #[test]
+    fn negative_multiplayer_length_is_an_error() {
+        let mut blob = (-1i32).to_le_bytes().to_vec();
+        blob.extend_from_slice(&[0; 8]);
+        assert!(SaveGame::parse_multiplayer(&blob).is_err());
     }
 }

@@ -2028,7 +2028,7 @@ impl Story {
             self.last_fn[last_fn::R] = 0;
             // `cvttss2si`: story 834 passes planet −1, whose record is whatever precedes the planets.
             let (px, py) = w.planet_xy(p);
-            (x, y) = (crate::rnd::cvtt(px as f64), crate::rnd::cvtt(py as f64));
+            (x, y) = (crate::cvt::cvtt_f64(px as f64), crate::cvt::cvtt_f64(py as f64));
             self.last_fn[last_fn::X] = x;
             self.last_fn[last_fn::Y] = y;
         } else if mode == 4 {

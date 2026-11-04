@@ -28,7 +28,7 @@ pub mod vfs;
 pub mod xv;
 pub mod zipfs;
 
-pub use container::{decode as decode_container, ContainerKind};
+pub use container::ContainerKind;
 pub use vfs::Install;
 
 #[derive(Debug, thiserror::Error)]

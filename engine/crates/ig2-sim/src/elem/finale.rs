@@ -7,7 +7,7 @@ use super::{answered, message, read};
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{nearest_fleet, random_empire};
 use crate::multi::{empire_centre, nearest_planet};
-use crate::rnd::cvtt;
+use crate::cvt::cvtt_f64;
 use crate::story::{flag, Abort, InfoLine, MessageText, Notice, Story, StoryEvent, StoryWorld, STREAM};
 
 fn move_fleet(w: &mut dyn StoryWorld, fleet: i32, kind: i32, mode: i32, x: f32, y: f32) {
@@ -101,7 +101,7 @@ pub(super) fn story_844(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 s.win(0, true, w);
             } else if w.fleet_command(f) != 1
                 || w.fleet_order(f) != 1
-                || w.planet_owner(cvtt(w.fleet_target(f) as f64)) != s.v_get(8448)
+                || w.planet_owner(cvtt_f64(w.fleet_target(f) as f64)) != s.v_get(8448)
             {
                 let mut q = s.b_search(8441, 0, w);
                 if w.planet_owner(q) != s.v_get(8448) {
@@ -277,7 +277,7 @@ pub(super) fn story_856(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 let mut near = 1000;
                 for g in 1..=n {
                     if w.fleet_owner(g) == en {
-                        near = near.min(cvtt(dist(w.fleet_xy(g), w.planet_xy(p)) as f64));
+                        near = near.min(cvtt_f64(dist(w.fleet_xy(g), w.planet_xy(p)) as f64));
                     }
                 }
                 // The target is the loop's end: the slot past the last fleet.
@@ -450,7 +450,7 @@ pub(super) fn story_862(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 let from = if f == 0 { (0.0, 0.0) } else { w.fleet_xy(f) };
                 // 50 beyond the planet, away from the raiders.
                 let (x, y) = point_in_dist(w.planet_xy(p), from, -50.0);
-                fleet_at(s, 1, 8623, cvtt(x as f64), cvtt(y as f64), 0.07, w);
+                fleet_at(s, 1, 8623, cvtt_f64(x as f64), cvtt_f64(y as f64), 0.07, w);
                 let g = s.f_search(8623, w);
                 if g >= 1 {
                     w.event(StoryEvent::FleetFlags { fleet: g, set: 0x200, clear: 0 });
@@ -467,7 +467,7 @@ pub(super) fn story_862(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                         s.win(0, true, w);
                     } else {
                         let (fx, fy) = w.fleet_xy(f);
-                        let g = nearest_fleet(cvtt(fx as f64), cvtt(fy as f64), en, &*w);
+                        let g = nearest_fleet(cvtt_f64(fx as f64), cvtt_f64(fy as f64), en, &*w);
                         if g != 0 {
                             move_fleet(w, f, 2, 2, g as f32, 0.0);
                         }
@@ -477,7 +477,7 @@ pub(super) fn story_862(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 let (mut best, mut near) = (0x640, 0);
                 for g in 1..=w.fleet_count() {
                     if w.fleet_owner(g) == en {
-                        let d = cvtt(dist_sq(w.fleet_xy(f), w.fleet_xy(g)) as f64);
+                        let d = cvtt_f64(dist_sq(w.fleet_xy(f), w.fleet_xy(g)) as f64);
                         if d < best {
                             near = g;
                             best = d;
@@ -574,7 +574,7 @@ fn mark_target(s: &mut Story, p: i32, w: &mut dyn StoryWorld) {
 /// Empire 5's planet nearest to the human's centre (`st_bGetNearest`; none aborts).
 fn nearest_of_5(w: &dyn StoryWorld) -> Result<i32, Abort> {
     let (x, y) = empire_centre(w.human(), w);
-    match nearest_planet(cvtt(x as f64), cvtt(y as f64), 5, w) {
+    match nearest_planet(cvtt_f64(x as f64), cvtt_f64(y as f64), 5, w) {
         0 => Err(Abort),
         p => Ok(p),
     }

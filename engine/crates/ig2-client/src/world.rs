@@ -309,8 +309,12 @@ impl Snapshot {
 }
 
 /// Where a fleet's order sends it: a point, a planet or another fleet (`+0x40` order, `+0x42` kind, `+0x44` target).
-/// A save played with a mod's building kind (ADR 0069) needs that mod: without it the kind has no rules.
+/// A save played with a mod's building kind (ADR 0069) needs that mod: without it the kind has no rules. A save
+/// whose table counts overflow the game's tables is refused too ([`SaveState::bad_count`]).
 pub fn check_kinds(state: &SaveState, rules: &GameRules) -> Result<(), String> {
+    if let Some(bad) = state.bad_count() {
+        return Err(format!("the save is damaged: {bad}"));
+    }
     match state.unknown_kind(rules.side.colony.buildings.len()) {
         Some(k) => Err(format!("the save has building kind {k}, which no active mod adds (enable the mods it was played with)")),
         None => match state.unknown_hull(rules.ai.design.hulls.len()) {

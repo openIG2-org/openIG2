@@ -6,6 +6,9 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 use crate::lockstep::Msg;
 use crate::wire;
 
+/// The largest message a network link takes (QUIC frame, WebRTC message).
+pub const MAX_MESSAGE: usize = 64 << 20;
+
 /// One end of a point-to-point link carrying [`Msg`]s in order.
 pub trait Transport {
     /// Queue `msg` for the other end (a closed link drops it: the other end has left).

@@ -165,22 +165,14 @@ pub fn replaced(id: u32) -> bool {
     matches!(id, 0x1f | 0x21..=0x2a | 0x37 | 0x42 | 0x46..=0x4b)
 }
 
-const EDGE: f32 = 24.0;
 const RAIL_W: f32 = 96.0;
 const CARD_W: f32 = 380.0;
 const NAV_W: f32 = 300.0;
 const RAIL: Font = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.1, upper: true, lcd: false };
-const NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: false };
-const LINE: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.12, upper: true, lcd: false };
 const BIG_TITLE: Font = Font { size: 20.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
-const OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
 
 fn pointer(ui: &egui::Ui) -> Option<Pos2> {
     ui.ctx().input(|i| i.pointer.hover_pos())
-}
-
-fn down(ui: &egui::Ui) -> bool {
-    ui.ctx().input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
 }
 
 /// One frame of the HUD over the battle (after the top bar).
@@ -189,8 +181,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let screen = ctx.screen_rect();
     let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
     *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], ..Default::default() };
-    let bar = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left")));
-    let top = bar.map_or(44.0, |r| r.bottom()) + 16.0;
+    let bar = crate::starmap_modern::bar_rect(ctx);
+    let top = crate::starmap_modern::bar_bottom(ctx) + 16.0;
     // The top bar takes its own presses (egui): none reaches the battlefield.
     st.panels.extend(bar);
     egui::Area::new(egui::Id::new("bmh")).order(egui::Order::Background).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
@@ -211,9 +203,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
         egui::Area::new(egui::Id::new("bmh-retreat")).order(egui::Order::Foreground).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| retreat(ui, r, st, screen, key));
     }
     tooltip(ctx, v, st);
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    ds::wells_in_pixels(&mut st.wells, ppp);
 }
 
 /// The weapon rail: a key per shown group (the original's icon in a well, its name, the charge bar), the info key
@@ -253,14 +243,12 @@ fn rail_key(ui: &egui::Ui, r: Rect, name: &str, charge: Option<f32>, lit: bool, 
     let radius = egui::CornerRadius { nw: ds::RADIUS_PANEL, sw: ds::RADIUS_PANEL, ne: 0, se: 0 };
     let hot = ds::hover_t(ui.ctx(), egui::Id::new(("bmh-key", name)), pointer(ui).is_some_and(|q| r.contains(q)));
     ds::shadow(p, r, radius, 4, 16, 0, Color32::from_black_alpha(160));
-    if lit || (hot > 0.5 && down(ui)) {
+    if lit || (hot > 0.5 && ds::any_down(ui.ctx())) {
         ds::vgrad(p, r, radius, &[(0.0, k.plate_high), (1.0, k.plate)]);
         ds::rim(p, r, radius, k.ink_silver);
     } else {
         p.rect_filled(r, radius, Color32::from_rgba_unmultiplied(0, 12, 20, 204));
-        if hot > 0.0 {
-            ds::rim(p, r, radius, k.rim_bright.gamma_multiply(hot));
-        }
+        ds::hover_rim(p, r, radius, hot);
     }
     let bar = charge.map(|_| 10.0).unwrap_or(0.0);
     let two = name.contains(' ') && Text::new(name, RAIL).layout(ui.ctx(), f32::INFINITY).width > r.width() - 8.0;
@@ -298,13 +286,11 @@ fn card(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) {
     let c = &v.card;
     let rows = if c.overview.is_empty() { c.lines.len() as f32 * 22.0 + if c.hull.is_some() { 26.0 } else { 0.0 } } else { c.overview.len() as f32 * 22.0 + 36.0 };
     let h = (26.0 + 22.0 + rows + 28.0).max(124.0);
-    let r = Rect::from_min_size(pos2(screen.left() + EDGE, screen.bottom() - EDGE - h), vec2(CARD_W, h));
+    let r = Rect::from_min_size(pos2(screen.left() + ds::EDGE, screen.bottom() - ds::EDGE - h), vec2(CARD_W, h));
     let p = ui.painter().clone();
     let hot = ds::hover_t(ui.ctx(), egui::Id::new("bmh-card"), pointer(ui).is_some_and(|q| r.contains(q)));
     ds::paint_panel(&p, r, ds::PanelKind::Deep, 0.88);
-    if hot > 0.0 {
-        ds::rim(&p, r, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(&p, r, ds::RADIUS_PANEL, hot);
     st.panels.push(r);
     let inner = r.shrink2(vec2(16.0, 14.0));
     let side = Rect::from_min_size(inner.min, vec2(96.0, 96.0));
@@ -314,23 +300,23 @@ fn card(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) {
     let x = side.right() + 16.0;
     let w = inner.right() - x;
     let mut y = inner.top();
-    Text::new(&c.title, NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 26.0)));
+    Text::new(&c.title, Font::CARD_NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 26.0)));
     y += 28.0;
     if !c.sub.is_empty() {
-        Text::new(&c.sub, LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(&c.sub, Font::CARD_LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     if !c.owner.is_empty() {
-        Text::new(&c.owner, LINE).color(c.colour).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(&c.owner, Font::CARD_LINE).color(c.colour).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     for l in &c.lines {
-        Text::new(l, LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(l, Font::CARD_LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     if let Some((label, f)) = &c.hull {
         let row = Rect::from_min_size(pos2(x, y + 4.0), vec2(w, 20.0));
-        let lw = Text::new(label, LINE).color(k.info).paint(ui, row.with_max_x(row.left() + w * 0.45)).width;
+        let lw = Text::new(label, Font::CARD_LINE).color(k.info).paint(ui, row.with_max_x(row.left() + w * 0.45)).width;
         let bar = Rect::from_min_size(pos2(row.left() + lw + 10.0, row.center().y - 3.0), vec2((w - lw - 10.0).max(20.0), 6.0));
         hull_bar(&p, bar, *f);
     }
@@ -385,7 +371,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
     let radar_h = (280.0 * 67.0 / 94.0f32).round();
     let key = vec2(34.0, 28.0);
     let h = 10.0 + radar_h + 8.0 + key.y + 4.0 + 10.0;
-    let r = Rect::from_min_size(pos2(screen.right() - EDGE - NAV_W, screen.bottom() - EDGE - h), vec2(NAV_W, h));
+    let r = Rect::from_min_size(pos2(screen.right() - ds::EDGE - NAV_W, screen.bottom() - ds::EDGE - h), vec2(NAV_W, h));
     let p = ui.painter().clone();
     crate::starmap_modern::metal_plate(&p, r, 18);
     st.panels.push(r);
@@ -425,7 +411,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
         let hot = pointer(ui).is_some_and(|q| kr.contains(q));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(kr));
         let draw = move |p: &egui::Painter, r: Rect, c: Color32| crate::starmap_modern::icon(p, r, icon, c);
-        ds::forced(hot, hot && down(ui), || child.add(ds::IconKey::new(ds::Glyph::Custom(&draw)).size(key)));
+        ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add(ds::IconKey::new(ds::Glyph::Custom(&draw)).size(key)));
         st.spots.push((kr, id, None));
         let _ = n;
         x += key.x + 2.0;
@@ -453,7 +439,7 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip:
     let base = ds::fit::baseline(inner, BIG_TITLE);
     let tw = Text::new(&b.title, BIG_TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.55)).width;
     if !b.owner.is_empty() {
-        let g = Text::new(&b.owner, OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - 16.0);
+        let g = Text::new(&b.owner, Font::OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - 16.0);
         ds::glowing_galley(&p, pos2(inner.left() + tw + 16.0, base - g.baseline()), &g.galley, b.colour);
     }
     // The selection's model on the void (the original's info model), the count in an LCD window.

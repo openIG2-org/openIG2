@@ -28,7 +28,7 @@ impl Slot {
 
 pub fn parse(b: &[u8]) -> Result<Vec<Slot>> {
     let n = u32::from_le_bytes(b.get(..4).ok_or_else(|| format_err("formation", "too short"))?.try_into().unwrap()) as usize;
-    if b.len() != 4 + n * RECORD {
+    if n.checked_mul(RECORD) != Some(b.len() - 4) {
         return Err(format_err("formation", format!("size {} != 4 + {n} × 84", b.len())));
     }
     Ok(b[4..]

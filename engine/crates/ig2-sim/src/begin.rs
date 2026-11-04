@@ -7,8 +7,9 @@
 //! planet (22), a fugitive (23) and an escort (24). What they do to the rest of the game goes out as
 //! [`StoryEvent`]s and [`StoryWorld`] calls.
 
+use crate::script::{rnd, answered, promoted, read, message};
 use crate::brnd::{can_give, distance, random_empire};
-use crate::story::{flag, last_fn, Abort, InfoLine, KemNews, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
+use crate::story::{flag, last_fn, Abort, InfoLine, KemNews, MessageText, Script, Story, StoryEvent, StoryWorld};
 
 /// `st_Begin_include`.
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,32 +57,9 @@ impl Script for BeginStories {
 
 // ---------------------------------------------------------------- helpers
 
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
-
 /// A value of a table indexed by `Nehezseg` (the scripts' local arrays of five).
 fn by_difficulty(w: &dyn StoryWorld, table: [i32; 5]) -> i32 {
     table.get(w.difficulty() as usize).copied().unwrap_or(0)
-}
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message == (b, r)
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
 }
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {

@@ -6,6 +6,7 @@
 //! and `StarmapGfx2D_4`, and the camera-fixed models (`gyartas.xvb`, `ProductGFX` ELF 0x6e8870, `TransferObjs`)
 //! rendered into a texture over the virtual 640 × 480 screen.
 
+use ig2_sim::bytes::{cstr, f32_at, i16_at, i32_at};
 use std::collections::HashMap;
 
 use ig2_formats::Install;
@@ -218,22 +219,6 @@ use crate::kit::inside;
 /// The planet record `p`.
 fn planet(state: &SaveState, p: usize) -> Vec<u8> {
     state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
-}
-
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
 }
 
 fn en(state: &SaveState) -> u8 {

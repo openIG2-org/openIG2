@@ -295,6 +295,22 @@ impl War<'_> {
         self.aim_drive(i, !attack);
     }
 
+    /// One step of a unit rolling to a stop: the speed falls by 1.5 × its deceleration (not below 0), the unit
+    /// moves on along its heading with its step point, and is marked moved.
+    fn coast_step(&mut self, i: i32) {
+        let u = self.um(i);
+            let v = (u.rt.velocity as f64 - u.rt.decel as f64 * 1.5) as f32;
+            u.rt.velocity = if 0.0 > v { 0.0 } else { v };
+            let v = u.rt.velocity;
+            u.pos = (u.rt.dir.0 * v + u.pos.0, u.rt.dir.1 * v + u.pos.1);
+            u.rt.step = u.pos;
+            self.set_matrix(i);
+            self.dust(i);
+            let u = self.um(i);
+            u.flags |= 0x40;
+            u.rt.moved = 1;
+    }
+
     /// The drive towards the step point of a move or attack-move (both branches of `WF_Tank::Refresh`;
     /// `attack` adds the acceleration twice and never clamps the speed at 0 while accelerating).
     /// Returns true when the unit reached its step point (the function returns there).
@@ -304,20 +320,9 @@ impl War<'_> {
         if u.pos == u.rt.step {
             // At the step point: coast to a stop.
             for _ in 0..steps {
-                let u = self.um(i);
-                if u.rt.velocity == 0.0 {
-                    continue;
+                if self.u(i).rt.velocity != 0.0 {
+                    self.coast_step(i);
                 }
-                let v = (u.rt.velocity as f64 - u.rt.decel as f64 * 1.5) as f32;
-                u.rt.velocity = if 0.0 > v { 0.0 } else { v };
-                let v = u.rt.velocity;
-                u.pos = (u.rt.dir.0 * v + u.pos.0, u.rt.dir.1 * v + u.pos.1);
-                u.rt.step = u.pos;
-                self.set_matrix(i);
-                self.dust(i);
-                let u = self.um(i);
-                u.flags |= 0x40;
-                u.rt.moved = 1;
             }
         } else {
             let d = shortest_turn(u.rt.angle, u.rt.want_angle);
@@ -425,20 +430,10 @@ impl War<'_> {
         }
         // Coasting without orders.
         for _ in 0..steps {
-            let u = self.um(i);
-            if u.flags & 0xc00 != 0 || u.rt.velocity == 0.0 {
-                continue;
+            let u = self.u(i);
+            if u.flags & 0xc00 == 0 && u.rt.velocity != 0.0 {
+                self.coast_step(i);
             }
-            let v = (u.rt.velocity as f64 - u.rt.decel as f64 * 1.5) as f32;
-            u.rt.velocity = if 0.0 > v { 0.0 } else { v };
-            let v = u.rt.velocity;
-            u.pos = (u.rt.dir.0 * v + u.pos.0, u.rt.dir.1 * v + u.pos.1);
-            u.rt.step = u.pos;
-            self.set_matrix(i);
-            self.dust(i);
-            let u = self.um(i);
-            u.flags |= 0x40;
-            u.rt.moved = 1;
         }
         let f = self.u(i).flags;
         if f == 0x4000001 || f == 1 {

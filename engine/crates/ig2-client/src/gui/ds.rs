@@ -143,12 +143,22 @@ pub(crate) fn set_tokens(k: Tokens) {
 
 /// Spacing steps (`--space-1` … `--space-5`), corner radii.
 pub const SPACE: [f32; 5] = [4.0, 8.0, 16.0, 24.0, 40.0];
+/// The boards' gap to the screen's edges: a HUD's panels over a scene (24), a full-screen board's (40).
+pub const EDGE: f32 = SPACE[3];
+pub const BOARD_EDGE: f32 = SPACE[4];
+/// A board's exit plate's width.
+pub const EXIT_W: f32 = 220.0;
 pub const RADIUS_PANEL: u8 = 8;
 pub const RADIUS_PLATE: u8 = 4;
 /// State changes: hover and press fades, a selection's glide, a panel's open and close.
 pub const HOVER_TIME: f32 = 0.12;
 pub const GLIDE_TIME: f32 = 0.16;
 pub const OPEN_TIME: f32 = 0.18;
+
+/// How much a window shorter than the boards' 1080 lines squeezes their heights (1 from there up).
+pub fn squeeze(height: f32) -> f32 {
+    (height / crate::gui::POINTS_HIGH).min(1.0)
+}
 
 /// Oxanium's weights (the design's 400, 500, 600; 700 draws as 600).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -187,6 +197,13 @@ impl Font {
     pub const READOUT: Font = Font { size: 24.0, line: 28.0, weight: Weight::Regular, tracking: 0.12, upper: false, lcd: true };
     /// A page's big title ("BEÁLLÍTÁSOK": 600 30/36, 0.3 em).
     pub const PAGE_TITLE: Font = Font::ui(30.0, 36.0, Weight::SemiBold, 0.30, true);
+    /// A board panel's title (600 20 / 0.16 em, upper case).
+    pub const PANEL_TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
+    /// A card's name (22) and lines (`.ig-card .line`: 15, 0.12 em, upper case), an empire's name (`.ig-star`: 600 13
+    /// / 0.16 em, upper case).
+    pub const CARD_NAME: Font = Font::ui(22.0, 26.0, Weight::Regular, 0.08, false);
+    pub const CARD_LINE: Font = Font::ui(15.0, 20.0, Weight::Regular, 0.12, true);
+    pub const OWNER: Font = Font::ui(13.0, 16.0, Weight::SemiBold, 0.16, true);
 
     /// The same style at another size, the line box scaled with it.
     pub const fn sized(self, size: f32) -> Self {
@@ -424,6 +441,13 @@ pub fn glowing_galley(p: &Painter, pos: Pos2, galley: &Arc<egui::Galley>, c: Col
         p.galley_with_override_text_color(pos + Vec2::angled(a) * 1.6, galley.clone(), c.gamma_multiply(0.22));
     }
     p.galley(pos, galley.clone(), Color32::WHITE);
+}
+
+/// The wells a page leaves for the renderer's pictures (what, where, the opacity) from points into pixels.
+pub fn wells_in_pixels<T>(wells: &mut [(T, Rect, f32)], ppp: f32) {
+    for w in wells {
+        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
+    }
 }
 
 /// The kit's animations run (off: every state change is instant, a snapshot's still or a reduced-motion setting).

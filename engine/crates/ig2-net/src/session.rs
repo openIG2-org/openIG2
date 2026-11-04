@@ -284,12 +284,12 @@ impl MpSave {
         if header.rules != rules_id(fingerprint) {
             return Err(Error::Rules);
         }
-        let rest = &b[Snapshot::file_len(b)?..];
+        let rest = b.get(Snapshot::file_len(b)?..).unwrap_or_default();
         if rest.len() < 12 || &rest[..8] != SESSION_MAGIC {
             return Err(Error::Corrupt("no session block"));
         }
         let len = u32::from_le_bytes(rest[8..12].try_into().unwrap()) as usize;
-        let block = rest.get(12..12 + len).ok_or(Error::Corrupt("truncated"))?;
+        let block = rest.get(12..12usize.saturating_add(len)).ok_or(Error::Corrupt("truncated"))?;
         Ok(Self { snapshot, header, session: wire::from_slice(block)? })
     }
 }
@@ -361,7 +361,7 @@ impl<'r> HostSession<'r> {
             return Err(Box::new(lobby));
         }
         let st = lobby.state();
-        let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let humans = st.human_empires();
         game.start_multiplayer(humans[0], &humans);
         game.libc = Libc(lobby.session() as u32);
         let file = Snapshot::capture(&game, &[], 0, 0).to_file(rules_id(lobby.rules()), true);
@@ -375,7 +375,7 @@ impl<'r> HostSession<'r> {
     pub fn start_galaxy(lobby: LobbyHost, data: &StartData, rules: &'r GameRules, settings: SessionSettings, ticks: u32, story: i32) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
         let Some(options) = st.galaxy.filter(|_| lobby.can_start()) else { return Err(Box::new(lobby)) };
-        let humans: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let humans = st.human_empires();
         let mut races = [0u8; 8];
         for s in &st.slots {
             if (1..=8).contains(&s.empire) {
@@ -395,7 +395,7 @@ impl<'r> HostSession<'r> {
     /// with the saved settings. Refused (the lobby back) otherwise.
     pub fn resume(lobby: LobbyHost, save: &MpSave, rules: &'r GameRules) -> Result<Self, Box<LobbyHost>> {
         let st = lobby.state();
-        let theirs: Vec<u8> = st.members.iter().filter_map(|m| st.empire_of(m.id)).collect();
+        let theirs = st.human_empires();
         let missing: Vec<u8> = save.session.humans.iter().map(|h| h.empire).filter(|e| !theirs.contains(e)).collect();
         if !lobby.can_start() || theirs.iter().any(|e| !save.session.humans.iter().any(|h| h.empire == *e)) {
             return Err(Box::new(lobby));
@@ -561,7 +561,7 @@ impl<'r> HostSession<'r> {
     /// One round: relay the turns, notice drops (closed or silent links) and desyncs, admit rejoiners, run up to `max_turns` of the host's own
     /// turns, apply the grace and hold. Returns what happened since the last round.
     pub fn pump(&mut self, now: Duration, max_turns: usize) -> Result<Vec<SessionEvent>, Error> {
-        self.host.pump()?;
+        self.host.pump();
         for (slot, m) in self.host.take_inbox() {
             // A spectator (empire 0, ADR 0026) may only chat and leave.
             let player = self.host.empire_of(slot).is_some_and(|e| e != 0);
@@ -590,7 +590,7 @@ impl<'r> HostSession<'r> {
         self.own.adapt(Duration::ZERO);
         self.own.poll(&mut self.link, max_turns)?;
         // Our own input just sent may complete a turn: its bundle goes out in this pump, not the next.
-        self.host.pump()?;
+        self.host.pump();
         self.resync_diverged()?;
         for h in &mut self.humans {
             if let Presence::Waiting { since } = h.presence {
@@ -745,7 +745,7 @@ impl<'r> HostSession<'r> {
                 r => r.err(),
             },
             &mut refused,
-        )?;
+        );
         self.queued.extend(refused.into_iter().map(SessionEvent::Refused));
         for (mut link, name) in admitted {
             // The door checked it last.
@@ -769,15 +769,25 @@ impl<'r> HostSession<'r> {
     fn resume_survivors(&mut self) -> Result<(), Error> {
         for (i, mut link) in std::mem::take(&mut self.resuming) {
             let mut resume = None;
-            while let Some(m) = link.recv()? {
-                if let Msg::Session(SessionMsg::Resume { turn, bundles }) = m {
-                    resume = Some((turn, bundles));
-                    break;
+            // A survivor whose message doesn't decode is let go like a closed link; the others still resume.
+            let mut broken = false;
+            loop {
+                match link.recv() {
+                    Ok(Some(Msg::Session(SessionMsg::Resume { turn, bundles }))) => {
+                        resume = Some((turn, bundles));
+                        break;
+                    }
+                    Ok(Some(_)) => {}
+                    Ok(None) => break,
+                    Err(_) => {
+                        broken = true;
+                        break;
+                    }
                 }
             }
             match resume {
                 Some((turn, bundles)) => self.resume_survivor(i, link, turn, bundles)?,
-                None if link.closed() => {}
+                None if broken || link.closed() => {}
                 None => self.resuming.push((i, link)),
             }
         }
@@ -1063,7 +1073,8 @@ impl<'r> ClientSession<'r> {
     pub fn new_galaxy(start: &Start, link: Box<dyn Transport>, data: &StartData, rules: &'r GameRules) -> Result<Self, Error> {
         let Some(g) = &start.galaxy else { return Self::new(start, link, rules) };
         let humans: Vec<u8> = start.humans.iter().map(|h| h.1).collect();
-        let host = start.humans.iter().find(|h| h.0 == start.session.host).map_or(humans[0], |h| h.1);
+        let Some(&first) = humans.first() else { return Err(Error::StartKind("a galaxy start without humans")) };
+        let host = start.humans.iter().find(|h| h.0 == start.session.host).map_or(first, |h| h.1);
         let game = g.build(data, rules, host, &humans, start.session.id);
         let got = snapshot::state_hash(&game, &[]);
         if got != g.hash {

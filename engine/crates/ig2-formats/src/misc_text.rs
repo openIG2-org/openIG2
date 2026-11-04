@@ -39,7 +39,10 @@ pub fn parse_infostr(text: &str) -> (Vec<InfoString>, Option<usize>) {
         if out.len() >= 1000 {
             return (out, Some(i + 1));
         }
-        out.push(InfoString { id: atoi(&line[..n - 1]) as i16, flag, text: line[n + 3..].to_owned() });
+        // The flag's separator may be any character.
+        let mut text = line[n + 2..].chars();
+        text.next();
+        out.push(InfoString { id: atoi(&line[..n - 1]) as i16, flag, text: text.as_str().to_owned() });
     }
     (out, None)
 }
@@ -197,6 +200,7 @@ mod tests {
         assert_eq!(err, None);
         assert_eq!(v[1], InfoString { id: 100, flag: true, text: "Infected with virus!".into() });
         assert_eq!(parse_infostr("1 XX bad line\r\n").1, Some(1));
+        assert_eq!(parse_infostr("2 II\u{e9}text\r\n").0[0].text, "text", "a multibyte separator");
     }
 
     #[test]

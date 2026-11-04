@@ -5,6 +5,7 @@
 //! `DesignKeyboardHandler` (0x508dc0) and `DesignKeyboardEscPressed` (0x509040), and the orders 0x33
 //! (`DesignTervezesOk` 0x50b310) and 0x34 as [`DesignOrder`]s, whose events re-sort the list (`MULTIGET_Design`).
 
+use ig2_sim::bytes::{i16_at, i32_at};
 use ig2_sim::ai::design::{auto_design_record, recompute_record, slot_max, tech_fits};
 use ig2_sim::ai::AiRules;
 use ig2_sim::colony_side::TechTable;
@@ -108,14 +109,6 @@ pub enum EntryKey {
 /// `IOMaxLen`.
 const NAME_MAX: usize = 0x10;
 
-fn rd_i32(r: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
-}
-
-fn rd_i16(r: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([r[o], r[o + 1]])
-}
-
 /// `strlen`-style name bytes written into a record (NUL-ended).
 fn set_name(r: &mut [u8; 0x84], s: &[u8]) {
     let n = s.len().min(0x15);
@@ -140,7 +133,7 @@ pub fn numbered_name(designs: &[[u8; 0x84]], base: &[u8]) -> Vec<u8> {
     let (stem, digits) = split_digits(base);
     let mut n = atoi(digits) + 1;
     let mut used = n > 1;
-    for r in designs.iter().skip(1).filter(|r| rd_i16(&r[..], field::DELETED) >= 0) {
+    for r in designs.iter().skip(1).filter(|r| i16_at(&r[..], field::DELETED) >= 0) {
         let other = name(r);
         if other.starts_with(stem) {
             n = n.max(atoi(split_digits(other).1) + 1);
@@ -186,13 +179,13 @@ impl Design {
 
     /// `TalalmanyRarakhato(base, t, pod, 5, EN, race)` for t = 0..=0xc0: the techs that fit pod `k` of the scratch.
     fn fitting(&self, c: &Ctx, k: usize) -> Vec<usize> {
-        let (hull, pt) = (rd_i32(&self.scratch, field::HULL).max(0) as usize, rd_i16(&self.scratch, field::RACE));
+        let (hull, pt) = (i32_at(&self.scratch, field::HULL).max(0) as usize, i16_at(&self.scratch, field::RACE));
         (0..0xc1).filter(|&t| tech_fits(c.sim, c.techs, c.debug, hull, t, k, 5, c.en(), pt)).collect()
     }
 
     /// `min(GetMaxRarakhato(race, base, k), Talalmanyok[tech].+0x24)` on the scratch.
     pub(crate) fn scratch_max(&self, c: &Ctx, k: usize) -> i32 {
-        let (hull, pt) = (rd_i32(&self.scratch, field::HULL).max(0) as usize, rd_i16(&self.scratch, field::RACE));
+        let (hull, pt) = (i32_at(&self.scratch, field::HULL).max(0) as usize, i16_at(&self.scratch, field::RACE));
         slot_max(c.sim, pt, hull, k).min(c.techs.byte(self.scratch[0x50 + k] as usize, 0x24) as i32)
     }
 
@@ -473,7 +466,7 @@ impl Design {
     /// `max(0, (HanyHajoVanATervbol(EN, 0, AktTerv)·scratch.+0x24 − TervHajoinakAra(EN, 0, AktTerv))·2)`.
     fn refit_cost(&self, c: &Ctx) -> i32 {
         let (n, sum) = crate::starmap_info::units_of(c.state, c.en() as u8, 0, self.current());
-        (n.wrapping_mul(rd_i32(&self.scratch, field::PRICE)).wrapping_sub(sum)).wrapping_mul(2).max(0)
+        (n.wrapping_mul(i32_at(&self.scratch, field::PRICE)).wrapping_sub(sum)).wrapping_mul(2).max(0)
     }
 
     /// While held: the popup row under the pointer (`dSelected`).
@@ -614,7 +607,7 @@ impl Design {
                     } else if items.contains(&(self.selected as usize)) {
                         // `Design_Main` (exe 0x4b2304) and the flight's `KiszamolErtek` (exe 0x4b4a14): laser 2.0 (0x12)
                         // into a pod of a hull whose tech (`Alapok+0xc`) is 5.
-                        let hull = rd_i32(&self.scratch, field::HULL);
+                        let hull = i32_at(&self.scratch, field::HULL);
                         if self.selected == 0x12 && c.rules.hulls.get(hull.max(0) as usize).is_some_and(|h| h.tech == 5) {
                             self.tutorial.push(0xb);
                         }
@@ -749,10 +742,10 @@ impl Design {
 /// `TervEqual(EN, AktTerv, −1)` (exe 0x542260 → `TervEqual2` 0x5421e0): the same class, owner race, hull, hull tech
 /// and slot count, and the same tech and count in every slot (the name and the price aside).
 fn design_equal(a: &[u8; 0x84], b: &[u8; 0x84]) -> bool {
-    let n = rd_i32(a, 0x4c).clamp(0, 12) as usize;
-    rd_i16(a, 0x16) == rd_i16(b, 0x16)
-        && rd_i16(a, 0x40) == rd_i16(b, 0x40)
-        && [0x44, 0x48, 0x4c].iter().all(|&o| rd_i32(a, o) == rd_i32(b, o))
+    let n = i32_at(a, 0x4c).clamp(0, 12) as usize;
+    i16_at(a, 0x16) == i16_at(b, 0x16)
+        && i16_at(a, 0x40) == i16_at(b, 0x40)
+        && [0x44, 0x48, 0x4c].iter().all(|&o| i32_at(a, o) == i32_at(b, o))
         && (1..=n).all(|i| a[0x50 + i] == b[0x50 + i] && a[0x5d + i] == b[0x5d + i])
 }
 

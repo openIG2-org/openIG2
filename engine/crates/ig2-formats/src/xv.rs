@@ -24,7 +24,8 @@ struct Cur<'a> {
 
 impl<'a> Cur<'a> {
     fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
-        let s = self.b.get(self.o..self.o + n).ok_or_else(|| err(format!("read of {n} at {} past end", self.o)))?;
+        let s = self.o.checked_add(n).and_then(|e| self.b.get(self.o..e));
+        let s = s.ok_or_else(|| err(format!("read of {n} at {} past end", self.o)))?;
         self.o += n;
         Ok(s)
     }
@@ -229,7 +230,8 @@ impl NodeHeader {
             });
         }
         let frames = (frames_raw & 0x7FFF_FFFF) as usize;
-        let anim = c.bytes(n * frames * 84)?.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap())).collect();
+        let len = n.checked_mul(frames).and_then(|k| k.checked_mul(84)).ok_or_else(|| err("animation block too large"))?;
+        let anim = c.bytes(len)?.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap())).collect();
         Ok(Self { version, origin, frames_raw, lod_param, lod_archive, children, anim })
     }
 }
@@ -321,7 +323,7 @@ impl Mesh {
         let materials = (0..nmat)
             .map(|_| if read_names { c.name16() } else { Ok(String::new()) })
             .collect::<Result<Vec<_>>>()?;
-        let vb = c.bytes(nverts * 32)?;
+        let vb = c.bytes(nverts.checked_mul(32).ok_or_else(|| err("vertex block too large"))?)?;
         let fl = |s: &[u8], i: usize| f32::from_le_bytes(s[4 * i..4 * i + 4].try_into().unwrap());
         let vertices = vb
             .chunks_exact(32)
@@ -336,12 +338,14 @@ impl Mesh {
             .chunks_exact(8)
             .map(|f| {
                 let w = |i: usize| u16::from_le_bytes([f[2 * i], f[2 * i + 1]]);
-                let material = if version == 2 { w(3).min(nmat as u16 - 1) } else { 0 };
+                let last = (nmat - 1).min(u16::MAX as usize) as u16;
+                let material = if version == 2 { w(3).min(last) } else { 0 };
                 Face { idx: [w(0), w(1), w(2)], material }
             })
             .collect();
         let frames = (frames_raw & 0x7FFF_FFFF) as usize;
-        let anim = c.bytes(frames * nverts * 24)?.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap())).collect();
+        let len = frames.checked_mul(nverts).and_then(|k| k.checked_mul(24)).ok_or_else(|| err("frame block too large"))?;
+        let anim = c.bytes(len)?.chunks_exact(4).map(|x| f32::from_le_bytes(x.try_into().unwrap())).collect();
         let face_flags = if c.rest() >= nfaces { c.bytes(nfaces)?.to_vec() } else { vec![7; nfaces] };
         Ok(Self { version, origin, frames_raw, unknown, chained, materials, vertices, faces, anim, face_flags })
     }
@@ -437,5 +441,26 @@ mod tests {
         assert_eq!(m.face_flags, [3]);
         let mat = Material::parse(a.get("OBJ-MAT.XVM").unwrap().data).unwrap();
         assert_eq!(mat.texture, "tex.bmp");
+    }
+
+    /// 65536 materials (the face's u16 can't name past the last) and an animation block too large to read.
+    #[test]
+    fn mesh_counts_at_their_limits() {
+        let mesh = |nmat: u32, frames: u32| {
+            let mut m = vec![0xFE, 0xFF];
+            for v in [0f32, 0., 0.] { m.extend_from_slice(&v.to_le_bytes()); }
+            for v in [3u32, frames, 0] { m.extend_from_slice(&v.to_le_bytes()); }
+            m.extend_from_slice(&[0; 16]);
+            m.extend_from_slice(&1u16.to_le_bytes());
+            m.extend_from_slice(&nmat.to_le_bytes());
+            m.resize(m.len() + 16 * nmat as usize + 3 * 32, 0);
+            for w in [0u16, 1, 2, 0xFFFF] { m.extend_from_slice(&w.to_le_bytes()); }
+            m
+        };
+        let m = Mesh::parse(&mesh(0x1_0000, 0)).unwrap();
+        assert_eq!(m.faces[0].material, 0xFFFF);
+        assert!(Mesh::parse(&mesh(1, 0x7FFF_FFFF)).is_err());
+        let mut c = Cur { b: &[0; 4], o: 2 };
+        assert!(c.bytes(usize::MAX).is_err());
     }
 }

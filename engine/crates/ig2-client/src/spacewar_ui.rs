@@ -5,6 +5,7 @@
 //! `JobbClick` §7.1.3, `SpaceWarKeyboardHandler` §7.1.5), the weapon column (§5.1), the retreat window (§5.4) and
 //! `infoszamol`'s statistics (§5.2). Orders leave as [`Order`]s for the lockstep queue (`Multi_Send`, also in SP).
 
+use crate::scene::cross;
 use ig2_sim::spacebattle::{Battle, Order, Unit};
 
 use crate::spacewar_screen::View;
@@ -23,9 +24,6 @@ pub type M3 = [f32; 9];
 
 fn sub(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
-}
-fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
-    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
 }
 fn len(v: [f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()

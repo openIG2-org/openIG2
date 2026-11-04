@@ -359,7 +359,12 @@ pub struct Game<'r> {
     /// one is in the state, and the shared one while this is.
     pub local_ticker: messages::Ticker,
     pub shared_ticker: Option<messages::Ticker>,
+    /// [`Game::live_weapons`], made from the rules once.
+    live_weapons: std::sync::OnceLock<LiveWeapons>,
 }
+
+/// The weapon table as `InitSpaceWar` leaves it and its records' words ([`Game::live_weapons`]).
+type LiveWeapons = (Vec<crate::spacebattle::WeaponRules>, Vec<Vec<i32>>);
 
 /// A name the local screen shows before the lockstep carries it (a rename in multiplayer, deviation 395): fleet or
 /// planet `index`'s name bytes as typed and, for a fleet, its custom-name bit.
@@ -477,6 +482,7 @@ impl<'r> Game<'r> {
             local_ticker: messages::Ticker::default(),
             shared_ticker: None,
             local_names: Vec::new(),
+            live_weapons: Default::default(),
         }
     }
 
@@ -510,6 +516,7 @@ impl<'r> Game<'r> {
             local_ticker: self.local_ticker.clone(),
             shared_ticker: self.shared_ticker.clone(),
             local_names: self.local_names.clone(),
+            live_weapons: self.live_weapons.clone(),
         }
     }
 
@@ -2145,13 +2152,7 @@ impl<'r> Game<'r> {
 
     /// The bytes of an appended record before the code writes it ([`Game::uninit`]; zero without it).
     fn fresh<const N: usize>(&mut self, what: Fresh) -> [u8; N] {
-        let mut out = [0; N];
-        if let Some(f) = self.uninit.as_mut() {
-            let b = f(what);
-            let n = b.len().min(N);
-            out[..n].copy_from_slice(&b[..n]);
-        }
-        out
+        fresh_record(self.uninit.as_deref_mut(), what)
     }
 
     /// Production's view back into the state. `events` tell which fleet and ship slots `FlottaNew`/`HajoNew` (re)used:
@@ -2272,15 +2273,7 @@ impl Market for TradeView<'_, '_> {
             g.state.designs.resize(e + 1, Vec::new());
         }
         let uninit = &mut g.uninit;
-        let d = crate::spacewar::new_design_record(&mut g.state.designs[e], race, id, |n| {
-            let mut out = [0; 0x84];
-            if let Some(f) = uninit.as_mut() {
-                let b = f(Fresh::Design { empire: e, design: n });
-                let k = b.len().min(0x84);
-                out[..k].copy_from_slice(&b[..k]);
-            }
-            out
-        });
+        let d = crate::spacewar::new_design_record(&mut g.state.designs[e], race, id, |n| fresh_record(uninit.as_deref_mut(), Fresh::Design { empire: e, design: n }));
         let n = g.state.designs[e].len() as i32 - 1;
         g.state.mem.set_i32(va::DESIGN_COUNT + 4 * e as u32, n);
         d
@@ -2447,6 +2440,18 @@ impl Arrivals for StarmapHooks<'_> {
     }
 }
 
+/// The bytes of an appended record before the code writes it: what `uninit` ([`Game::uninit`]) gives, cut or
+/// zero-padded to `N`; zero without it.
+fn fresh_record<const N: usize>(uninit: Option<&mut (dyn FnMut(Fresh) -> Vec<u8> + '_)>, what: Fresh) -> [u8; N] {
+    let mut out = [0; N];
+    if let Some(f) = uninit {
+        let b = f(what);
+        let n = b.len().min(N);
+        out[..n].copy_from_slice(&b[..n]);
+    }
+    out
+}
+
 /// The AI's hooks: war declarations are recorded (diplomacy carries them out when the replay meets one); appended
 /// records come from [`Game::uninit`].
 struct WarHooks<'a, 'r> {
@@ -2457,13 +2462,7 @@ struct WarHooks<'a, 'r> {
 
 impl WarHooks<'_, '_> {
     fn fresh<const N: usize>(&mut self, what: Fresh) -> [u8; N] {
-        let mut out = [0; N];
-        if let Some(f) = self.uninit.as_mut() {
-            let b = f(what);
-            let n = b.len().min(N);
-            out[..n].copy_from_slice(&b[..n]);
-        }
-        out
+        fresh_record(self.uninit.as_deref_mut().map(|f| &mut **f), what)
     }
 }
 

@@ -5,7 +5,7 @@
 use super::{add_money, answered, param, promoted, read};
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::nearest_fleet;
-use crate::rnd::cvtt;
+use crate::cvt::cvtt_f64;
 use crate::story::{adat, flag, Abort, InfoLine, MessageText, Notice, Story, StoryEvent, StoryWorld, STREAM};
 
 fn message(w: &mut dyn StoryWorld, id: i32) {
@@ -332,7 +332,7 @@ pub(super) fn story_821(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
         } else {
             // Moving, or gone (slot 0's record).
             let f = s.f_search(CONVOY, w);
-            if w.fleet_order(f) == 1 && w.fleet_command(f) == 1 && w.planet_owner(cvtt(w.fleet_target(f) as f64)) != en {
+            if w.fleet_order(f) == 1 && w.fleet_command(f) == 1 && w.planet_owner(cvtt_f64(w.fleet_target(f) as f64)) != en {
                 let q = s.b_search(en.wrapping_neg(), 0, w);
                 let f = s.f_search(CONVOY, w);
                 move_fleet(w, f, 1, 1, q as f32, 0.0);
@@ -388,7 +388,7 @@ pub(super) fn story_821(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 return Err(Abort);
             }
             let (fx, fy) = w.fleet_xy(f);
-            let (x, y) = (cvtt(fx as f64) as f32, cvtt(fy as f64) as f32);
+            let (x, y) = (cvtt_f64(fx as f64) as f32, cvtt_f64(fy as f64) as f32);
             // The fleet slots up to the ship count (a slip kept: the stale records past the fleets too).
             for k in 1..=w.ship_count() {
                 if w.fleet_owner(k) != en {
@@ -396,7 +396,7 @@ pub(super) fn story_821(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                 }
                 let (kx, ky) = w.fleet_xy(k);
                 let (dx, dy) = (x - kx, y - ky);
-                if cvtt(((dy * dy + dx * dx) as f64).sqrt() as f32 as f64) < 10 {
+                if cvtt_f64(((dy * dy + dx * dx) as f64).sqrt() as f32 as f64) < 10 {
                     w.event(StoryEvent::JoinBattle(k));
                     s.battle_pact[9] = 1;
                     s.set_adat_i32(adat::BATTLE_88, 1);
@@ -465,7 +465,7 @@ pub(super) fn story_832(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
             }
             let (fx, fy) = w.fleet_xy(f);
             if w.planet_owner(p) == 13 {
-                let g = nearest_fleet(cvtt(fx as f64), cvtt(fy as f64), en, &*w);
+                let g = nearest_fleet(cvtt_f64(fx as f64), cvtt_f64(fy as f64), en, &*w);
                 if g != 0 && dist((fx, fy), w.fleet_xy(g)) < 20.0 {
                     move_fleet(w, f, 2, 2, g as f32, 0.0);
                 } else if w.rng().range(STREAM, 1, 30) == 1 {
@@ -477,7 +477,7 @@ pub(super) fn story_832(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abo
                     move_fleet(w, f, 1, 0, x, y);
                 }
             } else if w.fleet_5c(f) == 0 {
-                let g = nearest_fleet(cvtt(fx as f64), cvtt(fy as f64), en, &*w);
+                let g = nearest_fleet(cvtt_f64(fx as f64), cvtt_f64(fy as f64), en, &*w);
                 if g != 0 {
                     move_fleet(w, f, 2, 2, g as f32, 0.0);
                 }

@@ -6,6 +6,7 @@
 //! scripts), send messages and react to their answers, and end with `WIN` when the last episode finishes. The
 //! messages, planet changes and the empires met go out as [`StoryEvent`]s.
 
+use crate::script::{answered, promoted};
 use crate::campaign::second_strongest_enemy;
 use crate::story::{flag, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
@@ -36,16 +37,6 @@ impl Script for LineStories {
 }
 
 // ---------------------------------------------------------------- helpers
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message.0 == b && s.message.1 == r
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
 
 /// `st_Letilt(b, 0)`: message `b` asks which of its answers to disable (flag 8).
 fn disabling(s: &Story, b: i32) -> bool {

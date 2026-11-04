@@ -36,7 +36,7 @@ fn join_escort(s: &mut Story, f: i32, w: &mut dyn StoryWorld) {
         let (gx, gy) = w.fleet_xy(g);
         let (dx, dy) = (ix - gx, iy - gy);
         // `cvttss2si`: the garbage of slots past the fleet count (NaN, huge) gives INT_MIN, which joins.
-        let d = super::cvtt(((dy * dy + dx * dx) as f64).sqrt() as f32 as f64);
+        let d = crate::cvt::cvtt_f64(((dy * dy + dx * dx) as f64).sqrt() as f32 as f64);
         if d < 10 {
             w.event(StoryEvent::JoinBattle(g));
             s.battle_pact[9] = 1;

@@ -243,7 +243,6 @@ pub struct State {
 }
 
 /// The boards' measures in points.
-const EDGE: f32 = 24.0;
 const BUILD_W: f32 = 430.0;
 const CARD_W: f32 = 440.0;
 const WAR_CARD_W: f32 = 400.0;
@@ -394,7 +393,7 @@ fn ico(p: &egui::Painter, rect: Rect, i: Ico, c: Color32) {
 fn key(ui: &mut Ui, i: Ico, on: bool, size: egui::Vec2, tip: &str) -> egui::Response {
     let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
     let r = ui.add(IconKey::new(Glyph::Custom(&g)).on(on).size(size));
-    if tip.is_empty() { r } else { ds::tip(r, tip) }
+    ds::tip(r, tip)
 }
 
 /// A round action button (60 across) with its label on a black tag under it (`active` lit); the response is the
@@ -414,42 +413,29 @@ fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Res
         let tag = Rect::from_center_size(row.center(), vec2(tag_w, 18.0));
         ui.painter().rect_filled(tag, ds::RADIUS_PLATE, Color32::BLACK);
         Text::new(label, f).center().shrink(9.0).color(if active { k.ink } else { k.ink_silver }).paint(ui, tag.shrink2(vec2(8.0, 0.0)));
-        if tip.is_empty() || tip == label { r } else { ds::tip(r, tip) }
+        if tip == label { r } else { ds::tip(r, tip) }
     })
     .inner
 }
 
-/// Either button presses it (`AktIkon2`).
-fn either(r: &egui::Response) -> bool {
-    sm::either(r)
-}
-
-/// The info mode's buttons act on the press of either button (their hot-spots' one-shot `AktIkon2`, §12.2).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
 /// The top of the panels under the bar.
 fn top(ctx: &egui::Context) -> f32 {
-    let bar = ["smh-left", "smh-right"].iter().filter_map(|id| ctx.memory(|m| m.area_rect(egui::Id::new(*id)))).map(|r| r.bottom()).fold(44.0f32, f32::max);
-    bar + 20.0
+    sm::bar_bottom(ctx) + 20.0
 }
 
 /// One frame of the panels over the colony; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     st.wells.clear();
     let ppp = ctx.pixels_per_point();
     let screen = ctx.screen_rect();
     let top = top(ctx);
     if let Some(b) = &v.build {
-        let card_top = screen.bottom() - EDGE - 190.0;
-        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
+        let card_top = screen.bottom() - ds::EDGE - 190.0;
+        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
     }
     let war = v.war.is_some();
-    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
+    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
     let card = card.response.rect;
     // The selected building's round buttons right of the card, the window over them.
     let a = &v.actions;
@@ -462,7 +448,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
                     if a.on[i] {
                         let open = v.confirm.is_some() && ((id == 1) == v.confirm.as_ref().is_some_and(|c| c.price.is_some()));
                         let label = a.tips[i].split(['\n', '.']).next().unwrap_or("");
-                        if either(&round(ui, ic, open, label, &a.tips[i])) {
+                        if ds::either(&round(ui, ic, open, label, &a.tips[i])) {
                             acts.push(Act::Spot(id));
                         }
                     }
@@ -482,15 +468,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ds::open_t(ctx, egui::Id::new("cmh-confirm"), false);
     }
     if let Some(w) = &v.war {
-        let width = (screen.width() - 2.0 * (EDGE + WAR_CARD_W + 16.0)).clamp(480.0, INFO_W);
-        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -EDGE)).fade_in(false).show(ctx, |ui| war_strip(ui, w, width, &mut acts));
+        let width = (screen.width() - 2.0 * (ds::EDGE + WAR_CARD_W + 16.0)).clamp(480.0, INFO_W);
+        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -ds::EDGE)).fade_in(false).show(ctx, |ui| war_strip(ui, w, width, &mut acts));
     }
     // The banner, the war's lines and the self-destruct under the top bar, centred.
     if v.banner.is_some() || v.destruct.is_some() || v.war.as_ref().is_some_and(|w| !w.notices.is_empty()) {
         egui::Area::new(egui::Id::new("cmh-notice")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).fade_in(false).show(ctx, |ui| notices(ui, v, &mut acts));
     }
     if let Some(i) = &v.info {
-        let x = (screen.right() - 150.0 - INFO_W).max(EDGE);
+        let x = (screen.right() - 150.0 - INFO_W).max(ds::EDGE);
         let t = ds::open_t(ctx, egui::Id::new("cmh-info"), true);
         egui::Area::new(egui::Id::new("cmh-info")).fixed_pos(pos2(x, top + 20.0 + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
@@ -500,10 +486,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ds::open_t(ctx, egui::Id::new("cmh-info"), false);
         st.menu = None;
     }
-    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
+    ds::wells_in_pixels(&mut st.wells, ppp);
     acts
 }
 
@@ -544,11 +528,11 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
         }
         if b.cursor {
             ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.lcd_ink.gamma_multiply(0.7));
-        } else if hot > 0.0 {
-            ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
+        } else {
+            ds::hover_rim(ui.painter(), w.rect, ds::RADIUS_PLATE, hot);
         }
-        let w = if b.cursor_tip.is_empty() { w } else { ds::tip(w, &b.cursor_tip) };
-        if !b.pending && either(&w) {
+        let w = ds::tip(w, &b.cursor_tip);
+        if !b.pending && ds::either(&w) {
             acts.push(Act::Pick(-1));
         }
         let col = Rect::from_min_max(rect.min + vec2(16.0 + 150.0 + 16.0, 16.0), rect.max - vec2(16.0, 16.0));
@@ -593,7 +577,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
             let on = i == tab;
             ds::plate_fill(ui.painter(), r, ds::RADIUS_PANEL, on || resp.is_pointer_button_down_on());
             if hot > 0.0 && !on {
-                ds::rim(ui.painter(), r, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
+                ds::hover_rim(ui.painter(), r, ds::RADIUS_PANEL, hot);
             }
             let cut = Text::new(h, f).center().shrink(9.0).color(if on { k.ink } else { k.ink_silver.lerp_to_gamma(k.ink, hot) }).paint(ui, r.shrink2(vec2(4.0, 0.0))).cut;
             let resp = if cut { resp.on_hover_text(h) } else { resp };
@@ -631,7 +615,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
                 }
                 let cut = Text::new(&e.name, f).color(ink).baseline(base).paint(ui, name.with_max_x(name.right() - 8.0)).cut;
                 let resp = if cut { resp.on_hover_text(&e.name) } else { resp };
-                if either(&resp) {
+                if ds::either(&resp) {
                     acts.push(Act::Pick(e.tech));
                     st.tab = None;
                 }
@@ -691,7 +675,7 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                     if ds::tip(ui.add(IconKey::new(Glyph::Custom(&|p: &egui::Painter, r: Rect, col: Color32| ico(p, r, Ico::Info, col))).size(vec2(36.0, 32.0))), &v.details).clicked() {
                         acts.push(Act::Card(false));
                     }
-                    if !c.planet && v.actions.on[2] && either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
+                    if !c.planet && v.actions.on[2] && ds::either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
                         acts.push(Act::Spot(0x11));
                     }
                 });
@@ -726,9 +710,7 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
     let card = ui.interact(rect, ui.id().with("cmh-card-body"), Sense::click());
     let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
-    if hot > 0.0 {
-        ds::rim(ui.painter(), rect, ds::RADIUS_PANEL, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(ui.painter(), rect, ds::RADIUS_PANEL, hot);
     let card = if c.tip.is_empty() { card } else { card.on_hover_text(&c.tip) };
     if card.clicked() {
         acts.push(Act::Card(false));
@@ -779,7 +761,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                        if either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
+                        if ds::either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
                             acts.push(Act::Spot(*id));
                         }
                         let charge = match id {
@@ -845,7 +827,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                         ui.vertical_centered(|ui| {
                             if let Some((id, frame, t)) = retreat {
                                 let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                                if either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
+                                if ds::either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
                                     acts.push(Act::Spot(*id));
                                 }
                             } else {
@@ -889,7 +871,7 @@ fn notices(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
                 Text::new(&s, f).center().color(k.signal_red).paint(ui, r);
                 ui.ctx().request_repaint();
                 if let Some(c) = &d.cancel
-                    && either(&ui.add(ds::Plate::new(c).primary(true).font(ds::Plate::FONT.sized(15.0)).height(40.0).width(200.0)))
+                    && ds::either(&ui.add(ds::Plate::new(c).primary(true).font(ds::Plate::FONT.sized(15.0)).height(40.0).width(200.0)))
                 {
                     acts.push(Act::Spot(8));
                 }
@@ -995,13 +977,13 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
                     }
                 }
                 let r = ui.add(ds::Plate::new(&i.all).font(ds::Plate::FONT.sized(13.0)).height(40.0).width(80.0));
-                if pressed(&r) {
+                if ds::pressed(&r) {
                     acts.push(Act::Info(s.all));
                 }
                 if let Some((minus, plus)) = s.steps {
                     for (id, icon) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
                         ui.allocate_ui(vec2(44.0, 40.0), |ui| {
-                            if pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
+                            if ds::pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
                                 acts.push(Act::Info(id));
                             }
                         });
@@ -1021,7 +1003,7 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
         if ui.add(ds::Plate::new(&i.starmap).width(220.0)).clicked() {
             acts.push(Act::Card(true));
         }
-        if pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
+        if ds::pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
             acts.push(Act::Info(0x20));
         }
     });
@@ -1137,7 +1119,6 @@ fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>
 /// (`crate::colony_ui::PANEL_VIEW`'s pass about (98, 88)) and the short info's model (the info box's corner,
 /// 0..50 × 400..480), each fitted into its well and drawn over the panels.
 pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], building: Option<crate::render::TexId>, info: Option<crate::render::TexId>, v: &crate::font::Virtual) {
-    let wide = crate::kit::Wide::new(v);
     for &(pic, r, alpha) in wells {
         let (tex, src) = match pic {
             // The middle of the panel's picture (the model turns about (98, 88)), larger in the well.
@@ -1154,11 +1135,7 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], buildi
             let (w1, h1) = if w0 / h0 > aspect { (h0 * aspect, h0) } else { (w0, w0 / aspect) };
             (x0, y0, w0, h0) = (x0 + (w0 - w1) / 2.0, y0 + (h0 - h1) / 2.0, w1, h1);
         }
-        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
-        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
-        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
-        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
-        f.push(tex, crate::render::Blend::GammaPremul, i);
+        crate::fleet_modern::well_sprite(f, tex, crate::render::Blend::GammaPremul, [x0, y0, w0, h0], r, alpha, v);
     }
 }
 

@@ -820,8 +820,8 @@ impl Modern {
             _ => None,
         }).collect();
         // The last save: how long ago, its name.
-        let last = o.slots.iter().flatten().filter_map(|sl| Some((std::fs::metadata(&sl.file).ok()?.modified().ok()?, sl))).max_by_key(|(t, _)| *t).map(|(_, sl)| sl);
-        let sub = last.and_then(|sl| Some(format!("{}  ·  {}", s(ago(&sl.file, texts.lang)?), s(sl.name.clone()))));
+        let last = o.slots.iter().flatten().filter_map(|sl| Some((sl.modified?, sl))).max_by_key(|(t, _)| *t).map(|(_, sl)| sl);
+        let sub = last.and_then(|sl| Some(format!("{}  ·  {}", s(age(sl, true, texts.lang)?), s(sl.name.clone()))));
         let n_items = entries.len() as f32;
         let quits = entries.iter().filter(|g| matches!(g, Game::Quit | Game::Exit)).count();
         let h = 28.0 + 34.0 + if sub.is_some() { 20.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 1.0) * 4.0 + 25.0 + 20.0;
@@ -1246,7 +1246,7 @@ impl Modern {
                     ds::hgrad(p, rect, ds::RADIUS_PLATE, &[(0.0, egui::Color32::from_white_alpha(41)), (1.0, egui::Color32::from_white_alpha(5))]);
                     ds::rim(p, rect, ds::RADIUS_PLATE, k.ink_silver);
                 } else {
-                    ds::rim(p, rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hover));
+                    ds::hover_rim(p, rect, ds::RADIUS_PLATE, hover);
                 }
                 if self.keyed && self.focus == i {
                     ds::focus_mark(p, rect, ds::RADIUS_PLATE as f32, 2.0);
@@ -1267,7 +1267,7 @@ impl Modern {
                         };
                         Text::new(&name, body_f).color(k.ink).paint(ui, cname);
                         Text::new(&date(slot.date), lcd).color(k.info).paint(ui, cdate);
-                        if let Some(a) = age(&slot.file, texts.lang) {
+                        if let Some(a) = age(slot, false, texts.lang) {
                             Text::new(&s(a), Font::BODY.sized(14.0)).color(k.ink_muted).paint(ui, cage);
                         }
                     }
@@ -1313,7 +1313,7 @@ impl Modern {
                     Text::new(&s(sl.name.clone()), Font { line: 30.0, ..title }).show(ui, egui::vec2(w, 30.0));
                     ds::kv(ui, &tr("Game date"), &date(sl.date), ds::Tone::Info, 150.0);
                     ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 150.0);
-                    if let Some(a) = age(&sl.file, texts.lang) {
+                    if let Some(a) = age(sl, false, texts.lang) {
                         ds::kv(ui, &tr("Saved"), &s(a), ds::Tone::Info, 150.0);
                     }
                 }
@@ -1380,26 +1380,20 @@ fn date(d: [i32; 3]) -> String {
     format!("{}.{:02}.{:02}", d[0], d[1], d[2])
 }
 
-/// How long ago a save's file was written ("Saved 5 minutes ago"); none where the file system can't tell.
-fn ago(file: &std::path::Path, lang: ig2_formats::text::Lang) -> Option<Vec<u8>> {
-    let secs = std::fs::metadata(file).ok()?.modified().ok()?.elapsed().ok()?.as_secs();
-    let (en, n) = match secs {
-        0..60 => return Some(crate::tr::get(lang, "Saved just now")),
-        60..3600 => ("Saved {} minutes ago", secs / 60),
-        3600..86400 => ("Saved {} hours ago", secs / 3600),
-        _ => ("Saved {} days ago", secs / 86400),
+/// How long ago a save's file was written: the table's short age ("12 minutes ago", the column under "Saved") or,
+/// `saved`, the pause menu's line ("Saved 5 minutes ago"); none where the file system can't tell.
+fn age(slot: &super::Slot, saved: bool, lang: ig2_formats::text::Lang) -> Option<Vec<u8>> {
+    let secs = slot.modified?.elapsed().ok()?.as_secs();
+    let texts = if saved {
+        ["Saved just now", "Saved {} minutes ago", "Saved {} hours ago", "Saved {} days ago"]
+    } else {
+        ["just now", "{} minutes ago", "{} hours ago", "{} days ago"]
     };
-    Some(crate::tr::fill(lang, en, &[n.to_string().as_bytes()]))
-}
-
-/// The table's short age ("12 minutes ago"), the column under "Saved".
-fn age(file: &std::path::Path, lang: ig2_formats::text::Lang) -> Option<Vec<u8>> {
-    let secs = std::fs::metadata(file).ok()?.modified().ok()?.elapsed().ok()?.as_secs();
     let (en, n) = match secs {
-        0..60 => return Some(crate::tr::get(lang, "just now")),
-        60..3600 => ("{} minutes ago", secs / 60),
-        3600..86400 => ("{} hours ago", secs / 3600),
-        _ => ("{} days ago", secs / 86400),
+        0..60 => return Some(crate::tr::get(lang, texts[0])),
+        60..3600 => (texts[1], secs / 60),
+        3600..86400 => (texts[2], secs / 3600),
+        _ => (texts[3], secs / 86400),
     };
     Some(crate::tr::fill(lang, en, &[n.to_string().as_bytes()]))
 }
@@ -1556,7 +1550,7 @@ mod tests {
         o.load_only = false;
         o.slots = vec![None; SLOTS + 1];
         for n in [1, 24] {
-            o.slots[n] = Some(super::super::Slot { name: format!("Game {n}").into_bytes(), date: [2350, 1, 2], file: Default::default(), ours: true });
+            o.slots[n] = Some(super::super::Slot { name: format!("Game {n}").into_bytes(), date: [2350, 1, 2], file: Default::default(), ours: true, modified: None });
         }
         o.modern = Some(Modern::in_game(&o, b"Kim".to_vec(), Default::default()));
         o

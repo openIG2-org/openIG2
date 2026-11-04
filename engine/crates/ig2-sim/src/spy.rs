@@ -8,6 +8,8 @@
 //! through [`World`]. Messages, story and tutorial hooks and `FelfedezBirodalom` are [`SpyEvent`]s; story
 //! missions ask [`World::story`].
 
+use crate::bytes::{i16_at, i32_at};
+use crate::cvt::cvtt_f64;
 use crate::colony::EconomyContext;
 use crate::colony_side::{status, ColonyWorld, SideEvent, SideRules, EMPIRES};
 use crate::diplomacy::{field, Relation};
@@ -127,38 +129,31 @@ impl Default for Spy {
     }
 }
 
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
 impl Spy {
     pub fn from_bytes(b: &[u8]) -> Self {
         Self {
             name: b[..16].try_into().unwrap(),
-            state: rd_i16(b, 0x10),
+            state: i16_at(b, 0x10),
             race: b[0x12],
             b13: b[0x13],
-            w14: rd_i16(b, 0x14),
-            applicant: rd_i16(b, 0x16),
+            w14: i16_at(b, 0x14),
+            applicant: i16_at(b, 0x16),
             master: b[0x18],
             b19: b[0x19],
-            mission: rd_i16(b, 0x1a) as u16,
+            mission: i16_at(b, 0x1a) as u16,
             target: b[0x1c],
             b1d: b[0x1d],
-            param1: rd_i16(b, 0x1e),
-            param2: rd_i16(b, 0x20),
-            w22: rd_i16(b, 0x22),
-            length: rd_i32(b, 0x24),
-            left: rd_i32(b, 0x28),
-            catch_at: rd_i32(b, 0x2c),
+            param1: i16_at(b, 0x1e),
+            param2: i16_at(b, 0x20),
+            w22: i16_at(b, 0x22),
+            length: i32_at(b, 0x24),
+            left: i32_at(b, 0x28),
+            catch_at: i32_at(b, 0x2c),
             b30: b[0x30],
             skills: b[0x31..0x35].try_into().unwrap(),
             b35: b[0x35..0x38].try_into().unwrap(),
-            points: rd_i32(b, 0x38),
-            xp: rd_i32(b, 0x3c),
+            points: i32_at(b, 0x38),
+            xp: i32_at(b, 0x3c),
             rank: b[0x40],
             known_to: b[0x41..0x4c].try_into().unwrap(),
         }
@@ -552,14 +547,9 @@ impl World<'_> {
             return None;
         }
         let d = self.combat.designs.get(t)?.get(sh.design.max(0) as usize)?;
-        let hidden = rd_i32(&d.raw, 0x80) != 0;
+        let hidden = i32_at(&d.raw, 0x80) != 0;
         (!hidden && (p1 == 0 || p1 == d.hull_tech)).then_some(d.hull_tech)
     }
-}
-
-/// x87 `ftol` truncation (out of range → `0x80000000`).
-fn ftol(x: f64) -> i32 {
-    if x.is_nan() || x >= 2147483648.0 || x <= -2147483649.0 { i32::MIN } else { x as i32 }
 }
 
 impl Spies {
@@ -717,7 +707,7 @@ impl Spies {
             let g = s.xp as f64 * 0.03 + 1.0;
             let r = w.r(50, 100);
             let d = if r as f64 <= g { w.r(50, 100) as f64 } else { g };
-            self.spy_mut(e, k).xp = ftol(s.xp as f64 + d);
+            self.spy_mut(e, k).xp = cvtt_f64(s.xp as f64 + d);
         }
         // §3.3 double-agent exposure.
         let s = *self.spy(e, k);
@@ -1101,7 +1091,7 @@ impl Spies {
                 true
             }
             mission::STEAL_MONEY => {
-                let r = w.r(0, ftol(w.colony.money[t].total));
+                let r = w.r(0, cvtt_f64(w.colony.money[t].total));
                 let x = r / 100 * 100;
                 if x < 1 && w.ctx.human(t) {
                     report[0] = x;

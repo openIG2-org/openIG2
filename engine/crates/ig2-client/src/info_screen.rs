@@ -104,7 +104,7 @@ pub enum Entry {
 }
 
 fn cstr(b: &[u8]) -> Vec<u8> {
-    b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())].to_vec()
+    ig2_sim::bytes::cstr(b).to_vec()
 }
 
 /// `InfoNagyKiirFlotta`'s design list of fleet `f` (exe 0x4e6ea0): the ships' designs (`Hajok`, design ≠ 0x7fff)

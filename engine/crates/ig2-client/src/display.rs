@@ -44,6 +44,17 @@ pub const EVENT_LOG: &str = "EventLog";
 /// The language row's choices after "Default", in its order.
 pub const LANGS: [Lang; 6] = [Lang::En, Lang::Hu, Lang::De, Lang::Fr, Lang::Es, Lang::It];
 
+/// Change our own settings file (`Options::own_path`, not the game's `options.dat`): read it, apply `f`, write it
+/// back; a failed write is logged.
+pub fn update_own_settings(f: impl FnOnce(&mut File)) {
+    let Some(path) = File::own_path() else { return };
+    let mut own = ig2_formats::userfs::read(&path).map(|b| File::parse(&b)).unwrap_or_default();
+    f(&mut own);
+    if let Err(e) = ig2_formats::userfs::write(&path, own.to_bytes()) {
+        eprintln!("ig2-client: {}: {e}", path.display());
+    }
+}
+
 /// The language the settings file chooses (ADR 0031), if any.
 pub fn language(f: &File) -> Option<Lang> {
     f.int(LANGUAGE).and_then(|n| LANGS.get((n as usize).checked_sub(1)?).copied())

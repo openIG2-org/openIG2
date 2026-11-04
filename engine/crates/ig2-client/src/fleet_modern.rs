@@ -5,6 +5,7 @@
 //! more each step, right all), the scroll bar, the exit, the keys and the orders stay the original's. The units'
 //! models are the original's render target, cut out of it into the cards' wells ([`pictures`]).
 
+use ig2_sim::bytes::{cstr, f32_at, i16_at, i32_at};
 use egui::{pos2, vec2, Color32, Pos2, Rect, Stroke, Vec2};
 use ig2_sim::save::{va, SaveState, TECH_SIZE};
 
@@ -174,7 +175,6 @@ impl State {
     }
 }
 
-const EDGE: f32 = 24.0;
 const HEAD: f32 = 64.0;
 const FOOT: f32 = 64.0;
 const PAD: Vec2 = vec2(22.0, 20.0);
@@ -189,7 +189,6 @@ const TITLE: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tra
 const STATUS: Font = Font { size: 14.0, line: 18.0, weight: Weight::Medium, tracking: 0.1, upper: true, lcd: false };
 const CARD_NAME: Font = Font { size: 15.0, line: 20.0, weight: Weight::Medium, tracking: 0.1, upper: false, lcd: false };
 const DETAIL_NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
-const OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
 const EXIT: Font = Font { size: 18.0, line: 22.0, weight: Weight::Medium, tracking: 0.16, upper: false, lcd: false };
 
 
@@ -209,19 +208,15 @@ fn hover(ui: &egui::Ui, r: Rect) -> bool {
     ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p))
 }
 
-fn down(ui: &egui::Ui) -> bool {
-    ui.ctx().input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
-}
-
 /// One frame of the panels over the starmap (after the HUD's).
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     let ppp = ctx.pixels_per_point();
     let screen = ctx.screen_rect();
     let virt = crate::font::Virtual::new([screen.width() * ppp, screen.height() * ppp]);
     *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, tip: st.tip.take(), ..Default::default() };
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 28.0;
+    let top = crate::starmap_modern::bar_bottom(ctx) + 28.0;
     // Room down to the selection card (24 from the bottom, about 150 high).
-    let room = (screen.bottom() - top - EDGE - 200.0).max(360.0);
+    let room = (screen.bottom() - top - ds::EDGE - 200.0).max(360.0);
     let t = ds::open_t(ctx, egui::Id::new("fmh-open"), true);
     egui::Area::new(egui::Id::new("fmh")).order(egui::Order::Background).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
         ui.set_opacity(t);
@@ -242,8 +237,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     if let Some((m, _)) = &st.menu {
         st.wells.retain(|w| !w.1.intersects(*m));
     }
+    ds::wells_in_pixels(&mut st.wells, ppp);
     for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
         w.2 *= o;
     }
 }
@@ -262,8 +257,8 @@ fn panel(ui: &egui::Ui, r: Rect, title: &str, owner: &str, colour: Color32, stat
     // The owner and the status centred on the title's capitals (the board's header row centres its items).
     let mid = |f: Font| base - (TITLE.cap() - f.cap()) / 2.0;
     if !owner.is_empty() {
-        let f = Text::new(owner, OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
-        ds::glowing_galley(p, pos2(x, mid(OWNER) - f.baseline()), &f.galley, colour);
+        let f = Text::new(owner, Font::OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
+        ds::glowing_galley(p, pos2(x, mid(Font::OWNER) - f.baseline()), &f.galley, colour);
         x += f.width + 18.0;
     }
     if !status.is_empty() {
@@ -311,7 +306,7 @@ fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: 
             lcd(l);
             let br = Rect::from_min_size(pos2(b, row.center().y - 21.0), vec2(42.0, 42.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(br));
-            ds::forced(hot > 0.5, hot > 0.5 && down(ui), || ds::round_button(&mut child, ds::Glyph::Icon(icon), true, false));
+            ds::forced(hot > 0.5, hot > 0.5 && ds::any_down(ui.ctx()), || ds::round_button(&mut child, ds::Glyph::Icon(icon), true, false));
         }
     }
 }
@@ -320,7 +315,7 @@ fn card(ui: &mut egui::Ui, r: Rect, c: &Card, src: [f32; 4], alpha: f32, round: 
 fn plate(ui: &mut egui::Ui, r: Rect, text: &str) {
     let hot = hover(ui, r);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
-    ds::forced(hot, hot && down(ui), || child.add_sized(r.size(), ds::Plate::new(text).width(r.width()).height(r.height()).font(EXIT)));
+    ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add_sized(r.size(), ds::Plate::new(text).width(r.width()).height(r.height()).font(EXIT)));
 }
 
 /// The capacity footer's label, bar and value from `x`.
@@ -373,7 +368,7 @@ fn scroll(ui: &egui::Ui, body: Rect, first: i32, total: i32, st: &mut State) {
 
 fn fleet(ui: &mut egui::Ui, f: &FleetInfo, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
     let k = ds::tokens();
-    let w = FLEET_W.min(screen.width() - 2.0 * EDGE);
+    let w = FLEET_W.min(screen.width() - 2.0 * ds::EDGE);
     let h = 700.0f32.min(room);
     let r = Rect::from_min_size(pos2(screen.center().x - w / 2.0, top), vec2(w, h)).translate(slide);
     panel(ui, r, &f.title, &f.owner, f.colour, &f.status);
@@ -490,7 +485,7 @@ fn sale(ui: &egui::Ui, s: &Sale, st: &mut State, screen: Rect) {
 
 fn transfer(ui: &mut egui::Ui, t: &Transfer, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
     let k = ds::tokens();
-    let sw = SIDE_W.min((screen.width() - 2.0 * EDGE - SIDES_GAP) / 2.0);
+    let sw = SIDE_W.min((screen.width() - 2.0 * ds::EDGE - SIDES_GAP) / 2.0);
     let h = 700.0f32.min(room);
     let x0 = screen.center().x - sw - SIDES_GAP / 2.0;
     for (s, side) in t.sides.iter().enumerate() {
@@ -572,13 +567,13 @@ fn tanks(ui: &mut egui::Ui, t: &TankInfo, st: &mut State, screen: Rect, top: f32
     // The board dims the starmap under the panels (`brightness(0.45)`); the HUD's own areas lie over it.
     ui.painter().rect_filled(screen, 0, Color32::from_black_alpha((140.0 * ui.opacity()) as u8));
     let tw = Text::new(&t.title, Font::TITLE_PLATE.upper(false)).layout(ui.ctx(), f32::INFINITY).width;
-    let pw = (tw + 2.0 * (ds::SPACE[4] + ds::SPACE[3])).clamp(320.0, (screen.width() - 2.0 * EDGE).min(900.0));
+    let pw = (tw + 2.0 * (ds::SPACE[4] + ds::SPACE[3])).clamp(320.0, (screen.width() - 2.0 * ds::EDGE).min(900.0));
     let pr = Rect::from_min_size(pos2(screen.center().x - pw / 2.0, plate_top), vec2(pw, 60.0)).translate(slide);
     ds::title_plate(&mut ui.new_child(egui::UiBuilder::new().max_rect(pr)), &t.title, pw);
     let y0 = pr.bottom() + 42.0;
     let h = (screen.bottom() - y0 - 230.0).clamp(300.0, 680.0);
     let total = TANKS_LIST_W + TANKS_GAP + TANKS_DATA_W;
-    let s = ((screen.width() - 2.0 * EDGE) / total).min(1.0);
+    let s = ((screen.width() - 2.0 * ds::EDGE) / total).min(1.0);
     let x0 = screen.center().x - total * s / 2.0;
     let list = Rect::from_min_size(pos2(x0, y0), vec2((TANKS_LIST_W * s).round(), h));
     let data = Rect::from_min_size(pos2(list.right() + (TANKS_GAP * s).round(), y0), vec2((TANKS_DATA_W * s).round(), h));
@@ -659,31 +654,21 @@ fn tanks(ui: &mut egui::Ui, t: &TankInfo, st: &mut State, screen: Rect, top: f32
 /// [`show`] left, each fitted into its well.
 pub fn pictures(f: &mut crate::render::Frame, wells: &[([f32; 4], Rect, f32)], models: Option<crate::render::TexId>, v: &crate::font::Virtual) {
     let Some(tex) = models else { return };
-    let wide = crate::kit::Wide::new(v);
     for &(src, r, alpha) in wells {
-        let [x0, y0, w0, h0] = src;
-        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
-        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
-        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
-        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
-        f.push(tex, crate::render::Blend::Alpha, i);
+        well_sprite(f, tex, crate::render::Blend::Alpha, src, r, alpha, v);
     }
 }
 
-fn i16_at(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-
-fn i32_at(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn f32_at(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-
-fn cstr(b: &[u8]) -> &[u8] {
-    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+/// The part `src` (x, y, width, height on the virtual 640 × 480 screen) of a screen-sized target `tex`, fitted into
+/// the well `r` (pixels) in its own shape at `alpha`.
+pub(crate) fn well_sprite(f: &mut crate::render::Frame, tex: crate::render::TexId, blend: crate::render::Blend, src: [f32; 4], r: Rect, alpha: f32, v: &crate::font::Virtual) {
+    let wide = crate::kit::Wide::new(v);
+    let [x0, y0, w0, h0] = src;
+    let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
+    let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
+    let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
+    i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+    f.push(tex, blend, i);
 }
 
 impl crate::ui::Hud {

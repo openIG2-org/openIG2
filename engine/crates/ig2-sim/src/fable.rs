@@ -7,6 +7,8 @@
 //! episodes. The world changes go out as [`StoryEvent`]s; the fleet helper `st_fDistFromBir`
 //! lives here (`st_fEliminate` and `st_fGetNearest` are `brnd`'s `Story::send_away` and `nearest_fleet`).
 
+use crate::script::{answered, promoted, read, message};
+use crate::cvt::cvtt_f32;
 use crate::story::{adat, flag, Abort, KemNews, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
 
 /// `st_Fable_include`.
@@ -55,31 +57,7 @@ fn trader_id(id: i32) -> bool {
     (10000..=11000).contains(&id)
 }
 
-/// `cvttss2si`: f32 → i32, `INT_MIN` for NaN and out-of-range values.
-fn trunc(x: f32) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 { i32::MIN } else { x as i32 }
-}
-
 // ---------------------------------------------------------------- message predicates and helpers
-
-/// `st_Message(b, r)`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message.0 == b && s.message.1 == r
-}
-
-/// `st_Elevul(b)`.
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {
     w.event(StoryEvent::MessageParam { slot, text });
@@ -133,10 +111,10 @@ pub fn f_dist_from_bir(f: i32, e: i32, w: &dyn StoryWorld) -> i32 {
             continue;
         }
         let (px, py) = w.planet_xy(p);
-        let dx = trunc(px).wrapping_sub(trunc(fx));
-        let dy = trunc(py).wrapping_sub(trunc(fy));
+        let dx = cvtt_f32(px).wrapping_sub(cvtt_f32(fx));
+        let dy = cvtt_f32(py).wrapping_sub(cvtt_f32(fy));
         let sq = dy.wrapping_mul(dy).wrapping_add(dx.wrapping_mul(dx));
-        let d = trunc((sq as f32 as f64).sqrt() as f32);
+        let d = cvtt_f32((sq as f32 as f64).sqrt() as f32);
         if d < best {
             best = d;
         }
@@ -221,7 +199,7 @@ fn pirates_301(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         let f = s.f_search(3011, w);
         if f != 0 {
             let (x, y) = w.fleet_xy(f);
-            let g = crate::brnd::nearest_fleet(trunc(x), trunc(y), en, w);
+            let g = crate::brnd::nearest_fleet(cvtt_f32(x), cvtt_f32(y), en, w);
             if g != 0 {
                 w.event(StoryEvent::MoveFleet { fleet: f, kind: 2, mode: 2, x: g as f32, y: 0.0 });
                 return Ok(());
@@ -281,7 +259,7 @@ fn escort_303(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             s.sz_start(3031, 10);
         } else {
             s.v_set(3031, w.fleet_id(f));
-            s.v_set(3032, trunc(w.fleet_target(f)));
+            s.v_set(3032, cvtt_f32(w.fleet_target(f)));
             w.event(StoryEvent::SetFleetId { fleet: f, id: 3031 });
             fleet_flags(w, f, bits::FRIENDLY | bits::CUSTOM_NAME | bits::VISIBLE, 0);
             w.event(StoryEvent::StopFleet(f));
@@ -649,8 +627,8 @@ fn ambush_311(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
             // st_fNewPos: the pirate opposite the trader's start, mirrored through the planet.
             let (px, py) = w.planet_xy(b);
             let (lx, ly) = (s.last_fn[crate::story::last_fn::X], s.last_fn[crate::story::last_fn::Y]);
-            let x = trunc(px - (px - lx as f32) * 2.0) as f32;
-            let y = trunc(ly.wrapping_mul(2) as f32 - py) as f32;
+            let x = cvtt_f32(px - (px - lx as f32) * 2.0) as f32;
+            let y = cvtt_f32(ly.wrapping_mul(2) as f32 - py) as f32;
             let p = w.new_fleet(&crate::story::FleetName::Text(3111), 10, PIRATE, x, y, 7.0);
             s.auto_add_ship(p, PIRATE, w);
             // st_fAttackFleet(3111, 4041).
@@ -670,7 +648,7 @@ fn ambush_311(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
                 return Err(Abort);
             }
             let (fx, fy) = w.fleet_xy(f);
-            let (x, y) = (trunc(fx) as f32, trunc(fy) as f32);
+            let (x, y) = (cvtt_f32(fx) as f32, cvtt_f32(fy) as f32);
             // The fleets up to the ship count (a slip kept).
             for k in 1..=w.ship_count() {
                 if w.fleet_owner(k) != en {
@@ -678,7 +656,7 @@ fn ambush_311(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
                 }
                 let (kx, ky) = w.fleet_xy(k);
                 let d = (y - ky) * (y - ky) + (x - kx) * (x - kx);
-                if trunc((d as f64).sqrt() as f32) < 10 {
+                if cvtt_f32((d as f64).sqrt() as f32) < 10 {
                     w.event(StoryEvent::JoinBattle(k));
                     s.battle_pact[9] = 1;
                     s.set_adat_i32(adat::BATTLE_88, 1);

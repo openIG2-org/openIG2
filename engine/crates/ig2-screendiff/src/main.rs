@@ -77,6 +77,9 @@ fn rect(spec: &str, f: (f32, f32, f32), w: usize, h: usize) -> Result<Rect, Stri
     };
     let v: Vec<f32> = nums.split(',').map(|x| x.trim().parse::<f32>().map_err(|e| format!("{spec}: {e}"))).collect::<Result<_, _>>()?;
     let [x, y, rw, rh] = v[..] else { return Err(format!("{spec}: X,Y,W,H")) };
+    if !(rw >= 0.0 && rh >= 0.0) {
+        return Err(format!("{spec}: W and H can't be negative"));
+    }
     let (fx, fy, k) = f;
     let px = |v: f32, o: f32, max: usize| ((o + v * k).round().max(0.0) as usize).min(max);
     Ok(Rect { name, x0: px(x, fx, w), y0: px(y, fy, h), x1: px(x + rw, fx, w), y1: px(y + rh, fy, h) })

@@ -10,7 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// The lease asked for.
 pub const LEASE: Duration = Duration::from_secs(2 * 60 * 60);
@@ -85,8 +85,14 @@ impl NatPmp {
         let mut buf = [0u8; 64];
         for _ in 0..self.tries {
             self.socket.send_to(req, self.gateway)?;
-            self.socket.set_read_timeout(Some(timeout))?;
+            // Per try, not per datagram: other senders' packets don't push the retry back.
+            let deadline = Instant::now() + timeout;
             loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                self.socket.set_read_timeout(Some(left))?;
                 match self.socket.recv_from(&mut buf) {
                     Ok((n, from)) => {
                         if from != self.gateway || n < len || buf[0] != 0 || buf[1] != 128 + req[1] {

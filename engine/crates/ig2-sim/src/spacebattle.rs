@@ -12,6 +12,7 @@
 //! (`SpaceWar_NewBattle`: `InitSpaceWar`, `AddFleet`, formations, planet guns, fighters, asteroids; spec §7.10)
 //! from the strategic state and ended by [`Battle::finish`] (`SpaceWarVege`, §7.11).
 
+use crate::cvt::{cvtt_f32, cvtt_f64};
 use crate::rng::{stream, Streams};
 
 /// `rndlog(6, …)`.
@@ -287,13 +288,15 @@ impl SpaceRules {
     }
 
     /// The rules a battle tick reads, with the state's switches (`BattleRules`).
-    pub fn tick_rules(&self) -> BattleRules {
-        BattleRules { weapons: self.weapons.clone(), forms: self.forms.clone(), ..Default::default() }
+    /// The tick's rules with `weapons` (the table as the battle's setup left it).
+    pub fn tick_rules(&self, weapons: Vec<WeaponRules>) -> BattleRules {
+        BattleRules { weapons, forms: self.forms.clone(), ..Default::default() }
     }
 
-    pub fn setup_rules(&self) -> SetupRules {
+    /// The setup's rules with `weapons` (the table as the battle's setup left it).
+    pub fn setup_rules(&self, weapons: Vec<WeaponRules>) -> SetupRules {
         SetupRules {
-            weapons: self.weapons.clone(),
+            weapons,
             forms: self.forms.clone(),
             formations: self.formations.clone(),
             building_tech: self.building_tech.clone(),
@@ -812,25 +815,6 @@ struct Search {
     arrived: bool,
 }
 
-/// `cvttss2si`: out-of-range and NaN give `i32::MIN`.
-#[inline]
-fn trunc(x: f32) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
-        i32::MIN
-    } else {
-        x as i32
-    }
-}
-
-#[inline]
-fn trunc64(x: f64) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
-        i32::MIN
-    } else {
-        x as i32
-    }
-}
-
 /// `rndlog(6, lo, hi)`.
 #[inline]
 fn roll(rng: &mut Streams, lo: i32, hi: i32) -> i32 {
@@ -1063,7 +1047,7 @@ impl Battle {
         // The human's story bonus tests the slot's previous owner: the new one isn't written yet.
         if !t.rules.multiplayer && self.pools[form].shots[si].owner == self.human {
             let b = (t.rules.story_hit_bonus as f64 / 100.0 + 1.0) as f32;
-            hit = trunc(100.0 - (100 - hit) as f32 / b);
+            hit = cvtt_f32(100.0 - (100 - hit) as f32 / b);
             let k = (t.rules.story_damage_bonus as f64 / 100.0 + 1.0) as f32;
             let s = &mut self.pools[form].shots[si];
             s.mult *= k;
@@ -1386,7 +1370,7 @@ impl Battle {
             if hp != 0 && x.hp_share != 0 && n != 0 {
                 let per = hp as f32 / x.hp_share as f32;
                 if per != 0.0 {
-                    let m = trunc(rest as f32 / per);
+                    let m = cvtt_f32(rest as f32 / per);
                     if m < 1 {
                         if 1.5 / (n as f64) < ((damage as f32 / hp as f32) as f64) {
                             self.explode(t, u, k, true, true);
@@ -1444,12 +1428,12 @@ impl Battle {
                 j += 1;
             }
             let f = n as f32 / (n + 1) as f32;
-            x.damage = trunc(x.damage as f32 * f);
+            x.damage = cvtt_f32(x.damage as f32 * f);
             for m in &mut x.mounts {
                 if m.count == 1 {
                     m.count = 0;
                 } else {
-                    m.count = trunc(m.count as f32 * f);
+                    m.count = cvtt_f32(m.count as f32 * f);
                     if m.count == 0 {
                         m.count = 1;
                     }
@@ -1636,7 +1620,7 @@ impl Battle {
                     // The ship count is read again every round (a wiped group stops taking hits).
                     let mut k = 0;
                     while k < self.units[u].ship_count() {
-                        let dmg = trunc((w.damage_vs(&t.weapon_words[s.weapon as usize], self.units[u].kind).wrapping_mul(s.count)) as f32 * s.mult);
+                        let dmg = cvtt_f32((w.damage_vs(&t.weapon_words[s.weapon as usize], self.units[u].kind).wrapping_mul(s.count)) as f32 * s.mult);
                         self.take_damage(t, u, k, dmg);
                         k += 1;
                     }
@@ -1649,7 +1633,7 @@ impl Battle {
             let tg = s.target;
             let mut k = 0;
             while k < self.units[tg].ship_count() {
-                let dmg = trunc((w.damage_vs(&t.weapon_words[s.weapon as usize], self.units[tg].kind).wrapping_mul(s.count)) as f32 * s.mult);
+                let dmg = cvtt_f32((w.damage_vs(&t.weapon_words[s.weapon as usize], self.units[tg].kind).wrapping_mul(s.count)) as f32 * s.mult);
                 self.take_damage(t, tg, k, dmg);
                 k += 1;
             }
@@ -1668,7 +1652,7 @@ impl Battle {
         if s.weapon == 0xc && s.kind == shot_kind::SHIP {
             if let Some(sh) = s.shooter {
                 // The arc jumps to every unit and fighter within a sixteenth of its length (squared).
-                let reach = trunc(dist2(self.units[sh].pos, self.units[s.target].pos) * 0.0625) as f32;
+                let reach = cvtt_f32(dist2(self.units[sh].pos, self.units[s.target].pos) * 0.0625) as f32;
                 let tp = self.units[s.target].pos;
                 for u in 0..self.units.len() {
                     if !self.units[u].alive || u == s.target {
@@ -1776,11 +1760,11 @@ impl Battle {
             return;
         }
         let k = roll(t.rng, 0, tg.ship_count() - 1);
-        let base = trunc((w.damage_vs(&t.weapon_words[s.weapon as usize], tg.kind).wrapping_mul(s.count)) as f32 * s.mult);
+        let base = cvtt_f32((w.damage_vs(&t.weapon_words[s.weapon as usize], tg.kind).wrapping_mul(s.count)) as f32 * s.mult);
         let mut d = s.dir;
         normalize(&mut d);
         let back = tg.heading.sub(d).len2();
-        let mut dmg = trunc(base as f32 / ((4.0 - back) * 0.25 + 1.0));
+        let mut dmg = cvtt_f32(base as f32 / ((4.0 - back) * 0.25 + 1.0));
         if dmg < 1 {
             dmg = 1;
         }
@@ -1883,8 +1867,8 @@ impl Battle {
         let slot = self.guns[g].building;
         if slot != 0 {
             let w = &t.rules.weapons[s.weapon as usize];
-            let raw = trunc((w.damage[5].wrapping_mul(s.count)) as f32 * s.mult / self.guns[g].armour);
-            let dmg = trunc64(raw as f64 * 6.666666666666667 * 2.0);
+            let raw = cvtt_f32((w.damage[5].wrapping_mul(s.count)) as f32 * s.mult / self.guns[g].armour);
+            let dmg = cvtt_f64(raw as f64 * 6.666666666666667 * 2.0);
             if t.world.damage_building(self.planet, slot, dmg) {
                 self.guns[g].building = 0;
                 self.guns[g].weapon = -1;
@@ -2182,7 +2166,7 @@ impl Battle {
                     score -= 0x28;
                 }
             }
-            let v = trunc(dist(u.pos, pos) + score as f32);
+            let v = cvtt_f32(dist(u.pos, pos) + score as f32);
             if best.is_none_or(|(b, _)| v < b) {
                 best = Some((v, j));
             }
@@ -2285,9 +2269,9 @@ impl Battle {
     fn grid_of(&self, p: V4) -> [i32; 3] {
         let half = [self.grid[0] / 2, self.grid[1] / 2, self.grid[2] / 2];
         [
-            trunc((self.cell[0] * 0.5 + p.y) / self.cell[0] + half[0] as f32),
-            trunc((self.cell[1] * 0.5 + p.z) / self.cell[1] + half[1] as f32),
-            trunc((self.cell[2] * 0.5 + p.x) / self.cell[2] + half[2] as f32),
+            cvtt_f32((self.cell[0] * 0.5 + p.y) / self.cell[0] + half[0] as f32),
+            cvtt_f32((self.cell[1] * 0.5 + p.z) / self.cell[1] + half[1] as f32),
+            cvtt_f32((self.cell[2] * 0.5 + p.x) / self.cell[2] + half[2] as f32),
         ]
     }
 
@@ -2442,7 +2426,7 @@ impl Battle {
             u.waypoints[0][..3].copy_from_slice(&c);
         }
         let u = &self.units[i];
-        let radius = if u.order == order::MOVE { 1 } else { trunc(u.range_min / self.cell[0]) };
+        let radius = if u.order == order::MOVE { 1 } else { cvtt_f32(u.range_min / self.cell[0]) };
         let clamp = |w: &mut [i32; 4]| {
             w[0] = w[0].clamp(1, 0x7f);
             w[1] = w[1].clamp(1, 0x7f);
@@ -2858,9 +2842,9 @@ impl Battle {
         let step = (1.0f64 / ((n + 1) as f32) as f64) as f32;
         let mut f = step;
         while (f as f64) <= 1.001 {
-            let x = trunc64(((b[0] - a[0]) as f32 * f + a[0] as f32) as f64 + 0.5);
-            let y = trunc64(((b[1] - a[1]) as f32 * f + a[1] as f32) as f64 + 0.5);
-            let z = trunc64(((b[2] - a[2]) as f32 * f + a[2] as f32) as f64 + 0.5);
+            let x = cvtt_f64(((b[0] - a[0]) as f32 * f + a[0] as f32) as f64 + 0.5);
+            let y = cvtt_f64(((b[1] - a[1]) as f32 * f + a[1] as f32) as f64 + 0.5);
+            let z = cvtt_f64(((b[2] - a[2]) as f32 * f + a[2] as f32) as f64 + 0.5);
             if self.cell_at(Self::cell_index(x, y, z)) == CELL_BLOCKED {
                 return false;
             }
@@ -3320,9 +3304,9 @@ impl Battle {
     /// truncated squared distance (first wins ties).
     fn extreme(&self, list: &[usize], p: V4, nearest: bool) -> usize {
         let mut best = 0;
-        let mut v = trunc(dist2(p, self.units[list[0]].pos));
+        let mut v = cvtt_f32(dist2(p, self.units[list[0]].pos));
         for (k, &i) in list.iter().enumerate().skip(1) {
-            let d = trunc(dist2(p, self.units[i].pos));
+            let d = cvtt_f32(dist2(p, self.units[i].pos));
             if (nearest && d < v) || (!nearest && v < d) {
                 v = d;
                 best = k;
@@ -3435,9 +3419,9 @@ impl Battle {
         }
         let hurt = if a.hp == 0 { 1 } else { a.damage.wrapping_mul(100) / a.hp };
         let score = |j: usize| {
-            let mut d = trunc(dist(a.pos, self.units[j].pos));
+            let mut d = cvtt_f32(dist(a.pos, self.units[j].pos));
             if (d as f32) < a.range_min {
-                d = trunc(a.range_min);
+                d = cvtt_f32(a.range_min);
             }
             d
         };
@@ -3871,20 +3855,20 @@ pub fn design_type(hull_tech: i32) -> i32 {
 /// The footprint `AddUjUrhajo` writes into a ship-type record (f32): `((scale·1024)/cell + cell)·0.5 + 1` across,
 /// `((scale·1024)/cell + cell_z)·0.5` up.
 pub fn footprint(scale: f32, cell: f32, cell_z: f32) -> (i32, i32) {
-    (trunc(((scale * 1024.0) / cell + cell) * 0.5 + 1.0), trunc(((scale * 1024.0) / cell + cell_z) * 0.5))
+    (cvtt_f32(((scale * 1024.0) / cell + cell) * 0.5 + 1.0), cvtt_f32(((scale * 1024.0) / cell + cell_z) * 0.5))
 }
 
 /// What a design slot's item does to a new unit's shield and pod flags (`AddUjUrhajo`): shields 0x31..=0x36
 /// add 15/30/45/60/80/100 % of the ship's hit points (f64), the rest set pod flags.
 pub fn pod_effect(id: u8, hp: i32, shield: i32, pods: u32) -> (i32, u32) {
-    let bonus = |k: f64, flag: u32| (trunc64(hp as f64 * k + shield as f64), pods | flag);
+    let bonus = |k: f64, flag: u32| (cvtt_f64(hp as f64 * k + shield as f64), pods | flag);
     match id {
         0x31 => bonus(0.15, 1),
         0x32 => bonus(0.3, 2),
         0x33 => bonus(0.45, 4),
         0x34 => bonus(0.6, 8),
         0x35 => bonus(0.8, 0x10),
-        0x36 => (trunc64(shield as f64 + hp as f64), pods | 0x800),
+        0x36 => (cvtt_f64(shield as f64 + hp as f64), pods | 0x800),
         0x25 => (shield, pods | pod::DAMAGE),
         0x27 => (shield, pods | pod::JAMMER),
         0x28 => (shield, pods | pod::DECOY),
@@ -3924,8 +3908,8 @@ pub fn rotate_formation(f: &mut [FormationSlot], dir: V4, grid: [i32; 3]) {
         let fy = c[1] as f32 - hy;
         let x = fx * d.y + fy * d.x + hx;
         let y = (fy * d.y - fx * d.x) + hy;
-        c[0] = trunc(x);
-        c[1] = trunc(y);
+        c[0] = cvtt_f32(x);
+        c[1] = cvtt_f32(y);
     };
     for s in f {
         turn(&mut s.cell);
@@ -4557,7 +4541,7 @@ impl Battle {
             }
         }
         for g in &groups {
-            let n = match trunc(g.count as f32 * scale) {
+            let n = match cvtt_f32(g.count as f32 * scale) {
                 0 => 1,
                 n => n,
             };
@@ -4847,8 +4831,8 @@ mod tests {
         assert_eq!(normalized(V4::new(3.0, 4.0, 0.0)), V4::new(0.6, 0.8, 0.0));
         let a = angle(V4::new(1.0, 0.0, 0.0), V4::new(0.0, 1.0, 0.0));
         assert!((a - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
-        assert_eq!(trunc(f32::NAN), i32::MIN);
-        assert_eq!(trunc(-2.9), -2);
+        assert_eq!(cvtt_f32(f32::NAN), i32::MIN);
+        assert_eq!(cvtt_f32(-2.9), -2);
     }
 
     #[test]

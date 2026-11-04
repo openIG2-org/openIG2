@@ -5,7 +5,8 @@
 
 use super::colonise::capturable;
 use super::enhanced;
-use super::{cvtt, AiHooks, AiState, World, EMPIRES, GRID};
+use crate::cvt::cvtt_f64;
+use super::{AiHooks, AiState, World, EMPIRES, GRID};
 use crate::diplomacy::{field, level};
 use crate::fleet::{flag, order};
 use crate::spacewar::NO_DESIGN;
@@ -23,7 +24,7 @@ const GROUND_HULL_BASE: i32 = 0x12;
 
 /// The speed class `clamp((int)((f64)((a − b)·50 + 5) + 0.5), 0, 10)` (f32 product and sum).
 fn speed_class(own: f32, other: f32) -> usize {
-    cvtt(((own - other) * 50.0 + 5.0) as f64 + 0.5).clamp(0, 10) as usize
+    cvtt_f64(((own - other) * 50.0 + 5.0) as f64 + 0.5).clamp(0, 10) as usize
 }
 
 /// `(f32)sqrt((f64)x)`.
@@ -33,7 +34,7 @@ fn root(x: f32) -> f32 {
 
 /// The scouting grid cell of a coordinate: `(int)((c + 300) / 30 + 1)` (f32).
 fn cell(c: f32) -> i32 {
-    cvtt(((c + 300.0) / 30.0 + 1.0) as f64)
+    cvtt_f64(((c + 300.0) / 30.0 + 1.0) as f64)
 }
 
 impl World<'_> {
@@ -293,7 +294,7 @@ impl AiState {
                     continue;
                 }
                 let (dx, dy) = (r.x - me.x, r.y - me.y);
-                let d = cvtt((dx * dx + dy * dy) as f64) as f32;
+                let d = cvtt_f64((dx * dx + dy * dy) as f64) as f32;
                 if best > d {
                     best = d;
                     pick = g;
@@ -383,7 +384,7 @@ impl AiState {
         }
         if me.flags & flag::COLONISING != 0 && me.order == order::MOVE && me.kind == order::PLANET {
             if let Some(x) = self.last_bad_colony.get_mut(o) {
-                *x = cvtt(me.tx as f64);
+                *x = cvtt_f64(me.tx as f64);
             }
         }
         let diff = w.spy.ctx.difficulty(o);
@@ -570,7 +571,7 @@ impl AiState {
                     }
                     let k = speed_class(mr.speed, r.speed);
                     let mut reach = if r.ground_strength > 0 { GROUND_RANGE[k] } else { PLAIN_RANGE[k] };
-                    let p = cvtt(r.tx as f64);
+                    let p = cvtt_f64(r.tx as f64);
                     let weak = r.order == order::ATTACK && r.kind == order::PLANET && {
                         let pl = w.spy.colony.planets.get(p.max(0) as usize);
                         let fort = w.spy.colony.strength.fortress.get(p.max(0) as usize).copied().unwrap_or(0);
@@ -612,7 +613,7 @@ impl AiState {
                 }
                 cand = true;
                 let fort = w.spy.colony.strength.fortress.get(p).copied().unwrap_or(0);
-                let def = cvtt((fort.wrapping_add(pl.field_5c) as f32 * g) as f64);
+                let def = cvtt_f64((fort.wrapping_add(pl.field_5c) as f32 * g) as f64);
                 if !(self.load_phase[e] < 1 && mt.ground > 0 && mt.ground_strength > 0) {
                     continue;
                 }
@@ -675,7 +676,7 @@ impl AiState {
             while f < w.starmap.fleets.len() {
                 let r = &w.starmap.fleets[f];
                 if r.owner as usize == e && r.story_id == 0 && f as i32 != m {
-                    let (k, t) = (r.kind as i32, cvtt(r.tx as f64));
+                    let (k, t) = (r.kind as i32, cvtt_f64(r.tx as f64));
                     let res = self.flee(w, f, k, t);
                     let r = &w.starmap.fleets[f];
                     if !matches!(res, 1..=3) && r.flags & (flag::COLONISING | flag::TERRAFORMING) == 0 && (r.flags & flag::RADAR_IGNORED == 0 || r.order == order::NONE) {
@@ -787,7 +788,7 @@ impl AiState {
         let t = w.totals(m);
         let fetch = cand && self.no_load[e] < 1 && (t.ground < t.capacity || v.main_kind < v.top) && (bi == 0 || w.r(1, 1) == 1);
         if fetch {
-            let (fx, fy) = (cvtt(me.x as f64) as f32, cvtt(me.y as f64) as f32);
+            let (fx, fy) = (cvtt_f64(me.x as f64) as f32, cvtt_f64(me.y as f64) as f32);
             let (mut top, mut pick) = (0.0f32, 0usize);
             for (p, pl) in w.spy.colony.planets.iter().enumerate().skip(1) {
                 if pl.owner as usize != e || !((t.ground < t.capacity || v.main_kind < v.best[p]) && v.best[p] == v.top) {

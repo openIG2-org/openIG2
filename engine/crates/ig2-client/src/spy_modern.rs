@@ -106,18 +106,8 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const PANEL_TOP: f32 = 520.0;
 const PANEL_W: f32 = 600.0;
-const EXIT_W: f32 = 220.0;
-
-fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
-        ui.set_min_size(rect.size());
-        ui.set_max_size(rect.size());
-        add(ui)
-    })
-}
 
 /// A point of the original's 640 × 480 screen in this page's points.
 fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
@@ -128,9 +118,7 @@ fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
 }
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     if !v.live {
         st.kill = false;
         return acts;
@@ -138,7 +126,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     // The pedestals: the name on the plate, the figure and plate take a press.
     for p in &v.pedestals {
         let plate = at(ctx, p.plate);
@@ -146,12 +134,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let scale = at(ctx, [100.0, 0.0]).x - at(ctx, [0.0, 0.0]).x;
         let body = Rect::from_min_max(pos2(fig.x - scale * 0.45, fig.y - scale * 0.7), pos2(fig.x + scale * 0.45, plate.y + scale * 0.12));
         let name = Rect::from_center_size(plate, vec2(scale * 0.8, 24.0));
-        place(ctx, &format!("ksh-ped{}", p.i), body.union(name), |ui| {
+        ds::place(ctx, ("ksh-ped", p.i), body.union(name), |ui| {
             let resp = ui.interact(body.union(name), ui.id().with("ped"), Sense::click());
             Text::new(&p.name, Font::LABEL.sized(15.0)).center().shrink(10.0).color(k.ink.gamma_multiply(p.alpha)).paint(ui, name);
             if p.agent {
                 let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-                if either(&resp) {
+                if ds::either(&resp) {
                     acts.push(Act::Pedestal(p.i));
                 }
             }
@@ -160,7 +148,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     if v.arrows {
         for (left, x) in [(false, 247.0), (true, w - 247.0)] {
             let r = Rect::from_center_size(pos2(x, 317.0 * g), vec2(40.0, 40.0));
-            place(ctx, if left { "ksh-next" } else { "ksh-prev" }, r, |ui| {
+            ds::place(ctx, if left { "ksh-next" } else { "ksh-prev" }, r, |ui| {
                 let draw = move |p: &egui::Painter, r: Rect, c: Color32| {
                     let m = r.center();
                     let d = r.width() * 0.12 * if left { 1.0 } else { -1.0 };
@@ -173,14 +161,14 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
     }
     let top = PANEL_TOP * g;
-    let left = Rect::from_min_size(pos2(EDGE, top), vec2(PANEL_W.min(w * 0.32), h - 40.0 * g - top));
-    place(ctx, "ksh-agent", left, |ui| agent_panel(ui, v, left.size(), &mut acts));
+    let left = Rect::from_min_size(pos2(ds::BOARD_EDGE, top), vec2(PANEL_W.min(w * 0.32), h - 40.0 * g - top));
+    ds::place(ctx, "ksh-agent", left, |ui| agent_panel(ui, v, left.size(), &mut acts));
     let right_w = PANEL_W.min(w * 0.32);
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 52.0), vec2(EXIT_W, 52.0));
-    let right = Rect::from_min_max(pos2(w - EDGE - right_w, top), pos2(w - EDGE, exit.top() - 28.0 * g));
-    place(ctx, "ksh-plan", right, |ui| plan_panel(ui, v, st, right.size(), &mut acts));
-    place(ctx, "ksh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(52.0)).clicked() {
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 52.0), vec2(ds::EXIT_W, 52.0));
+    let right = Rect::from_min_max(pos2(w - ds::BOARD_EDGE - right_w, top), pos2(w - ds::BOARD_EDGE, exit.top() - 28.0 * g));
+    ds::place(ctx, "ksh-plan", right, |ui| plan_panel(ui, v, st, right.size(), &mut acts));
+    ds::place(ctx, "ksh-exit", exit, |ui| {
+        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(52.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });
@@ -198,15 +186,6 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
     }
     acts
-}
-
-/// `Spy_Main` takes either button's press.
-fn either(r: &egui::Response) -> bool {
-    r.clicked() || r.secondary_clicked()
-}
-
-fn tip(v: &View, id: u32) -> &str {
-    v.tips.get(id as usize).map_or("", |s| s.as_str())
 }
 
 /// The agent's card: name, race, experience and rank, the skills with their + buttons, the points, the count.
@@ -233,12 +212,12 @@ fn agent_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
             let base = ds::fit::baseline(r, Font::DATA.sized(17.0));
             let name = r.with_max_x(r.right() - 120.0);
             Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, name);
-            ds::tip(ui.interact(name, ui.id().with(("ksh-skill", i)), Sense::hover()), tip(v, 0x22 + i as u32));
+            ds::tip(ui.interact(name, ui.id().with(("ksh-skill", i)), Sense::hover()), ds::tip_text(&v.tips, 0x22 + i as u32));
             Text::new(val, Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(r.right() - 120.0, r.top()), pos2(r.right() - 50.0, r.bottom())));
             let b = Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(38.0, 38.0));
             let mut c = ui.new_child(egui::UiBuilder::new().max_rect(b));
             c.add_enabled_ui(a.plus, |ui| {
-                if either(&ds::tip(ds::round_button(ui, ds::Glyph::Text("+"), true, false), tip(v, 0x19 + i as u32))) {
+                if ds::either(&ds::tip(ds::round_button(ui, ds::Glyph::Text("+"), true, false), ds::tip_text(&v.tips, 0x19 + i as u32))) {
                     acts.push(Act::Press(0x19 + i as u32));
                 }
             });
@@ -304,7 +283,7 @@ fn plan_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mu
         if !v.answers.is_empty() {
             ui.add_space(10.0);
             for b in &v.answers {
-                if either(&ds::tip(ui.add_enabled(b.on, ds::Plate::new(&b.text).width(wdt).height(44.0)), tip(v, b.id))) {
+                if ds::either(&ds::tip(ui.add_enabled(b.on, ds::Plate::new(&b.text).width(wdt).height(44.0)), ds::tip_text(&v.tips, b.id))) {
                     acts.push(Act::Press(b.id));
                 }
             }
@@ -320,7 +299,7 @@ fn plan_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mu
         let bw = if b.primary || n < 2.0 { main } else { side };
         let r = Rect::from_min_size(pos2(x, inner.bottom() - 44.0), vec2(bw, 44.0));
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
-        if either(&ds::tip(c.add_enabled(b.on, ds::Plate::new(&b.text).width(bw).height(44.0).primary(b.primary)), tip(v, b.id))) {
+        if ds::either(&ds::tip(c.add_enabled(b.on, ds::Plate::new(&b.text).width(bw).height(44.0).primary(b.primary)), ds::tip_text(&v.tips, b.id))) {
             if b.id == 3 {
                 st.kill = true;
             } else {
@@ -335,7 +314,7 @@ fn plan_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mu
 fn field(ui: &mut Ui, v: &View, id: u32, value: &str, rows: &[(i32, String, bool)], width: f32) -> Option<Option<i32>> {
     let k = ds::tokens();
     let (resp, out) = ds::select(ui, ("ksh-field", id), value, rows, vec2(width, 40.0), Font::BODY.sized(18.0), k.ink);
-    ds::tip(resp, tip(v, id));
+    ds::tip(resp, ds::tip_text(&v.tips, id));
     out
 }
 

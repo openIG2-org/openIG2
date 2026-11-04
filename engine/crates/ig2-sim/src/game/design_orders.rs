@@ -4,6 +4,7 @@
 //! the panels). The handler's UI follow-ups (`Design_UjraRendez`, `AktTerv`, `StarmapAktFlottaValtozott`, the
 //! fleet view's `AktFleet`) are the client's, through [`OrderEvent`]s.
 
+use crate::bytes::i32_at;
 use super::*;
 use crate::ai::{sale_divisor, sale_price};
 
@@ -58,10 +59,6 @@ impl DesignOrder {
     }
 }
 
-fn rd_i32(r: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
-}
-
 impl Game<'_> {
     /// `MULTIGET_Design`'s handling of one message from empire `issuer`. A design index outside the issuer's table
     /// (the original would write out of its bounds) is refused.
@@ -86,8 +83,8 @@ impl Game<'_> {
                 if !known(d) {
                     return;
                 }
-                let old = rd_i32(&self.state.combat().designs[e][d as usize].raw, 0x24) as f32;
-                let new = rd_i32(&record, 0x24) as f32;
+                let old = i32_at(&self.state.combat().designs[e][d as usize].raw, 0x24) as f32;
+                let new = i32_at(&record, 0x24) as f32;
                 let mut bc = 0;
                 self.with_ai(|_, w, hooks| {
                     if copy {
@@ -100,7 +97,7 @@ impl Game<'_> {
                         w.copy_design(e, d as usize, &r);
                         for k in 1..=w.design_count(e) {
                             let r = w.des(e, k as i32).unwrap().raw;
-                            if i16::from_le_bytes([r[0x16], r[0x17]]) >= 0 && rd_i32(&r, 0x1c) == d {
+                            if i16::from_le_bytes([r[0x16], r[0x17]]) >= 0 && i32_at(&r, 0x1c) == d {
                                 let mut r = r;
                                 r[0x1c..0x20].copy_from_slice(&bc.to_le_bytes());
                                 w.copy_design(e, k, &r);
@@ -108,7 +105,7 @@ impl Game<'_> {
                         }
                     } else {
                         let (n, sum) = w.design_units(e, 0, d);
-                        let cost = n.wrapping_mul(rd_i32(&record, 0x24)).wrapping_sub(sum).wrapping_mul(2).max(0);
+                        let cost = n.wrapping_mul(i32_at(&record, 0x24)).wrapping_sub(sum).wrapping_mul(2).max(0);
                         if cost as f64 <= w.spy.colony.money[e].available(0) || cost < 1 {
                             let sw = &mut w.spy;
                             sw.colony.add_money(e, 0, -cost as f64, sw.side_rules, sw.econ);
@@ -143,7 +140,7 @@ impl Game<'_> {
                         }
                         let sw = &mut w.spy;
                         sw.colony.add_money(e, 0, price as f64, sw.side_rules, sw.econ);
-                        let hero = rd_i32(&r, 0x44) == 5 && w.ctx.story_resale;
+                        let hero = i32_at(&r, 0x44) == 5 && w.ctx.story_resale;
                         if !hero {
                             let mut r = r;
                             r[0x6c..0x70].copy_from_slice(&n.to_le_bytes());
@@ -225,7 +222,7 @@ impl Game<'_> {
         let pct = rng.range(trade::STREAM, 110, 130);
         self.state.store_rng(&rng);
         let mut o = r;
-        let mut p = rd_i32(&o, 0x24).wrapping_mul(pct) / 100;
+        let mut p = i32_at(&o, 0x24).wrapping_mul(pct) / 100;
         if adat_i32(&self.adat(), 0x60) != 0 {
             p = (p as f64 * 0.8) as i32;
         }

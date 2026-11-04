@@ -30,7 +30,7 @@ const SERVER_NAME: &str = "ig2-session";
 /// The joiner's first frame: protocol magic and version.
 const HELLO: &[u8; 8] = b"IG2N\x01\x00\x00\x00";
 /// The largest frame accepted (a snapshot is a few hundred KB compressed, a few MB raw).
-const MAX_FRAME: usize = 64 << 20;
+use crate::transport::MAX_MESSAGE as MAX_FRAME;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

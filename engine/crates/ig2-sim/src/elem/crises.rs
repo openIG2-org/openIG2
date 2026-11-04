@@ -1,14 +1,11 @@
 //! `st_Elem_include`, part 2d: 801 (the evacuation of the supernova planet), 804 (the pirates' bases), 806 (the police
 //! strike), 807 (the pirates' ultimatum) and 809 (empire 13's blockade). Spec: `re/rules/campaign.md` §8.14, part 2d.
 
+use crate::script::message;
 use super::{answered, param, promoted, read, supernova_planets};
 use crate::brnd::{distance, nearest_fleet, ship_fleet};
 use crate::multi::nearest_planet;
 use crate::story::{flag, last_fn, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld, DESIGN, STREAM};
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
 
 /// `st_ViszonyValt(EN, e, x)`: `Viszony[e][EN].+4 += 100·x`.
 fn relation(w: &mut dyn StoryWorld, e: i32, x: i32) {

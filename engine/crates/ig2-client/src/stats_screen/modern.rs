@@ -51,7 +51,7 @@ impl StatsScreen {
         ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, Color32::from_black_alpha((173.0 * opacity) as u8));
         let margin = MARGIN.min(screen.width() * 0.073).max(16.0);
         // A short window (a large UI scale) moves the title and table up and lowers the rows.
-        let ys = (screen.height() / 1080.0).min(1.0);
+        let ys = ds::squeeze(screen.height());
         let (title_y, table_y) = (TITLE_Y * ys, TABLE_Y * ys);
         let row_h = (52.0 * ys).max(40.0);
         let w = screen.width() - 2.0 * margin;

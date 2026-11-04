@@ -7,7 +7,8 @@
 //! user's exe ([`CampaignTables`]). What the stories do to the rest of the game goes out as
 //! [`StoryEvent`]s and [`StoryWorld`] calls, like the scripts'.
 
-use crate::story::{last_fn, Abort, InfoLine, ScenarioStory, Story, StoryEvent, StoryWorld, STREAM};
+use crate::script::rnd;
+use crate::story::{last_fn, Abort, InfoLine, ScenarioStory, Story, StoryEvent, StoryWorld};
 
 /// The campaign tables, the exe's words from VA [`CampaignTables::VA`] (`StoryEleje` 0x928340, `StoryElejeSeq`,
 /// `StoryLine`, `StoryScenario`, `RndStoryk` 0x928540, `RndStoryValasztas`, `StoryHosok`, `RndHosok` 0x9288B0,
@@ -112,10 +113,6 @@ pub mod id {
     /// Story 401: variable/counter 4011 (the step and its timer), variable 4012 (the episode started).
     pub const OPENING_STEP: i32 = 4011;
     pub const OPENING_EPISODE: i32 = 4012;
-}
-
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
 }
 
 /// `RndClass(5)` + `Next(1)`: reservoir sampling, the `n`-th candidate replaces the pick with chance `1/n`.
@@ -818,15 +815,7 @@ fn wormhole(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         s.b_add_id(p, PLANET);
     }
     if s.special_is(0x11, 0, 0, 0) {
-        let p = s.b_search(PLANET, 0, w);
-        let r = rnd(w, 20, 28);
-        let q = rnd(w, 1, 360);
-        let a = q as f64 * std::f64::consts::PI / 180.0;
-        let dx = (a.cos() * r as f64) as i32;
-        let dy = (a.sin() * r as f64) as i32;
-        let (fx, fy) = w.fleet_xy(s.special[1]);
-        let (px, py) = w.planet_xy(p);
-        w.event(StoryEvent::Wormhole { x1: fx as i32, y1: fy as i32, x2: (dx as f32 + px) as i32, y2: (dy as f32 + py) as i32 });
+        crate::script::wormhole_near(s, w, PLANET);
     }
     Ok(())
 }
@@ -947,7 +936,7 @@ fn fleets_918(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
 mod tests {
     use super::*;
     use crate::rng::Streams;
-    use crate::story::ScenarioStories;
+    use crate::story::{ScenarioStories, STREAM};
 
     /// Synthetic tables with the exe's layout (not the shipped values).
     fn tables() -> CampaignTables {

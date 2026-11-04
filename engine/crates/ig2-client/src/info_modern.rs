@@ -284,78 +284,65 @@ fn grab(ui: &Ui, resp: &egui::Response, held: &mut bool) -> Option<Press> {
     }
 }
 
-/// The board's measures (1920 × 1080, one pixel one point): the side margin, the race rings, the money panel, the
-/// selected empire's panel, the list's and the charts' tops, the exit plate.
-const EDGE: f32 = 40.0;
+/// The board's measures (1920 × 1080, one pixel one point): the race rings, the money panel, the selected empire's
+/// panel, the list's and the charts' tops.
 const RING: f32 = 112.0;
 const RING_GAP: f32 = 22.0;
 const MONEY_W: f32 = 400.0;
 const EMPIRE_W: f32 = 960.0;
 const ROW_H: f32 = 92.0;
 const GLYPH: egui::Vec2 = egui::Vec2::new(76.0, 40.0);
-const EXIT_W: f32 = 220.0;
 /// The part of a leader's picture the rings show: the face (the 128-point picture has a wide margin).
 const HEAD_UV: Rect = Rect { min: pos2(0.14, 0.08), max: pos2(0.86, 0.80) };
 /// The list's columns after the picture (92): the name, then the three cells.
 const COLS: [f32; 4] = [92.0, 170.0, 130.0, 170.0];
 
-/// `add` in a fixed rectangle of the screen (an area of its own, top-down).
-fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
-        ui.set_min_size(rect.size());
-        ui.set_max_size(rect.size());
-        add(ui)
-    })
-}
-
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let top = sm::bar_bottom(ctx) + 20.0;
     // Shorter windows (a larger UI scale) close the board's gaps; the panels keep their sizes.
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     // The void behind the panels; the panel takes every press the parts don't.
     egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
         let r = ui.max_rect();
         ui.allocate_rect(r, Sense::click_and_drag());
     });
-    let ring = RING.min(((w - 2.0 * EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(56.0);
+    let ring = RING.min(((w - 2.0 * ds::BOARD_EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(56.0);
     rings(ctx, v, st, top, w, ring, &mut acts);
-    let money = place(ctx, "imh-money", Rect::from_min_size(pos2((w - MONEY_W) / 2.0, top), vec2(MONEY_W, 186.0)), |ui| {
+    let money = ds::place(ctx, "imh-money", Rect::from_min_size(pos2((w - MONEY_W) / 2.0, top), vec2(MONEY_W, 186.0)), |ui| {
         if let Some(m) = &v.money {
             money_panel(ui, m, st, &mut acts);
         }
     });
     let money_bottom = if v.money.is_some() { money.response.rect.bottom() } else { top + ring + 24.0 };
-    let ew = EMPIRE_W.min(w - 2.0 * EDGE);
+    let ew = EMPIRE_W.min(w - 2.0 * ds::BOARD_EDGE);
     let ey = (top + 228.0 * g).max(money_bottom + 16.0);
-    let emp = place(ctx, "imh-empire", Rect::from_min_size(pos2((w - ew) / 2.0, ey), vec2(ew, 0.0)), |ui| empire_panel(ui, v, st, ew, &mut acts));
+    let emp = ds::place(ctx, "imh-empire", Rect::from_min_size(pos2((w - ew) / 2.0, ey), vec2(ew, 0.0)), |ui| empire_panel(ui, v, st, ew, &mut acts));
     let low = (top + 406.0 * g).max(emp.response.rect.bottom() + 20.0 * g);
     let bottom = h - 80.0 * g;
-    let half = (w - 3.0 * EDGE) / 2.0;
-    let list = Rect::from_min_max(pos2(EDGE, low), pos2(EDGE + half, bottom.max(low + 240.0)));
+    let half = (w - 3.0 * ds::BOARD_EDGE) / 2.0;
+    let list = Rect::from_min_max(pos2(ds::BOARD_EDGE, low), pos2(ds::BOARD_EDGE + half, bottom.max(low + 240.0)));
     let t = ctx.animate_bool_with_time(egui::Id::new("imh-detail"), v.detail.is_some(), ds::anim(ds::OPEN_TIME));
     if t < 1.0 {
-        place(ctx, "imh-list", list.translate(vec2(-12.0 * t, 0.0)), |ui| {
+        ds::place(ctx, "imh-list", list.translate(vec2(-12.0 * t, 0.0)), |ui| {
             ui.set_opacity(1.0 - t);
             list_panel(ui, v, st, list.size(), &mut acts)
         });
     }
     if let Some(d) = &v.detail {
-        place(ctx, "imh-detail", list.translate(vec2(12.0 * (1.0 - t), 0.0)), |ui| {
+        ds::place(ctx, "imh-detail", list.translate(vec2(12.0 * (1.0 - t), 0.0)), |ui| {
             ui.set_opacity(t);
             detail_panel(ui, v, d, st, list.size(), &mut acts)
         });
     }
-    let charts = Rect::from_min_size(pos2(w - EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
-    place(ctx, "imh-charts", charts, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 48.0), vec2(EXIT_W, 48.0));
-    place(ctx, "imh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(48.0)).clicked() {
+    let charts = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
+    ds::place(ctx, "imh-charts", charts, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 48.0), vec2(ds::EXIT_W, 48.0));
+    ds::place(ctx, "imh-exit", exit, |ui| {
+        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(48.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });
@@ -368,10 +355,10 @@ fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, ac
     let k = ds::tokens();
     let side = 4.0 * d + 3.0 * RING_GAP;
     for e in 1..=8usize {
-        let x = if e <= 4 { EDGE + (e - 1) as f32 * (d + RING_GAP) } else { w - EDGE - side + (e - 5) as f32 * (d + RING_GAP) };
+        let x = if e <= 4 { ds::BOARD_EDGE + (e - 1) as f32 * (d + RING_GAP) } else { w - ds::BOARD_EDGE - side + (e - 5) as f32 * (d + RING_GAP) };
         let slot = Rect::from_min_size(pos2(x, top), vec2(d, d + 24.0));
         let row = v.empires.iter().find(|r| r.e == e);
-        place(ctx, &format!("imh-ring-{e}"), slot, |ui| {
+        ds::place(ctx, ("imh-ring", e), slot, |ui| {
             let resp = ui.allocate_rect(slot, if row.is_some() { Sense::click() } else { Sense::hover() });
             let ring = Rect::from_min_size(slot.min, vec2(d, d));
             let on = v.selected == e;
@@ -728,7 +715,7 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
     // Back (the board's "‹ List") over the column, the globe under it.
     let back = Rect::from_min_size(left.min, vec2(left.width(), 34.0));
     let label = format!("‹  {}", v.labels.back);
-    if either_click(&ui.put(back, ds::Plate::new(&label).font(ds::Plate::FONT.sized(16.0)).height(34.0).width(left.width()))) {
+    if ds::either(&ui.put(back, ds::Plate::new(&label).font(ds::Plate::FONT.sized(16.0)).height(34.0).width(left.width()))) {
         acts.push(Act::Back);
     }
     let pic = Rect::from_min_size(pos2(left.center().x - 110.0, back.bottom() + 16.0), vec2(220.0, 220.0));
@@ -738,7 +725,7 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
     Text::new(&d.owner.0, Font::DATA.upper(true)).center().shrink(11.0).color(d.owner.1).paint(ui, name.translate(vec2(0.0, 32.0)).with_max_y(name.bottom() + 52.0));
     if let Some(p) = d.colony {
         let b = Rect::from_center_size(pos2(left.center().x, name.bottom() + 76.0), vec2(120.0, 34.0));
-        if either_click(&ui.put(b, ds::Plate::new(&v.labels.colony).font(ds::Plate::FONT.sized(15.0)).height(34.0).width(120.0))) {
+        if ds::either(&ui.put(b, ds::Plate::new(&v.labels.colony).font(ds::Plate::FONT.sized(15.0)).height(34.0).width(120.0))) {
             acts.push(Act::Colony(p));
         }
     }
@@ -752,11 +739,6 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
     });
 }
 
-/// A press with either button (the original's detail buttons take both).
-fn either_click(r: &egui::Response) -> bool {
-    r.clicked() || r.secondary_clicked()
-}
-
 /// One detail row: the label (150 wide) and the values on one baseline, or the setting's drop-down.
 fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     let k = ds::tokens();
@@ -768,10 +750,10 @@ fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     let vals = rect.with_min_x(rect.left() + LABEL_W);
     match &r.setting {
         Some(s) => {
-            let cur = s.items.iter().find(|i| i.0 == s.current).map_or(String::new(), |i| i.1.clone());
+            let cur = s.items.iter().find(|i| i.0 == s.current).map_or("", |i| i.1.as_str());
             let mut c = ui.new_child(egui::UiBuilder::new().max_rect(vals));
-            let rows: Vec<(i32, String, bool)> = s.items.iter().map(|(i, n)| (*i, n.clone(), false)).collect();
-            if let (_, Some(Some(i))) = ds::select(&mut c, ("imh-setting", s.hot), &cur, &rows, vec2(vals.width() - 8.0, 24.0), Font::DATA.sized(15.0), k.info) {
+            let rows: Vec<(i32, &str, bool)> = s.items.iter().map(|(i, n)| (*i, n.as_str(), false)).collect();
+            if let (_, Some(Some(i))) = ds::select(&mut c, ("imh-setting", s.hot), cur, &rows, vec2(vals.width() - 8.0, 24.0), Font::DATA.sized(15.0), k.info) {
                 if i != s.current {
                     acts.push(Act::Setting(s.hot, i));
                 }

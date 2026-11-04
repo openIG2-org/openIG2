@@ -301,7 +301,7 @@ fn start_runs_lockstep_on_a_real_save() {
     assert_eq!((own.empire, pa.empire), (6, 2));
     pa.issue(Command::StoryChoice { id: 1 });
     for _ in 0..200 {
-        started.host.pump().unwrap();
+        started.host.pump();
         own.poll(&mut started.link, 1).unwrap();
         pa.poll(la.as_mut(), 1).unwrap();
         if own.turn >= 10 && pa.turn >= 10 {
@@ -311,7 +311,7 @@ fn start_runs_lockstep_on_a_real_save() {
     assert!(own.turn >= 10 && pa.turn >= 10);
     let n = own.hashes.len().min(pa.hashes.len());
     assert_eq!(own.hashes[..n], pa.hashes[..n]);
-    started.host.pump().unwrap();
+    started.host.pump();
     assert!(started.host.desyncs.is_empty());
 }
 

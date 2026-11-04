@@ -1,6 +1,7 @@
 //! The colony screen (re/screens/colony.md): the planet's terrain object, its buildings and the ground war's
 //! units and shots, seen through the original's colony camera, from the sim's state each tick.
 
+use crate::scene::cross;
 use std::collections::HashMap;
 
 use ig2_formats::{colony_map, text, Install};
@@ -397,10 +398,6 @@ pub struct ViewBasis {
 
 const NEAR: f32 = 26.25;
 const FAR: f32 = 60000.0;
-
-fn cross(p: V3, q: V3) -> V3 {
-    [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]]
-}
 
 fn dot(p: V3, q: V3) -> f32 {
     p[0] * q[0] + p[1] * q[1] + p[2] * q[2]

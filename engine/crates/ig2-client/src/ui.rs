@@ -43,7 +43,7 @@ pub struct UiSnap {
 }
 
 fn cstr(b: &[u8]) -> Vec<u8> {
-    b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())].to_vec()
+    ig2_sim::bytes::cstr(b).to_vec()
 }
 
 impl UiSnap {

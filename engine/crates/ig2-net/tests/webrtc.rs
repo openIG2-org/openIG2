@@ -37,9 +37,14 @@ struct Relay {
 
 impl Relay {
     fn start() -> Self {
-        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let SocketAddr::V4(addr) = tcp.local_addr().unwrap() else { unreachable!() };
-        let socket = std::net::UdpSocket::bind(addr).unwrap();
+        // The free TCP port's UDP twin may be taken or reserved (Windows: os error 10013): try another pair.
+        let (tcp, addr, socket) = (0..50)
+            .find_map(|_| {
+                let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let SocketAddr::V4(addr) = tcp.local_addr().unwrap() else { unreachable!() };
+                std::net::UdpSocket::bind(addr).ok().map(|s| (tcp, addr, s))
+            })
+            .expect("a loopback port free for TCP and UDP");
         let stop = Arc::new(AtomicBool::new(false));
         let s = stop.clone();
         std::thread::spawn(move || serve_with_http(&socket, Some(tcp), &mut Service::default(), |_| s.load(Ordering::Relaxed)));
@@ -115,7 +120,7 @@ fn two_peers_in_lockstep_over_webrtc() {
     let turns = 30;
     let mut issued = false;
     wait(|| {
-        host.pump().unwrap();
+        host.pump();
         for (p, link) in &mut peers {
             if p.turn >= 4 && p.slot == 1 && !issued {
                 p.issue(Command::StoryChoice { id: 10031 });
@@ -126,7 +131,7 @@ fn two_peers_in_lockstep_over_webrtc() {
         peers.iter().all(|(p, _)| p.turn >= turns).then_some(())
     });
     wait(|| {
-        host.pump().unwrap();
+        host.pump();
         (host.log.len() as u64 >= turns).then_some(())
     });
     let (a, b) = (&peers[0].0, &peers[1].0);

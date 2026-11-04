@@ -2020,7 +2020,7 @@ mod tests {
     fn record_round_trip() {
         let mut b = [0u8; 0x26];
         for (i, x) in b.iter_mut().enumerate() {
-            *x = i as u8 * 7;
+            *x = (i as u8).wrapping_mul(7);
         }
         assert_eq!(Relation::from_bytes(&b).to_bytes(), b);
     }

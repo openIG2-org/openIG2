@@ -94,7 +94,6 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const LIST: egui::Vec2 = egui::Vec2::new(560.0, 560.0);
 const WELL: egui::Vec2 = egui::Vec2::new(560.0, 310.0);
 /// The well's centre on the original's 640 × 480 screen (the board's (960, 247) at 1080 lines).
@@ -102,41 +101,27 @@ pub const WELL_AT: [f32; 2] = [320.0, 110.0];
 const ROW_H: f32 = 30.0;
 const EXIT_W: f32 = 240.0;
 
-fn tip(v: &View, id: u32) -> &str {
-    v.tips.get(id as usize).map_or("", |s| s.as_str())
-}
-
-fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
-        ui.set_min_size(rect.size());
-        ui.set_max_size(rect.size());
-        add(ui)
-    })
-}
-
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     if !v.live {
         return acts;
     }
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let g = (h / 1080.0).min(1.0);
+    let g = ds::squeeze(h);
     let top = 72.0 * g;
     let list_w = LIST.x.min(w * 0.29);
     let list_h = LIST.y * g;
     for k in 0..2 {
-        let x = if k == 0 { EDGE } else { w - EDGE - list_w };
+        let x = if k == 0 { ds::BOARD_EDGE } else { w - ds::BOARD_EDGE - list_w };
         let r = Rect::from_min_size(pos2(x, top), vec2(list_w, list_h));
-        place(ctx, &format!("tmh-list{k}"), r, |ui| list_panel(ui, v, k, r.size(), &mut acts));
+        ds::place(ctx, format!("tmh-list{k}"), r, |ui| list_panel(ui, v, k, r.size(), &mut acts));
     }
     // The hull's well: the scene draws the model there; a faint grid behind it.
     let ppp = ctx.pixels_per_point();
     let [cx, cy] = crate::font::Virtual::new([w * ppp, h * ppp]).px(WELL_AT[0], WELL_AT[1]);
     let well = Rect::from_center_size(pos2(cx / ppp, cy / ppp), WELL * g);
-    place(ctx, "tmh-well", well, |ui| {
+    ds::place(ctx, "tmh-well", well, |ui| {
         let k = ds::tokens();
         let p = ui.painter();
         let s = egui::Stroke::new(1.0f32, k.rim.gamma_multiply(0.5));
@@ -149,23 +134,23 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     });
     if !v.card.is_empty() {
         let r = Rect::from_min_size(pos2(well.center().x - 300.0, well.bottom() + 28.0 * g), vec2(600.0, 78.0 + if v.weapons.is_empty() { 0.0 } else { 26.0 }));
-        place(ctx, "tmh-card", r, |ui| card_panel(ui, v, r.size()));
+        ds::place(ctx, "tmh-card", r, |ui| card_panel(ui, v, r.size()));
     }
-    let order = Rect::from_min_size(pos2(EDGE, 664.0 * g), vec2(w - 2.0 * EDGE, 150.0 * g.max(0.8)));
-    place(ctx, "tmh-order", order, |ui| order_panel(ui, v, order.size(), &mut acts));
-    let line = Rect::from_min_size(pos2(EDGE, order.bottom() + 12.0 * g), vec2(w - 2.0 * EDGE, 34.0));
+    let order = Rect::from_min_size(pos2(ds::BOARD_EDGE, 664.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 150.0 * g.max(0.8)));
+    ds::place(ctx, "tmh-order", order, |ui| order_panel(ui, v, order.size(), &mut acts));
+    let line = Rect::from_min_size(pos2(ds::BOARD_EDGE, order.bottom() + 12.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 34.0));
     if !v.line.is_empty() {
-        place(ctx, "tmh-line", line, |ui| {
+        ds::place(ctx, "tmh-line", line, |ui| {
             let k = ds::tokens();
             ui.painter().rect_filled(line, ds::RADIUS_PLATE, egui::Color32::BLACK);
             ds::rim(ui.painter(), line, ds::RADIUS_PLATE, k.info.gamma_multiply(0.7));
             Text::new(&v.line, Font::BODY.sized(17.0)).shrink(12.0).color(k.info).paint(ui, line.shrink2(vec2(16.0, 0.0)));
         });
     }
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
-    let ships = Rect::from_min_max(pos2(EDGE, line.bottom() + 20.0 * g), pos2(exit.left() - 40.0, h - 40.0 * g));
-    place(ctx, "tmh-ships", ships, |ui| deliveries_panel(ui, v, ships.size()));
-    place(ctx, "tmh-exit", exit, |ui| {
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
+    let ships = Rect::from_min_max(pos2(ds::BOARD_EDGE, line.bottom() + 20.0 * g), pos2(exit.left() - 40.0, h - 40.0 * g));
+    ds::place(ctx, "tmh-ships", ships, |ui| deliveries_panel(ui, v, ships.size()));
+    ds::place(ctx, "tmh-exit", exit, |ui| {
         if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(44.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
@@ -208,17 +193,14 @@ fn list_panel(ui: &mut Ui, v: &View, kind: usize, size: egui::Vec2, acts: &mut V
             let on = chosen == Some(i as i32);
             let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
             ds::row_back(ui, r, hot, on);
-            if on {
-                ds::rim(ui.painter(), r, ds::RADIUS_PLATE, k.ink_silver);
-            }
             let base = ds::fit::baseline(r, Font::BODY.sized(18.0));
             let (px, cx) = (r.left() + price_x, r.left() + count_x - 8.0);
             Text::new(&row.name, Font::BODY.sized(18.0)).shrink(13.0).baseline(base).color(k.ink).paint(ui, Rect::from_min_max(r.min + vec2(8.0, 0.0), pos2(px - 100.0, r.bottom())));
             Text::new(&row.price.to_string(), Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(px - 96.0, r.top()), pos2(px, r.bottom())));
             Text::new(&row.count.to_string(), Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(cx - 60.0, r.top()), pos2(cx, r.bottom())));
             // Hot-spots 0x23/0x24 take either button (`Trade_Main`).
-            let resp = ds::tip(resp.on_hover_cursor(egui::CursorIcon::PointingHand), tip(v, 0x23 + kind as u32));
-            if resp.clicked() || resp.secondary_clicked() {
+            let resp = ds::tip(resp.on_hover_cursor(egui::CursorIcon::PointingHand), ds::tip_text(&v.tips, 0x23 + kind as u32));
+            if ds::either(&resp) {
                 acts.push(Act::Row(kind, i as i32));
             }
         }
@@ -267,7 +249,7 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     for (r, more, glyph, id) in [(minus, false, "−", 0x19), (plus, true, "+", 0x1a)] {
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
         c.add_enabled_ui(has, |ui| {
-            let resp = ds::tip(ds::round_button(ui, ds::Glyph::Text(glyph), true, false), tip(v, id));
+            let resp = ds::tip(ds::round_button(ui, ds::Glyph::Text(glyph), true, false), ds::tip_text(&v.tips, id));
             // `Trade_Main` 0x19/0x1a: a step on the press, every frame while the right button is held.
             let (pressed, right) = ui.input(|i| (i.pointer.any_pressed(), i.pointer.secondary_down()));
             if resp.is_pointer_button_down_on() && (pressed || right) {
@@ -283,11 +265,11 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let dw = (inner.right() - 280.0 - 260.0 - 32.0 - x2).clamp(220.0, 460.0);
     label(ui, x2, dw, &v.labels.dest);
     let dd = Rect::from_min_size(pos2(x2, cy - 20.0), vec2(dw, 40.0));
-    let shown = if o.dest < 0 { "—".to_string() } else { o.dest_name.clone() };
-    let rows: Vec<(i32, String, bool)> = if v.ports.is_empty() { vec![(-1, v.line.clone(), true)] } else { v.ports.iter().map(|(p, n)| (*p, n.clone(), false)).collect() };
+    let shown = if o.dest < 0 { "—" } else { &o.dest_name };
+    let rows: Vec<(i32, &str, bool)> = if v.ports.is_empty() { vec![(-1, &v.line, true)] } else { v.ports.iter().map(|(p, n)| (*p, n.as_str(), false)).collect() };
     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(dd));
-    let (resp, picked) = c.add_enabled_ui(has, |ui| ds::select(ui, "tmh-dest", &shown, &rows, dd.size(), Font::BODY.sized(18.0), k.ink)).inner;
-    ds::tip(resp, tip(v, 0x1b));
+    let (resp, picked) = c.add_enabled_ui(has, |ui| ds::select(ui, "tmh-dest", shown, &rows, dd.size(), Font::BODY.sized(18.0), k.ink)).inner;
+    ds::tip(resp, ds::tip_text(&v.tips, 0x1b));
     match picked {
         Some(Some(p)) => acts.push(Act::Dest(p)),
         Some(None) => acts.push(Act::Click),
@@ -304,7 +286,7 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     Text::new(&if has { format!("${}", o.total) } else { String::new() }, Font::READOUT.sized(20.0)).center().shrink(13.0).color(k.lcd_ink).paint(ui, tot);
     let buy = Rect::from_min_size(pos2(inner.right() - 280.0, cy - 22.0), vec2(280.0, 44.0));
     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(buy));
-    if ds::tip(c.add_enabled(o.ok, ds::Plate::new(&v.labels.buy).width(280.0).height(44.0).primary(true)), tip(v, 0x1c)).clicked() {
+    if ds::tip(c.add_enabled(o.ok, ds::Plate::new(&v.labels.buy).width(280.0).height(44.0).primary(true)), ds::tip_text(&v.tips, 0x1c)).clicked() {
         acts.push(Act::Buy);
     }
 }

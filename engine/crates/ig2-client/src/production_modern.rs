@@ -106,13 +106,7 @@ pub struct State {
     count: Option<(usize, usize, bool)>,
 }
 
-/// The original's buttons act on the press of either button (`Starmap_Main` on the latched hot-spot, §12.4).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
-/// The boards' gap to the screen's edges, a line panel's width, a slot's height and the gap between slots.
-const EDGE: f32 = 24.0;
+/// A line panel's width, a slot's height and the gap between slots.
 const PANEL_W: f32 = 600.0;
 const SLOT_H: f32 = 90.0;
 const SLOT_GAP: f32 = 10.0;
@@ -127,16 +121,15 @@ const LIST_W: f32 = 340.0;
 const ROW_H: f32 = 26.0;
 
 /// The type of the board's slots: the name (500 17 / 0.06 em), the hull (600 12 / 0.14 em upper case), the price
-/// (500 15 / 0.1 em), the line's title (600 20 / 0.16 em), the lamps (11 / 0.12 em).
+/// (500 15 / 0.1 em), the lamps (11 / 0.12 em).
 const NAME: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
 const KIND: Font = Font::LABEL.sized(12.0);
 const PRICE: Font = Font::DATA.tracking(0.10);
-const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 const LAMP: Font = Font::LABEL.sized(11.0).tracking(0.12);
 
 /// One frame of the production view (after the HUD's, under its bar); the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Vec<Act> {
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let top = crate::starmap_modern::bar_bottom(ctx) + 20.0;
     let mut acts = Vec::new();
     st.wells.clear();
     // The panels slide in from their sides as the original's (`(1 − sin(f/12·π/2))·200`), over the open time.
@@ -155,24 +148,24 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Ve
     let slide = (1.0 - t) * 200.0;
     // Narrower than the board's two panels and the plate between them (4:3, a large UI scale): the plate goes to the
     // bottom, between the starmap HUD's card (380 wide) and the exit.
-    let narrow = ctx.screen_rect().width() < 2.0 * (EDGE + PANEL_W + 12.0) + PLATE_ROW_W;
-    let (pivot, at) = if narrow { (Align2::CENTER_BOTTOM, vec2((EDGE + 380.0 + 16.0 - EDGE - 320.0 - 16.0) / 2.0, -EDGE + slide * 0.3)) } else { (Align2::CENTER_TOP, vec2(0.0, top - slide * 0.3)) };
+    let narrow = ctx.screen_rect().width() < 2.0 * (ds::EDGE + PANEL_W + 12.0) + PLATE_ROW_W;
+    let (pivot, at) = if narrow { (Align2::CENTER_BOTTOM, vec2((ds::EDGE + 380.0 + 16.0 - ds::EDGE - 320.0 - 16.0) / 2.0, -ds::EDGE + slide * 0.3)) } else { (Align2::CENTER_TOP, vec2(0.0, top - slide * 0.3)) };
     egui::Area::new(egui::Id::new("pmh-planet")).anchor(pivot, at).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(t);
         planet_plate(ui, v, &mut acts);
     });
     let panels_top = top;
     for (l, line) in v.lines.iter().enumerate() {
-        let (align, x) = if l == 0 { (Align2::LEFT_TOP, EDGE - slide) } else { (Align2::RIGHT_TOP, -EDGE + slide) };
+        let (align, x) = if l == 0 { (Align2::LEFT_TOP, ds::EDGE - slide) } else { (Align2::RIGHT_TOP, -ds::EDGE + slide) };
         egui::Area::new(egui::Id::new(("pmh-line", l))).anchor(align, vec2(x, panels_top)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
             ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| line_panel(ui, l, line, v, st, &mut acts));
         });
     }
-    egui::Area::new(egui::Id::new("pmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE + slide * 0.3)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("pmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE + slide * 0.3)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(t);
         let exit = ui.add_enabled(!v.exit_locked, Plate::new(&v.exit).width(320.0).height(56.0));
-        if pressed(&ds::tip(exit, &v.tips[8])) {
+        if ds::pressed(&ds::tip(exit, &v.tips[8])) {
             acts.push(Act::Spot(9));
         }
     });
@@ -183,9 +176,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Ve
     }
     let held = st.count;
     let ppp = ctx.pixels_per_point();
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    ds::wells_in_pixels(&mut st.wells, ppp);
     acts.push(Act::Hold(held));
     acts
 }
@@ -195,7 +186,7 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let prev = ds::key_group(ui, |ui| ui.add(IconKey::icon(Icon::ChevronLeft)));
-        if pressed(&ds::tip(prev, &v.tips[0])) {
+        if ds::pressed(&ds::tip(prev, &v.tips[0])) {
             acts.push(Act::Spot(0xc));
         }
         let plate = ds::title_plate(ui, &v.planet, PLATE_W);
@@ -208,7 +199,7 @@ fn planet_plate(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             acts.push(Act::Spot(0x32));
         }
         ds::key_group(ui, |ui| {
-            if pressed(&ds::tip(ui.add(IconKey::icon(Icon::ChevronRight)), &v.tips[1])) {
+            if ds::pressed(&ds::tip(ui.add(IconKey::icon(Icon::ChevronRight)), &v.tips[1])) {
                 acts.push(Act::Spot(0xd));
             }
             if list(&ds::tip(ui.add(IconKey::icon(Icon::ChevronDown)), &v.tips[7])) {
@@ -233,10 +224,10 @@ fn line_panel(ui: &mut Ui, l: usize, line: &Line, v: &View, st: &mut State, acts
         }
         let rest = ui.available_width();
         let (r, _) = ui.allocate_exact_size(vec2(rest, 30.0), Sense::hover());
-        let base = ds::fit::baseline(r, TITLE);
+        let base = ds::fit::baseline(r, Font::PANEL_TITLE);
         let label = Text::new(&line.capacity.0, Font::LABEL).right().color(k.ink_muted).baseline(base).layout(ui.ctx(), rest * 0.5).width;
         Text::new(&line.capacity.0, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - label));
-        Text::new(&line.title, TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - label - 12.0));
+        Text::new(&line.title, Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - label - 12.0));
     });
     for (s, slot) in line.slots.iter().enumerate() {
         slot_row(ui, l, s, slot.as_ref(), line, v, st, acts);
@@ -299,19 +290,19 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     let plus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Plus), true, false), &v.tips[5])).inner;
     ds::lcd(&mut step, &slot.count.to_string(), 22.0, 3);
     let minus = step.add_enabled_ui(!slot.station, |ui| ds::tip(ds::round_button(ui, Glyph::Icon(Icon::Minus), true, false), &v.tips[4])).inner;
-    if pressed(&minus) {
+    if ds::pressed(&minus) {
         st.count = Some((l, s, false));
-    } else if pressed(&plus) {
+    } else if ds::pressed(&plus) {
         st.count = Some((l, s, true));
     }
     let mut lamps = row(ctl.bottom() - 26.0, 26.0);
     lamps.spacing_mut().item_spacing.x = 6.0;
     if let Some(f) = slot.into_fleet {
-        if pressed(&ds::tip(lamp(&mut lamps, &v.labels.into_fleet, f), &v.tips[3])) {
+        if ds::pressed(&ds::tip(lamp(&mut lamps, &v.labels.into_fleet, f), &v.tips[3])) {
             acts.push(Act::Spot(0x16 + s as u32));
         }
     }
-    if pressed(&ds::tip(lamp(&mut lamps, &v.labels.repeat, slot.repeat), &v.tips[2])) {
+    if ds::pressed(&ds::tip(lamp(&mut lamps, &v.labels.repeat, slot.repeat), &v.tips[2])) {
         acts.push(Act::Spot(0xe + 4 * l as u32 + s as u32));
     }
     // The texts between, on the board's three baselines; the head unit's bar under them.
@@ -352,9 +343,7 @@ fn lamp(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
         p.rect_filled(r, ds::RADIUS_PLATE, k.plate_high.gamma_multiply(lit));
         ds::shadow(p, r, ds::RADIUS_PLATE, 0, 6, 0, k.info.gamma_multiply(0.25 * lit));
     }
-    if hot > 0.0 {
-        ds::rim(p, r, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
-    }
+    ds::hover_rim(p, r, ds::RADIUS_PLATE, hot);
     Text::new(label, LAMP).center().color(k.ink_silver.lerp_to_gamma(k.ink, lit.max(hot))).paint(ui, r.shrink2(vec2(4.0, 0.0)));
     resp
 }
@@ -470,7 +459,7 @@ mod tests {
         let (ctx, last) = run(&view("Fighter"), &mut st, 1920.0);
         assert_eq!(last, vec![Act::Hold(None)]);
         let r = ctx.memory(|m| m.area_rect(egui::Id::new(("pmh-line", 1)))).unwrap();
-        assert!(r.right() <= 1920.0 - EDGE + 0.5 && (r.width() - PANEL_W).abs() < 1.0, "{r:?}");
+        assert!(r.right() <= 1920.0 - ds::EDGE + 0.5 && (r.width() - PANEL_W).abs() < 1.0, "{r:?}");
         // A well per filled slot.
         assert_eq!(st.wells.iter().map(|w| w.0).collect::<Vec<_>>(), vec![0, 4]);
     }

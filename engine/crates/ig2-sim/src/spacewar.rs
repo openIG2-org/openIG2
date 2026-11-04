@@ -6,6 +6,7 @@
 //! The real-time tactical battle (`SpwC::*`, §7 of the spec) lives in `spacebattle`; its state enters here
 //! only as the list of [`ActiveBattle`] units that mark fleets as in battle.
 
+use crate::bytes::{i16_at, i32_at};
 use crate::rng::Streams;
 
 /// Auto-resolve rolls (`SimulateSpBattle`, `starmap.cpp` lines 0x1f09..0x1fb3).
@@ -215,30 +216,23 @@ pub struct Design {
     pub stealth: u8,
 }
 
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes(b[o..o + 2].try_into().unwrap())
-}
-
 impl Design {
     pub fn from_bytes(r: &[u8]) -> Self {
         let raw: [u8; 0x84] = r[..0x84].try_into().unwrap();
         Self {
             raw,
-            class: rd_i16(r, 0x16),
-            build_time: rd_i32(r, 0x20),
-            price: rd_i32(r, 0x24),
+            class: i16_at(r, 0x16),
+            build_time: i32_at(r, 0x20),
+            price: i32_at(r, 0x24),
             capacity: r[0x28],
-            attack: rd_i32(r, 0x2c),
-            hp: rd_i32(r, 0x30),
+            attack: i32_at(r, 0x2c),
+            hp: i32_at(r, 0x30),
             hull_flags: r[0x34..0x3a].try_into().unwrap(),
             speed: f32::from_le_bytes(r[0x3c..0x40].try_into().unwrap()),
-            pod_table: rd_i16(r, 0x40),
-            hull: rd_i32(r, 0x44),
-            hull_tech: rd_i32(r, 0x48),
-            slots: rd_i32(r, 0x4c),
+            pod_table: i16_at(r, 0x40),
+            hull: i32_at(r, 0x44),
+            hull_tech: i32_at(r, 0x48),
+            slots: i32_at(r, 0x4c),
             pods: r[0x51..0x5d].try_into().unwrap(),
             counts: r[0x5e..0x6a].try_into().unwrap(),
             radar: r[0x6a],
@@ -376,16 +370,16 @@ pub struct FleetTotals {
 impl FleetTotals {
     pub fn from_record(r: &[u8]) -> Self {
         Self {
-            ships: rd_i32(r, 0x54),
-            fighters: rd_i32(r, 0x58),
-            ground: rd_i32(r, 0x5c),
-            attack: rd_i32(r, 0x60),
-            fighter_attack: rd_i32(r, 0x64),
-            ground_strength: rd_i32(r, 0x68),
-            hp: rd_i32(r, 0x6c),
-            fighter_hp: rd_i32(r, 0x70),
-            field_74: rd_i32(r, 0x74),
-            capacity: rd_i32(r, 0x78),
+            ships: i32_at(r, 0x54),
+            fighters: i32_at(r, 0x58),
+            ground: i32_at(r, 0x5c),
+            attack: i32_at(r, 0x60),
+            fighter_attack: i32_at(r, 0x64),
+            ground_strength: i32_at(r, 0x68),
+            hp: i32_at(r, 0x6c),
+            fighter_hp: i32_at(r, 0x70),
+            field_74: i32_at(r, 0x74),
+            capacity: i32_at(r, 0x78),
         }
     }
 

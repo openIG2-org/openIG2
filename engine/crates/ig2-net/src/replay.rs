@@ -348,8 +348,9 @@ impl Replay {
         let mut at = 10;
         let next = |at: &mut usize| -> Option<&[u8]> {
             let len = u32::from_le_bytes(b.get(*at..*at + 4)?.try_into().unwrap()) as usize;
-            let body = b.get(*at + 4..*at + 4 + len)?;
-            *at += 4 + len;
+            let end = (*at + 4).checked_add(len)?;
+            let body = b.get(*at + 4..end)?;
+            *at = end;
             Some(body)
         };
         let meta: Meta = wire::from_slice(next(&mut at).ok_or(Error::Truncated)?)?;
@@ -357,7 +358,7 @@ impl Replay {
         let mut chunks: Vec<Chunk> = Vec::new();
         let mut whole = at;
         while let Some(z) = next(&mut at) {
-            let raw = miniz_oxide::inflate::decompress_to_vec_zlib(z).map_err(|e| Error::Corrupt(format!("chunk {}: {e:?}", chunks.len())))?;
+            let raw = miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(z, crate::snapshot::MAX_STATE).map_err(|e| Error::Corrupt(format!("chunk {}: {e:?}", chunks.len())))?;
             let c: Chunk = wire::from_slice(&raw)?;
             let expected = chunks.last().map_or(0, |l| l.first + l.steps.len() as u64);
             if c.first != expected {

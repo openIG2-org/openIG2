@@ -5,6 +5,7 @@
 //! the rest of the script sees it, as in the exe. The streams are the story's while a script runs and the game's
 //! around each of its own calls ([`GameStory::with_game`]).
 
+use crate::bytes::{f32_at, i32_at};
 use super::{Game, Globals, TradeView};
 use crate::campaign::CampaignTables;
 use crate::colony_side::EMPIRES;
@@ -15,12 +16,6 @@ use crate::story::{FieldUnit, FleetName, SpyRecord, StoryEvent, StoryWorld, DESI
 
 fn rd_i16(b: &[u8], o: usize) -> i32 {
     i16::from_le_bytes([b[o], b[o + 1]]) as i32
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
-fn rd_f32(b: &[u8], o: usize) -> f32 {
-    f32::from_le_bytes(b[o..o + 4].try_into().unwrap())
 }
 /// The story engine's view of the game while a script runs.
 pub(super) struct GameStory<'a, 'r> {
@@ -64,13 +59,13 @@ impl<'a, 'r> GameStory<'a, 'r> {
         self.game.state.fleets.get(usize::try_from(f).ok()?)
     }
     pub(super) fn fleet_i32(&self, f: i32, o: usize) -> i32 {
-        self.fleet(f).map_or(0, |r| rd_i32(r, o))
+        self.fleet(f).map_or(0, |r| i32_at(r, o))
     }
     pub(super) fn design(&self, e: i32, d: i32) -> Option<&[u8; DESIGN]> {
         self.game.state.designs.get(usize::try_from(e).ok()?)?.get(usize::try_from(d).ok()?)
     }
     pub(super) fn design_i32(&self, e: i32, d: i32, o: usize) -> i32 {
-        self.design(e, d).map_or(0, |r| rd_i32(r, o))
+        self.design(e, d).map_or(0, |r| i32_at(r, o))
     }
     pub(super) fn tech_at(t: i32) -> u32 {
         va::TECHS + (t.max(0) as usize * TECH_SIZE) as u32
@@ -144,7 +139,7 @@ impl StoryWorld for GameStory<'_, '_> {
         self.planet(p)[0x20] as i32
     }
     fn planet_value(&self, p: i32) -> i32 {
-        rd_i32(&self.planet(p), 0x28)
+        i32_at(&self.planet(p), 0x28)
     }
     fn planet_visibility(&self, p: i32) -> i32 {
         rd_i16(&self.planet(p), 0xd8 + 2 * self.g.en)
@@ -211,7 +206,7 @@ impl StoryWorld for GameStory<'_, '_> {
     }
     fn planet_xy(&self, p: i32) -> (f32, f32) {
         let r = self.planet(p);
-        (rd_f32(&r, 0x18), rd_f32(&r, 0x1c))
+        (f32_at(&r, 0x18), f32_at(&r, 0x1c))
     }
     fn planet_radar(&self, p: i32) -> i32 {
         self.planet(p)[0x6e] as i32
@@ -220,7 +215,7 @@ impl StoryWorld for GameStory<'_, '_> {
         self.mem().f32(va::RADAR2 + 4 * (e.max(0) as u32 * 8 + level.max(0) as u32))
     }
     fn fleet_xy(&self, f: i32) -> (f32, f32) {
-        self.fleet(f).map_or((0.0, 0.0), |r| (rd_f32(r, 0x30), rd_f32(r, 0x34)))
+        self.fleet(f).map_or((0.0, 0.0), |r| (f32_at(r, 0x30), f32_at(r, 0x34)))
     }
     fn fleet_order(&self, f: i32) -> i32 {
         self.fleet(f).map_or(0, |r| rd_i16(r, 0x42))
@@ -305,14 +300,14 @@ impl StoryWorld for GameStory<'_, '_> {
         self.fleet(f).map_or(0, |r| rd_i16(r, 0x40))
     }
     fn fleet_target(&self, f: i32) -> f32 {
-        self.fleet(f).map_or(0.0, |r| rd_f32(r, 0x44))
+        self.fleet(f).map_or(0.0, |r| f32_at(r, 0x44))
     }
     fn fleet_state(&self, f: i32) -> i32 {
         self.fleet(f).map_or(0, |r| r[0x18] as i32)
     }
     fn planet_production(&self, p: i32) -> (i32, i32) {
         let r = self.planet(p);
-        (rd_i32(&r, 0x70), rd_i32(&r, 0x74))
+        (i32_at(&r, 0x70), i32_at(&r, 0x74))
     }
     fn building_workers(&self, kind: i32) -> i32 {
         self.game.rules.side.colony.buildings.get(kind.max(0) as usize).map_or(0, |b| b.workers)
@@ -328,7 +323,7 @@ impl StoryWorld for GameStory<'_, '_> {
         self.mem().i32(va::BUILDING_SLOTS + 4 * p.max(0) as u32)
     }
     fn building(&self, p: i32, k: i32) -> (i32, i32, i32) {
-        self.building_rec(p, k).map_or((0, 0, 0), |b| (b[0] as i32, rd_i32(b, 4), rd_i16(b, 8)))
+        self.building_rec(p, k).map_or((0, 0, 0), |b| (b[0] as i32, i32_at(b, 4), rd_i16(b, 8)))
     }
     fn building_hp(&self, kind: i32) -> i32 {
         self.game.rules.side.colony.buildings.get(kind.max(0) as usize).map_or(0, |b| b.max_hp)
@@ -344,7 +339,7 @@ impl StoryWorld for GameStory<'_, '_> {
             return (0, 0x7fff, 0);
         }
         let r = self.mem().read(va::VEHICLES + 8 * k as u32, 8);
-        (rd_i16(&r, 0), rd_i16(&r, 2), rd_i32(&r, 4))
+        (rd_i16(&r, 0), rd_i16(&r, 2), i32_at(&r, 4))
     }
     fn design_class(&self, e: i32, d: i32) -> i32 {
         self.design(e, d).map_or(0, |r| rd_i16(r, 0x16))
@@ -360,7 +355,7 @@ impl StoryWorld for GameStory<'_, '_> {
     }
     fn trade_offer(&self, k: i32) -> (i32, i32) {
         let r = self.mem().read(va::TRADE_OFFERS + (k.max(0) as usize * crate::trade::RECORD) as u32, crate::trade::RECORD);
-        (rd_i16(&r, 0x16), rd_i32(&r, 0x80))
+        (rd_i16(&r, 0x16), i32_at(&r, 0x80))
     }
     fn trade_agreement(&self, a: i32, b: i32) -> bool {
         self.mem().u8(va::RELATIONS + ((a.max(0) as usize * EMPIRES + b.max(0) as usize) * 0x26) as u32 + 0x24) != 0
@@ -399,7 +394,7 @@ impl StoryWorld for GameStory<'_, '_> {
     }
 
     fn planet_morale(&self, p: i32) -> i32 {
-        rd_i32(&self.planet(p), 0x30)
+        i32_at(&self.planet(p), 0x30)
     }
     /// The original surface planet `p`'s type plays (ADR 0069 §14): the scripts compare fixed surfaces.
     fn planet_surface(&self, p: i32) -> i32 {
@@ -407,7 +402,7 @@ impl StoryWorld for GameStory<'_, '_> {
     }
 
     fn planet_richness(&self, p: i32) -> i32 {
-        rd_i32(&self.planet(p), 0x24)
+        i32_at(&self.planet(p), 0x24)
     }
 
     fn fleet_flags(&self, f: i32) -> i32 {
@@ -493,7 +488,7 @@ impl StoryWorld for GameStory<'_, '_> {
     }
 
     fn planet_garrison(&self, p: i32) -> i32 {
-        rd_i32(&self.planet(p), 0x58)
+        i32_at(&self.planet(p), 0x58)
     }
     fn battlefield_records(&self, p: i32) -> Vec<FieldUnit> {
         let Some(field) = usize::try_from(p).ok().and_then(|p| self.game.state.ground_field(p)) else { return Vec::new() };
@@ -555,7 +550,7 @@ impl Game<'_> {
                 let r = self.state.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE);
                 if r[0x20] as usize == en && rd_i16(&r, 0xd8 + 2 * en) >= 0 {
                     let range = flat.get(r[0x6e] as usize + en * 8).copied().unwrap_or(0.0);
-                    if hit(rd_f32(&r, 0x18), rd_f32(&r, 0x1c), range) {
+                    if hit(f32_at(&r, 0x18), f32_at(&r, 0x1c), range) {
                         return true;
                     }
                 }
@@ -563,7 +558,7 @@ impl Game<'_> {
         }
         if k & 2 != 0 {
             for f in self.state.fleets.iter().skip(1) {
-                if f[0x15] as usize == en && hit(rd_f32(f, 0x30), rd_f32(f, 0x34), rd_f32(f, 0x7c)) {
+                if f[0x15] as usize == en && hit(f32_at(f, 0x30), f32_at(f, 0x34), f32_at(f, 0x7c)) {
                     return true;
                 }
             }

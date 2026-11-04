@@ -7,6 +7,7 @@
 //! the units a delivery builds) is reached through [`Market`]. All draws are stream 11, apart from one libc
 //! `rand()` per new month that only sets the trade screen's default delivery time ([`Trade::eta_days`]).
 
+use crate::bytes::{i16_at, i32_at};
 use crate::colony_side::EMPIRES;
 use crate::rng::stream;
 
@@ -35,24 +36,18 @@ const FIRST_STORY_DESIGN: usize = 0x28;
 
 pub type Record = [u8; RECORD];
 
-fn rd_i16(b: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([b[o], b[o + 1]])
-}
-fn rd_i32(b: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(b[o..o + 4].try_into().unwrap())
-}
 fn wr_i32(b: &mut [u8], o: usize, v: i32) {
     b[o..o + 4].copy_from_slice(&v.to_le_bytes());
 }
 
 /// The design class `+0x16` (1 ship, 2 vehicle; an offer slot with class < 1 is free).
 pub fn class(r: &[u8]) -> i16 {
-    rd_i16(r, 0x16)
+    i16_at(r, 0x16)
 }
 
 /// `TradeAr(i, n)`: the price of `n` units of an offer (a fighter unit is a fifth of the listed price per fighter).
 pub fn price(offer: &Record, n: i32) -> i32 {
-    let total = rd_i32(offer, 0x24).wrapping_mul(n);
+    let total = i32_at(offer, 0x24).wrapping_mul(n);
     if offer[0x36] == 0 { total } else { total / 5 }
 }
 
@@ -79,13 +74,13 @@ fn strcat(r: &mut Record, src: &[u8]) {
 
 /// `TervEqual2(a, b)`: same class, original owner, hull, hull tech, slot count and slot contents.
 pub fn same_design(a: &Record, b: &Record) -> bool {
-    if class(a) != class(b) || rd_i16(a, 0x40) != rd_i16(b, 0x40) {
+    if class(a) != class(b) || i16_at(a, 0x40) != i16_at(b, 0x40) {
         return false;
     }
-    if (0x44..0x50).step_by(4).any(|o| rd_i32(a, o) != rd_i32(b, o)) {
+    if (0x44..0x50).step_by(4).any(|o| i32_at(a, o) != i32_at(b, o)) {
         return false;
     }
-    let slots = rd_i32(a, 0x4c);
+    let slots = i32_at(a, 0x4c);
     (1..=slots.max(0) as usize).all(|k| a.get(0x50 + k) == b.get(0x50 + k) && a.get(0x5d + k) == b.get(0x5d + k))
 }
 
@@ -102,25 +97,25 @@ impl Default for Delivery {
 
 impl Delivery {
     pub fn planet(&self) -> i32 {
-        rd_i32(&self.0, 0)
+        i32_at(&self.0, 0)
     }
     pub fn set_planet(&mut self, p: i32) {
         wr_i32(&mut self.0, 0, p);
     }
     pub fn days(&self) -> i32 {
-        rd_i32(&self.0, 4)
+        i32_at(&self.0, 4)
     }
     pub fn set_days(&mut self, d: i32) {
         wr_i32(&mut self.0, 4, d);
     }
     pub fn offer(&self) -> i32 {
-        rd_i32(&self.0, 8)
+        i32_at(&self.0, 8)
     }
     pub fn units(&self) -> i32 {
-        rd_i32(&self.0, 0xc)
+        i32_at(&self.0, 0xc)
     }
     pub fn price(&self) -> i32 {
-        rd_i32(&self.0, 0x10)
+        i32_at(&self.0, 0x10)
     }
     pub fn design(&self) -> Record {
         self.0[0x14..].try_into().unwrap()
@@ -384,7 +379,7 @@ impl Trade {
             }
             // Past the table the original reads the heap; nothing there is a live design of the wanted class.
             let r = usize::try_from(d).ok().and_then(|d| m.design(e, d)).unwrap_or([0; RECORD]);
-            if class(&r) as i32 != kind || rd_i32(&r, 0x80) != 0 {
+            if class(&r) as i32 != kind || i32_at(&r, 0x80) != 0 {
                 continue;
             }
             let plain = r[0x34] == 0 && r[0x35] == 0 && r[0x38] == 0;
@@ -436,7 +431,7 @@ impl Trade {
             }
         };
         let d = story_design(STORY_EMPIRE, id, 3, &ctx.story_designs, m);
-        let hull_tech = m.design(STORY_EMPIRE, d).map_or(0, |r| rd_i32(&r, 0x48));
+        let hull_tech = m.design(STORY_EMPIRE, d).map_or(0, |r| i32_at(&r, 0x48));
         let n = if hull_tech < 5 { 5 } else { 1 };
         let r = if owned { m.rnd(80, 120) } else { m.rnd(110, 140) };
         let factor = (r as f64 / 100.0) as f32;
@@ -472,12 +467,12 @@ impl Trade {
         let mut o = r;
         match naming {
             Naming::HullTech => {
-                let name = m.tech_name(rd_i32(&o, 0x48));
+                let name = m.tech_name(i32_at(&o, 0x48));
                 strcpy(&mut o, &name);
             }
             Naming::Generated => {
                 let special = m.rnd(0, 1);
-                let (owner, hull) = (rd_i16(&o, 0x40), rd_i32(&o, 0x44));
+                let (owner, hull) = (i16_at(&o, 0x40), i32_at(&o, 0x44));
                 strcpy(&mut o, &m.design_name(owner, hull, special));
                 strcat(&mut o, b" ");
                 strcat(&mut o, &r);
@@ -485,7 +480,7 @@ impl Trade {
             }
             Naming::Keep => {}
         }
-        let mut p = (rd_i32(&o, 0x24) as f32 * factor) as i32;
+        let mut p = (i32_at(&o, 0x24) as f32 * factor) as i32;
         if ctx.story_discount {
             p = (p as f64 * 0.8) as i32;
         }
@@ -498,7 +493,7 @@ impl Trade {
     fn expiry(&mut self, ctx: &MarketContext, m: &mut dyn Market, ev: &mut Vec<TradeEvent>) {
         let now = date_to_ido(ctx.year, ctx.month, ctx.day);
         for (slot, o) in self.offers.iter_mut().enumerate() {
-            let then = date_to_ido(rd_i32(o, 0x74), rd_i32(o, 0x78), rd_i32(o, 0x7c));
+            let then = date_to_ido(i32_at(o, 0x74), i32_at(o, 0x78), i32_at(o, 0x7c));
             if EXPIRY_AGE < now.wrapping_sub(then) && m.rnd(0, 500) < ctx.speed_mult {
                 o[0x16..0x18].copy_from_slice(&(-1i16).to_le_bytes());
                 ev.push(TradeEvent::OfferWithdrawn { slot });
@@ -517,7 +512,7 @@ impl Trade {
         let offer = &self.offers[o];
         let ok = cost as f64 <= m.money(e)
             && class(offer) >= 0
-            && msg.units() <= rd_i32(offer, 0x6c)
+            && msg.units() <= i32_at(offer, 0x6c)
             && m.planet_owner(msg.planet()) as usize == e;
         if !ok {
             return None;
@@ -525,7 +520,7 @@ impl Trade {
         m.add_money(e, cost as f64);
         self.deliveries[e].push(*msg);
         let offer = &mut self.offers[o];
-        let left = rd_i32(offer, 0x6c).wrapping_sub(msg.units());
+        let left = i32_at(offer, 0x6c).wrapping_sub(msg.units());
         wr_i32(offer, 0x6c, left);
         if left < 1 {
             offer[0x16..0x18].copy_from_slice(&(-1i16).to_le_bytes());
@@ -575,27 +570,27 @@ fn port_planet(e: usize, ctx: &MarketContext, m: &dyn Market) -> i32 {
 /// `st_GetRandomTradeTerv(&hull)`: a random story design id and its hull, `None` for an id no record has.
 fn random_story_design(ctx: &MarketContext, m: &mut dyn Market) -> Option<(i32, i32)> {
     let id = m.rnd(10_000, ctx.story_next_id.wrapping_sub(1));
-    let rec = ctx.story_designs.iter().find(|s| rd_i32(&s[..], 0) == id)?;
-    Some((id, rd_i32(rec, 0x24)))
+    let rec = ctx.story_designs.iter().find(|s| i32_at(&s[..], 0) == id)?;
+    Some((id, i32_at(rec, 0x24)))
 }
 
 /// `st_GetTerv(e, id, def)`: the design of `e` made from story design `id`, made on first use (spec §3.5).
 pub(crate) fn story_design(e: usize, id: i32, def: usize, story_designs: &[[u8; STORY_DESIGN]], m: &mut dyn Market) -> usize {
     let n = m.design_count(e);
     if n >= FIRST_STORY_DESIGN {
-        if let Some(k) = (FIRST_STORY_DESIGN..=n).find(|&k| m.design(e, k).is_some_and(|r| rd_i32(&r, 0x80) == id)) {
+        if let Some(k) = (FIRST_STORY_DESIGN..=n).find(|&k| m.design(e, k).is_some_and(|r| i32_at(&r, 0x80) == id)) {
             return k;
         }
     }
-    let Some(s) = story_designs.iter().find(|s| rd_i32(&s[..], 0) == id) else { return def };
-    let k = m.new_design(e, rd_i32(s, 0x20));
+    let Some(s) = story_designs.iter().find(|s| i32_at(&s[..], 0) == id) else { return def };
+    let k = m.new_design(e, i32_at(s, 0x20));
     let mut r = m.design(e, k).unwrap_or([0; RECORD]);
     strcpy(&mut r, &s[4..]);
     wr_i32(&mut r, 0x80, id);
-    r[0x18] = (rd_i32(s, 0x1c) != 0) as u8;
+    r[0x18] = (i32_at(s, 0x1c) != 0) as u8;
     r[0x19] = 1;
-    wr_i32(&mut r, 0x44, rd_i32(s, 0x24));
-    for j in 1..=rd_i32(s, 0x28).max(0) as usize {
+    wr_i32(&mut r, 0x44, i32_at(s, 0x24));
+    for j in 1..=i32_at(s, 0x28).max(0) as usize {
         if 0x2c + 4 * j + 4 > STORY_DESIGN || 0x60 + 4 * j + 4 > STORY_DESIGN || 0x5d + j >= RECORD {
             break;
         }

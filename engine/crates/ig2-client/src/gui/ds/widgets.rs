@@ -49,15 +49,47 @@ fn glide(ui: &Ui, id: Id, to: f32) -> f32 {
 }
 
 /// The hover rim (`inset 0 0 0 1px --rim-bright`) at `t`.
-fn hover_rim(ui: &Ui, rect: Rect, r: u8, t: f32) {
+pub fn hover_rim(p: &egui::Painter, rect: Rect, r: impl Into<egui::CornerRadius>, t: f32) {
     if t > 0.0 {
-        rim(ui.painter(), rect, r, tokens().rim_bright.gamma_multiply(t));
+        rim(p, rect, r, tokens().rim_bright.gamma_multiply(t));
     }
 }
 
 /// A widget's whole text as its tooltip where its label was cut.
 fn tip_if(r: Response, cut: bool, text: &str) -> Response {
     if cut { r.on_hover_text(text) } else { r }
+}
+
+// ---- The boards' input and placing ----
+
+/// Clicked with the left or the right button (the original's spots take both).
+pub fn either(r: &Response) -> bool {
+    r.clicked() || r.secondary_clicked()
+}
+
+/// Pressed with either button while enabled: the original's buttons act on the press, not the release
+/// (`Mouse_Lenyom`, the hot-spots' one-shot `AktIkon2`).
+pub fn pressed(r: &Response) -> bool {
+    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
+}
+
+/// Either button held (a game hot-spot drawn pressed).
+pub fn any_down(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.pointer.primary_down() || i.pointer.secondary_down())
+}
+
+/// A board's tooltip `id` of its text list, empty where it has none.
+pub fn tip_text(tips: &[String], id: u32) -> &str {
+    tips.get(id as usize).map_or("", |s| s.as_str())
+}
+
+/// `add` in a fixed rectangle of the screen (an area `id` of its own, top-down).
+pub fn place<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    egui::Area::new(Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
+        ui.set_min_size(rect.size());
+        ui.set_max_size(rect.size());
+        add(ui)
+    })
 }
 
 // ---- Plates and menu items ----
@@ -115,7 +147,7 @@ impl Widget for Plate<'_> {
         let p = ui.painter();
         let k = tokens();
         plate_fill(p, rect, RADIUS_PANEL, self.primary || l.down);
-        hover_rim(ui, rect, RADIUS_PANEL, l.hover);
+        hover_rim(ui.painter(), rect, RADIUS_PANEL, l.hover);
         if l.focus {
             focus_mark(p, rect, RADIUS_PANEL as f32, 2.0);
         }
@@ -194,7 +226,7 @@ pub fn menu(ui: &mut Ui, id: impl std::hash::Hash, style: MenuStyle, entries: &[
         if l.down && selected != Some(i) {
             ui.painter().rect_filled(rect, RADIUS_PLATE, k.plate_low);
         }
-        hover_rim(ui, rect, RADIUS_PLATE, l.hover * (selected != Some(i)) as u8 as f32);
+        hover_rim(ui.painter(), rect, RADIUS_PLATE, l.hover * (selected != Some(i)) as u8 as f32);
         if l.focus {
             focus_mark(ui.painter(), rect, RADIUS_PLATE as f32, 2.0);
         }
@@ -478,7 +510,7 @@ pub fn row_back(ui: &Ui, rect: Rect, hover: f32, selected: bool) {
         hgrad(ui.painter(), rect, RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
         rim(ui.painter(), rect, RADIUS_PLATE, k.ink_silver);
     } else {
-        hover_rim(ui, rect, RADIUS_PLATE, hover);
+        hover_rim(ui.painter(), rect, RADIUS_PLATE, hover);
     }
 }
 
@@ -563,7 +595,7 @@ pub fn option_row_in<R>(ui: &mut Ui, height: f32, font: Font, label: &str, focus
     if focused {
         ui.painter().rect_filled(rect, RADIUS_PLATE, k.rim_bright.gamma_multiply(0.12));
     }
-    hover_rim(ui, rect, RADIUS_PLATE, if focused { 1.0 } else { hover * 0.6 });
+    hover_rim(ui.painter(), rect, RADIUS_PLATE, if focused { 1.0 } else { hover * 0.6 });
     let inner = rect.shrink2(Vec2::new(SPACE[1], 0.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::right_to_left(Align::Center)));
     if !enabled {
@@ -800,7 +832,7 @@ impl Tone {
 /// An empire's or a state's label (`.ig-star`: 600 15 / 0.16 em, upper case, its colour glowing), cut to
 /// `max_width`; `pill` on a faint tinted plate.
 pub fn badge(ui: &mut Ui, text: &str, tone: Tone, pill: bool, max_width: f32) -> Response {
-    let f = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
+    let f = Font::OWNER;
     let c = tone.color();
     let t = Text::new(text, f).color(c);
     let fit = t.layout(ui.ctx(), max_width - if pill { 16.0 } else { 0.0 });
@@ -827,9 +859,8 @@ pub fn kv(ui: &mut Ui, label: &str, value: &str, tone: Tone, label_width: f32) -
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
     let base = baseline(rect, Font::DATA);
     let (a, b) = rect.split_left_right_at_x(rect.left() + label_width);
-    let x = Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - SPACE[2]));
-    let y = Text::new(value, Font::DATA).color(tone.color()).baseline(base).paint(ui, b);
-    let _ = (x, y);
+    Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - SPACE[2]));
+    Text::new(value, Font::DATA).color(tone.color()).baseline(base).paint(ui, b);
     resp
 }
 
@@ -943,8 +974,11 @@ pub fn card<R>(ui: &mut Ui, title: Option<&str>, add: impl FnOnce(&mut Ui) -> R)
     r.inner
 }
 
-/// A rich tooltip on `resp`: `text` wrapped at 320 points in the body style, at most 8 lines.
+/// A rich tooltip on `resp`: `text` wrapped at 320 points in the body style, at most 8 lines; none for no text.
 pub fn tip(resp: Response, text: &str) -> Response {
+    if text.is_empty() {
+        return resp;
+    }
     resp.on_hover_ui(|ui| {
         let f = Font::DATA.weight(Weight::Regular).tracking(0.05);
         let fit = Text::new(text, f).lines(8).layout(ui.ctx(), 320.0);
@@ -959,7 +993,9 @@ pub fn tip_at(ctx: &egui::Context, id: &str, at: egui::Pos2, text: &str) {
     egui::Area::new(egui::Id::new(id)).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + Vec2::new(16.0, 18.0)).constrain(true).fade_in(false).show(ctx, |ui| {
         panel(ui, PanelKind::Deep, 0.97, 8.0, |ui| {
             ui.set_max_width(320.0);
-            Text::new(text, Font::DATA).lines(3).show(ui, Vec2::new(Text::new(text, Font::DATA).layout(ui.ctx(), 320.0).width.min(320.0), 20.0));
+            let fit = Text::new(text, Font::DATA).lines(3).layout(ui.ctx(), 320.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width.min(320.0), fit.galley.size().y), Sense::hover());
+            ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
         });
     });
 }
@@ -1020,7 +1056,7 @@ pub fn confirm_box(ui: &mut Ui, width: f32, title: &str, body: &str, yes: &str, 
 /// A select field (the boards' dropdowns): the value in a dark glass box with a chevron; a press (either button)
 /// opens its rows under it in a deep panel, greyed rows take no pick, a press elsewhere closes it. Gives
 /// `Some(None)` when it opens and `Some(Some(value))` for a row picked.
-pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, String, bool)], size: Vec2, font: Font, ink: Color32) -> (Response, Option<Option<i32>>) {
+pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, impl AsRef<str>, bool)], size: Vec2, font: Font, ink: Color32) -> (Response, Option<Option<i32>>) {
     let k = tokens();
     let id = ui.id().with(id);
     let (r, resp) = ui.allocate_exact_size(size, Sense::click());
@@ -1057,6 +1093,7 @@ pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, 
         egui::ScrollArea::vertical().id_salt(id.with("scroll")).auto_shrink([false; 2]).show(&mut c, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for (val, text, off) in rows {
+                let text = text.as_ref();
                 let (rr, row) = ui.allocate_exact_size(egui::vec2(size.x - 24.0, rh), Sense::click());
                 let hot = hover_t(ui.ctx(), row.id, row.hovered() && !off);
                 row_back(ui, rr, hot, text == value);

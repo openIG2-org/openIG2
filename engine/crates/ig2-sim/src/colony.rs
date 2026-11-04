@@ -705,7 +705,7 @@ fn smooth_and_morale(planet: &mut Planet, targets: &[i32; problem::COUNT], rules
         let cur = *level;
         let r = cur as f32 / (target + 1) as f32;
         let mut step = if r > 1.5 || (r as f64) < 0.66 { 250 } else { 50 };
-        if r > 2.0 || r < 0.5 {
+        if !(0.5..=2.0).contains(&r) {
             step *= 5;
         }
         let limit = step * curve.rate;

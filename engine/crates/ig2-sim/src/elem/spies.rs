@@ -2,19 +2,12 @@
 //! 850 (the three planets' tribute and the mad tanks), 852 (a spy for an empire's protection) and 861 (between
 //! empires 1 and 5). Spec: `re/rules/campaign.md` §8.14, part 2a.
 
+use crate::script::{rnd, message};
 use super::{add_money, answered, param, promoted};
 use crate::begin::{delete_fleet, move_to_planet, planet_distance, show_fleet};
 use crate::rnd::spies::{mission_enabled, spy_caught, spy_chance, spy_success};
 use crate::rnd::Pick;
-use crate::story::{flag, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld, STREAM};
-
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
-}
+use crate::story::{flag, Abort, InfoLine, MessageText, Story, StoryEvent, StoryWorld};
 
 /// Message `id`, or `other` in campaign 2 (its own texts).
 fn message2(w: &mut dyn StoryWorld, id: i32, other: i32, arg: i32) {

@@ -17,9 +17,11 @@ mod heroes;
 pub(crate) mod relations;
 pub(crate) mod spies;
 
+use crate::script::{rnd, answered, promoted, read, message};
+use crate::cvt::cvtt_f64;
 use crate::begin::{delete_fleet, move_to_planet};
 use crate::brnd::{fleet_strength, random_tech, ship_fleet};
-use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld, STREAM};
+use crate::story::{adat, flag, last_fn, Abort, MessageText, Script, Story, StoryEvent, StoryWorld};
 
 /// `st_Rnd_include`.
 #[derive(Debug, Clone, Default)]
@@ -127,10 +129,6 @@ impl Script for RndStories {
 
 // ---------------------------------------------------------------- helpers
 
-fn rnd(w: &mut dyn StoryWorld, lo: i32, hi: i32) -> i32 {
-    w.rng().range(STREAM, lo, hi)
-}
-
 /// `RndClass(5)` (exe `RndClass::Next`): the candidate offered with weight `x` replaces the pick when
 /// `rnd(1, Σx) ≤ x`.
 #[derive(Default)]
@@ -147,25 +145,6 @@ impl Pick {
         self.n = self.n.wrapping_add(x);
         rnd(w, 1, self.n) <= x
     }
-}
-
-/// `st_Message(b, r)`: the human answered part `r` of message `b`.
-fn answered(s: &Story, b: i32, r: i32) -> bool {
-    s.flags[flag::MESSAGE] && s.message == (b, r)
-}
-
-/// `st_Elevul(b)`: message `b` was promoted (flag 7).
-fn promoted(s: &Story, b: i32) -> bool {
-    s.flags[flag::PROMOTED] && s.message.0 == b
-}
-
-/// `st_Olvas(b)`: message `b` was read (flag 9, `MessageSelectedBlokk`).
-fn read(s: &Story, b: i32) -> bool {
-    s.flags[flag::READ] && s.message.0 == b
-}
-
-fn message(w: &mut dyn StoryWorld, id: i32, arg: i32) {
-    w.event(StoryEvent::NewMessage { id, arg });
 }
 
 fn param(w: &mut dyn StoryWorld, slot: i32, text: MessageText) {
@@ -198,15 +177,6 @@ fn campaign_id(w: &dyn StoryWorld, campaign: i32, id: i32, other: i32) -> i32 {
         other
     } else {
         id
-    }
-}
-
-/// `cvttsd2si`: out of range and NaN give `i32::MIN`.
-pub(crate) fn cvtt(x: f64) -> i32 {
-    if x.is_nan() || x >= 2_147_483_648.0 || x < -2_147_483_648.0 {
-        i32::MIN
-    } else {
-        x as i32
     }
 }
 
@@ -662,7 +632,7 @@ fn tech_offer(s: &mut Story, w: &mut dyn StoryWorld) -> Result<(), Abort> {
         }
     }
     if answered(s, 0x6a6, 2) || answered(s, 0x125e, 2) {
-        let money = cvtt(w.money(en));
+        let money = cvtt_f64(w.money(en));
         let price = s.v_get(PRICE);
         let pay = if price < money { price } else { money };
         add_money(w, pay.wrapping_neg() as f64);

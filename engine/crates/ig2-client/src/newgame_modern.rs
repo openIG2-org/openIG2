@@ -71,7 +71,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
     let at = |x: f32, y: f32| Pos2::new(screen.left() + x, screen.top() + y);
     let race_name = |r: usize| game(&texts.race(RACES[r]));
     // A short window (a large UI scale) moves the rows up with it.
-    let ys = (screen.height() / 1080.0).min(1.0);
+    let ys = ds::squeeze(screen.height());
     let (title_y, nav_y, races_y) = (TITLE[1] * ys, NAV[1] * ys, RACES_TOP * ys);
     egui::Area::new(egui::Id::new("ng-title")).fixed_pos(at(margin + TITLE[0] - NAV[0], title_y)).fade_in(false).interactable(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);

@@ -21,6 +21,11 @@ pub const TURN_TICKS: u32 = 2;
 pub const DEFAULT_DELAY: u64 = 0;
 /// The most input delay a room picks (a 1 s round trip).
 pub const MAX_DELAY: u64 = 9;
+/// How far past the next turn the host takes a peer's input: well beyond [`MAX_DELAY`], so only a misbehaving peer
+/// is cut off.
+const INPUT_HORIZON: u64 = 8 * (MAX_DELAY + 1);
+/// The turns back the host keeps the peers' hash reports.
+const HASH_TURNS: u64 = 512;
 
 /// The input delay for a link of round trip `rtt` (ADR 0007 §2): the input for turn `t + delay`, sent when `t` becomes
 /// the next turn to run, must reach the host and its bundle come back within `delay + 1` turns, with 50 ms to spare
@@ -77,6 +82,8 @@ struct Slot {
     since: u64,
     /// Messages received from it (the session's keep-alive watches this change).
     heard: u64,
+    /// It sent something that doesn't decode: dropped like a closed link ([`Host::closed`]).
+    broken: bool,
 }
 
 /// The session's relay: admission, the turn order and desync detection. It doesn't run the sim (its player is an
@@ -169,14 +176,14 @@ impl Host {
     /// ([`Host::send_log`]).
     pub fn add_peer(&mut self, slot: u8, empire: u8, link: Box<dyn Transport>) -> u64 {
         let from = self.next.max(self.delay);
-        self.slots.insert(slot, Slot { empire, link, from, since: self.next, heard: 0 });
+        self.slots.insert(slot, Slot { empire, link, from, since: self.next, heard: 0, broken: false });
         from
     }
 
     /// Ours (ADR 0026): a spectator on `slot` gets every bundle and message from now on, but owes no input (nobody
     /// waits for it, anything it sends is dropped) and its hashes aren't compared (it is never resynced).
     pub fn add_watcher(&mut self, slot: u8, link: Box<dyn Transport>) {
-        self.slots.insert(slot, Slot { empire: 0, link, from: u64::MAX, since: u64::MAX, heard: 0 });
+        self.slots.insert(slot, Slot { empire: 0, link, from: u64::MAX, since: u64::MAX, heard: 0, broken: false });
     }
 
     /// A peer left: later turns no longer wait for it. Returns its link (a resync reuses it).
@@ -187,9 +194,9 @@ impl Host {
         self.slots.remove(&slot).map(|s| s.link)
     }
 
-    /// The slots whose link is known to be gone.
+    /// The slots whose link is known to be gone or sent something that doesn't decode.
     pub fn closed(&self) -> Vec<u8> {
-        self.slots.iter().filter(|(_, s)| s.link.closed()).map(|(&slot, _)| slot).collect()
+        self.slots.iter().filter(|(_, s)| s.broken || s.link.closed()).map(|(&slot, _)| slot).collect()
     }
 
     /// How many messages `slot` sent since it was added (any kind: the session's keep-alive counts them).
@@ -233,12 +240,17 @@ impl Host {
             return false;
         }
         self.inputs.remove(&b.turn);
-        for s in self.slots.values_mut() {
-            s.link.send(&Msg::Bundle(b.clone()));
-        }
+        self.emit(b);
+        true
+    }
+
+    /// Send bundle `b` (the next turn's) to every peer and log it.
+    fn emit(&mut self, b: Bundle) {
+        let m = Msg::Bundle(b);
+        self.broadcast(&m);
+        let Msg::Bundle(b) = m else { unreachable!() };
         self.log.push(b);
         self.next += 1;
-        true
     }
 
     /// [`Host::send_log`] from `turn` gives a peer every bundle it lacks (the log reaches back that far).
@@ -254,26 +266,39 @@ impl Host {
         }
     }
 
-    /// Receive what the peers sent, send every bundle that's complete, compare hashes.
-    pub fn pump(&mut self) -> Result<(), wire::Error> {
+    /// Receive what the peers sent, send every bundle that's complete, compare hashes. A link that sends something
+    /// that doesn't decode is marked broken (reported by [`Host::closed`]); the others' messages still count.
+    pub fn pump(&mut self) {
         let mut got = Vec::new();
-        for (&slot, s) in self.slots.iter_mut() {
-            while let Some(m) = s.link.recv()? {
-                s.heard += 1;
-                got.push((slot, m));
+        for (&slot, s) in self.slots.iter_mut().filter(|(_, s)| !s.broken) {
+            loop {
+                match s.link.recv() {
+                    Ok(Some(m)) => {
+                        s.heard += 1;
+                        got.push((slot, m));
+                    }
+                    Ok(None) => break,
+                    Err(_) => {
+                        s.broken = true;
+                        break;
+                    }
+                }
             }
         }
         for (slot, m) in got {
             match m {
                 Msg::Input { turn, commands } => {
-                    // Late or unowed inputs are dropped: the turn went out without them.
-                    if turn >= self.next && self.slots.get(&slot).is_some_and(|s| turn >= s.from) {
+                    // Late or unowed inputs are dropped: the turn went out without them. So are inputs further
+                    // ahead than any delay sends them: a peer can't make the host hold unbounded turns.
+                    let due = turn >= self.next && turn <= self.next + INPUT_HORIZON;
+                    if due && self.slots.get(&slot).is_some_and(|s| turn >= s.from) {
                         let commands = commands.into_iter().filter(|c| !c.host_only()).collect();
                         self.inputs.entry(turn).or_default().insert(slot, commands);
                     }
                 }
                 Msg::Hash { turn, hash } => {
-                    if self.slots.get(&slot).is_some_and(|s| turn >= s.since) {
+                    // Only turns whose bundle went out can have been run.
+                    if turn < self.next && self.slots.get(&slot).is_some_and(|s| turn >= s.since) {
                         self.hash(slot, turn, hash);
                     }
                 }
@@ -291,14 +316,8 @@ impl Host {
                     cmds.into_iter().map(move |command| Stamped { issuer, command })
                 }))
                 .collect();
-            let b = Bundle { turn: self.next, commands };
-            for s in self.slots.values_mut() {
-                s.link.send(&Msg::Bundle(b.clone()));
-            }
-            self.log.push(b);
-            self.next += 1;
+            self.emit(Bundle { turn: self.next, commands });
         }
-        Ok(())
     }
 
     fn ready(&self, turn: u64) -> bool {
@@ -311,6 +330,9 @@ impl Host {
 
     fn hash(&mut self, slot: u8, turn: u64, hash: u64) {
         let seen = self.hashes.entry(turn).or_default();
+        if seen.iter().any(|&(s, _)| s == slot) {
+            return;
+        }
         seen.push((slot, hash));
         let first = seen[0].1;
         if hash != first {
@@ -324,7 +346,7 @@ impl Host {
             }
         }
         // Keep the hashes of the last few hundred turns (a rejoiner reports old turns while catching up).
-        while self.hashes.len() > 512 {
+        while self.hashes.first_key_value().is_some_and(|(&t, _)| t + HASH_TURNS < self.next) {
             self.hashes.pop_first();
         }
     }
@@ -449,14 +471,14 @@ impl<'r> Peer<'r> {
         t
     }
 
-    /// The bundles this peer holds up to its frontier: the last [`KEPT_BUNDLES`] run, then the buffered ones
-    /// (contiguous, in turn order).
     /// This peer is behind the session: it holds more bundles than its inputs run ahead (`delay` + 1, the turn due
     /// and the ones its sent inputs completed).
     pub fn behind(&self) -> bool {
         self.bundles.len() as u64 > self.delay + 1
     }
 
+    /// The bundles this peer holds up to its frontier: the last [`KEPT_BUNDLES`] run, then the buffered ones
+    /// (contiguous, in turn order).
     pub fn held_bundles(&self) -> Vec<Bundle> {
         let buffered = (self.turn..self.frontier()).map(|t| self.bundles[&t].clone());
         self.kept.iter().cloned().chain(buffered).collect()
@@ -613,5 +635,79 @@ impl<'r> Peer<'r> {
             self.tick += 1;
         }
         self.turn += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+    use std::rc::Rc;
+
+    use super::*;
+
+    /// A scripted link: `recv` hands out `inbox`, `send` records into `sent`.
+    #[derive(Clone, Default)]
+    struct Script {
+        inbox: Rc<RefCell<VecDeque<Result<Msg, wire::Error>>>>,
+        sent: Rc<RefCell<Vec<Msg>>>,
+    }
+
+    impl Script {
+        fn push(&self, m: Msg) {
+            self.inbox.borrow_mut().push_back(Ok(m));
+        }
+
+        fn bundles(&self) -> Vec<u64> {
+            self.sent.borrow().iter().filter_map(|m| if let Msg::Bundle(b) = m { Some(b.turn) } else { None }).collect()
+        }
+    }
+
+    impl Transport for Script {
+        fn send(&mut self, msg: &Msg) {
+            self.sent.borrow_mut().push(msg.clone());
+        }
+
+        fn recv(&mut self) -> Result<Option<Msg>, wire::Error> {
+            self.inbox.borrow_mut().pop_front().transpose()
+        }
+    }
+
+    fn input(turn: u64) -> Msg {
+        Msg::Input { turn, commands: Vec::new() }
+    }
+
+    #[test]
+    fn a_broken_link_does_not_lose_the_others_inputs() {
+        let mut host = Host::new(0);
+        let (a, b) = (Script::default(), Script::default());
+        host.add_peer(1, 1, Box::new(a.clone()));
+        host.add_peer(2, 2, Box::new(b.clone()));
+        a.push(input(0));
+        b.inbox.borrow_mut().push_back(Err(wire::Error::Eof));
+        host.pump();
+        assert_eq!(host.closed(), vec![2]);
+        host.remove_peer(2);
+        host.pump();
+        assert_eq!(a.bundles(), vec![0], "slot 1's input survived slot 2's garbage");
+    }
+
+    #[test]
+    fn inputs_too_far_ahead_and_hashes_of_unsent_turns_are_dropped() {
+        let mut host = Host::new(0);
+        let a = Script::default();
+        host.add_peer(1, 1, Box::new(a.clone()));
+        a.push(input(INPUT_HORIZON + 1));
+        a.push(Msg::Hash { turn: 0, hash: 7 });
+        host.pump();
+        assert!(host.inputs.is_empty());
+        assert!(host.reported(0).is_empty());
+        a.push(input(0));
+        host.pump();
+        a.push(Msg::Hash { turn: 0, hash: 7 });
+        a.push(Msg::Hash { turn: 0, hash: 8 });
+        host.pump();
+        assert_eq!(host.reported(0), &[(1, 7)], "one report per slot and turn");
+        assert!(host.desyncs.is_empty());
     }
 }

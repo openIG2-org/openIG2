@@ -11,6 +11,7 @@
 //! `ForgatTradeAlap`'s turn and fade are kept as state only), its info card (`PlaceVehicleInfo`, block C's boxes) and
 //! the pod list (`Trade_KiirPodNagyLista`, `TradeGfx2D_3`'s box), the tutorial event 0x27.
 
+use ig2_sim::bytes::{i16_at, i32_at};
 use ig2_rules::sounds::Table;
 use ig2_sim::save::{va, SaveState};
 use ig2_sim::trade::{Record, DELIVERY, OFFERS, RECORD, TRADE_PORT};
@@ -88,14 +89,6 @@ pub fn ticker_lines(texts: &crate::ui::UiTexts) -> Vec<Vec<u8>> {
 
 fn en(state: &SaveState) -> usize {
     state.mem.i32(va::EN).clamp(0, 18) as usize
-}
-
-fn i16_at(r: &[u8], o: usize) -> i16 {
-    i16::from_le_bytes([r[o], r[o + 1]])
-}
-
-fn i32_at(r: &[u8], o: usize) -> i32 {
-    i32::from_le_bytes(r[o..o + 4].try_into().unwrap())
 }
 
 /// Ours (ADR 0076): the offer as the modern page shows it: list, row, quantity, left, total, destination, days, OK.

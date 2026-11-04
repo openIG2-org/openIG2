@@ -23,22 +23,14 @@ const BAR_SHEET: (i32, &str) = (14, "BRUSHOK_ORIG.BMP");
 impl Pictures {
     /// Load pictures `keps` by their `Kepek` names: `dataraw/screen/<name, lowercase, '.' → '_'>.pvr`.
     pub fn load(r: &mut Renderer, install: &Install, names: &[String], keps: &[i32]) -> Self {
-        let mut loaded = HashMap::new();
+        let mut p = Self { loaded: HashMap::new() };
         for &k in keps {
             let name = if k == BAR_SHEET.0 { BAR_SHEET.1 } else { names.get(k as usize).map_or("", String::as_str) };
-            if name.is_empty() {
-                continue;
-            }
-            let path = format!("dataraw/screen/{}.pvr", name.to_ascii_lowercase().replace('.', "_"));
-            match Image::load(install, &path) {
-                Ok(img) => {
-                    let size = [img.width as f32, img.height as f32];
-                    loaded.insert(k, (r.add_texture(&img), size));
-                }
-                Err(e) => eprintln!("ig2-client: {e}"),
+            if !name.is_empty() {
+                p.load_named(r, install, k, name);
             }
         }
-        Self { loaded }
+        p
     }
 
     /// A picture by file name (`DDBrushToScreen3d_last("MOUSE.BMP", …)` names its own), kept under `key`.

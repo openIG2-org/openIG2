@@ -29,6 +29,19 @@ pub trait Stream: Send {
     fn read(&mut self, out: &mut [[f32; 2]]) -> usize;
 }
 
+/// Reads `out.len()` frames of `stream` through `scratch` and adds them to `out` at `gain`. False once the stream
+/// has run out (it gave fewer frames).
+fn add_stream(stream: &mut dyn Stream, out: &mut [[f32; 2]], gain: f32, scratch: &mut Vec<[f32; 2]>) -> bool {
+    scratch.clear();
+    scratch.resize(out.len(), [0.0; 2]);
+    let n = stream.read(scratch);
+    for (o, s) in out.iter_mut().zip(&scratch[..n]) {
+        o[0] += s[0] * gain;
+        o[1] += s[1] * gain;
+    }
+    n >= out.len()
+}
+
 /// Ours (ADR 0051): `inner` silent up to frame `from`, rising linearly to full at frame `to` (the title's music with
 /// the intro only, not under the logos).
 pub struct Gate<S> {
@@ -75,11 +88,13 @@ pub struct Mixer {
     voices: Vec<usize>,
     /// A video's sound (re/screens/video.md §4): a stream of its own beside the music, with its own volume.
     video: Option<(Box<dyn Stream>, i32)>,
+    /// The music's and the video's read buffer, kept between mixes (the audio thread doesn't allocate).
+    scratch: Vec<[f32; 2]>,
 }
 
 impl Mixer {
     pub fn new(rate: u32, channels: usize) -> Self {
-        Self { rate, channels: vec![None; channels], music: None, music_volume: MAX_VOLUME, music_finished: false, voices: Vec::new(), video: None }
+        Self { rate, channels: vec![None; channels], music: None, music_volume: MAX_VOLUME, music_finished: false, voices: Vec::new(), video: None, scratch: Vec::new() }
     }
 
     /// A new channel (sgsnd allocates as it goes; nothing is reserved).
@@ -178,14 +193,8 @@ impl Mixer {
         }
         self.mix_music(out);
         if let Some((stream, volume)) = &mut self.video {
-            let mut buf = vec![[0.0f32; 2]; out.len()];
-            let n = stream.read(&mut buf);
             let gain = *volume as f32 / MAX_VOLUME as f32;
-            for (o, s) in out.iter_mut().zip(&buf[..n]) {
-                o[0] += s[0] * gain;
-                o[1] += s[1] * gain;
-            }
-            if n < out.len() {
+            if !add_stream(stream.as_mut(), out, gain, &mut self.scratch) {
                 self.video = None;
             }
         }
@@ -197,14 +206,8 @@ impl Mixer {
 
     fn mix_music(&mut self, out: &mut [[f32; 2]]) {
         let Some(m) = &mut self.music else { return };
-        let mut buf = vec![[0.0f32; 2]; out.len()];
-        let n = m.stream.read(&mut buf);
         let volume = self.music_volume as f32 / MAX_VOLUME as f32;
-        for (o, s) in out.iter_mut().zip(&buf[..n]) {
-            o[0] += s[0] * volume;
-            o[1] += s[1] * volume;
-        }
-        if n < out.len() {
+        if !add_stream(m.stream.as_mut(), out, volume, &mut self.scratch) {
             self.music = None;
             self.music_finished = true;
         }

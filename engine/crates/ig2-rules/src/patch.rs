@@ -143,7 +143,7 @@ macro_rules! dispatch {
 
 /// Research-screen categories (`(t − 1) / 16 + 1`) and their fields.
 const CATEGORIES: usize = 12;
-const FIELDS: usize = 16;
+pub const FIELDS: usize = 16;
 /// Kinds a new building can't be like (ADR 0069 §3): the defences, which the ground war drives by kind.
 const DEFENCES: std::ops::RangeInclusive<usize> = 28..=43;
 /// The buildings' techs, the colony pick list's (categories 6..=9).
@@ -180,8 +180,15 @@ fn inherit(r: &mut Rules, t: usize, l: usize, entry: &toml_edit::Table) {
     }
     let s = layout::TECHS.1;
     r.tech_defaults[t * s + 0x24] = r.tech_defaults[l * s + 0x24];
-    r.tech_defaults.copy_within(l * s + 0x3c..l * s + 0x45, t * s + 0x3c);
+    r.tech_defaults.copy_within(l * s + 0x3c..l * s + TECH_STATUS, t * s + 0x3c);
 }
+
+/// A tech record's status bytes, one per empire slot 0..=18 (`+0x45`), and its AI priorities, one per race slot
+/// 0..=8 (`+0xb7`); slot 0 is nobody's.
+const TECH_STATUS: usize = 0x45;
+const EMPIRE_SLOTS: usize = 19;
+const TECH_AI_PRIORITY: usize = 0xb7;
+const RACE_SLOTS: usize = 9;
 
 /// Pod types list at most this many techs (`PodTipusok +20`, i32 × 16).
 const POD_TECHS: usize = 16;
@@ -191,7 +198,7 @@ const POD_TECHS: usize = 16;
 fn free_slot(r: &Rules, t: usize) -> bool {
     let s = layout::TECHS.1;
     let raw = &r.tech_defaults[t * s..(t + 1) * s];
-    r.techs[t].name == "-" && raw[20..0x45 + 19].iter().all(|&b| b == 0) && !r.buildings.iter().any(|b| b.tech as usize == t)
+    r.techs[t].name == "-" && raw[20..TECH_STATUS + EMPIRE_SLOTS].iter().all(|&b| b == 0) && !r.buildings.iter().any(|b| b.tech as usize == t)
 }
 
 /// A tech by its number or by the key of an added tech.
@@ -279,12 +286,12 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         };
         // The category's latest AI priority and its first model size, until the entry says otherwise.
         let peers = first + 1..=first + FIELDS;
-        let prio = peers.clone().map(|p| r.tech_defaults[p * stride + 0xb7 + 1]).max().unwrap_or(0);
+        let prio = peers.clone().map(|p| r.tech_defaults[p * stride + TECH_AI_PRIORITY + 1]).max().unwrap_or(0);
         let size = peers.map(|p| r.research_size_mult.get(p - 1).copied().unwrap_or(0.0)).find(|&s| s != 0.0).unwrap_or(1.0);
         let raw = &mut r.tech_defaults[t * stride..(t + 1) * stride];
         // Unknown (1) to every race until its prerequisites are met (`Research_TalalmanyUjraSzamol`).
-        raw[0x46..0x45 + 19].fill(1);
-        raw[0xb8..0xb7 + 9].fill(prio);
+        raw[TECH_STATUS + 1..TECH_STATUS + EMPIRE_SLOTS].fill(1);
+        raw[TECH_AI_PRIORITY + 1..TECH_AI_PRIORITY + RACE_SLOTS].fill(prio);
         set_at(&mut r.research_size_mult, t - 1, size);
         r.techs[t].name = key.clone();
         r.added_techs.push(AddedTech { key: key.clone(), index: t, name: key.clone(), description: Vec::new() });
@@ -378,7 +385,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
                 }
                 "ai_priority" => {
                     let p = int_in(v, 0..=255).map_err(err)? as u8;
-                    r.tech_defaults[t * stride + 0xb8..t * stride + 0xb7 + 9].fill(p);
+                    r.tech_defaults[t * stride + TECH_AI_PRIORITY + 1..t * stride + TECH_AI_PRIORITY + RACE_SLOTS].fill(p);
                 }
                 "building" => r.techs[t].building = building_ref(r, v).map_err(err)?,
                 "prerequisites" => {

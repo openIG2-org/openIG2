@@ -95,7 +95,6 @@ struct Batch {
 }
 
 struct Loaded {
-    path: String,
     batches: Vec<Batch>,
     center: Vec3,
     radius: f32,
@@ -121,7 +120,7 @@ struct Conventions {
 
 pub struct ModelView {
     gpu: Option<Gpu>,
-    loaded: Option<Result<Loaded, String>>,
+    loaded: crate::Cached<Loaded>,
     conv: Conventions,
     built_with: Option<Conventions>,
     unlit: bool,
@@ -448,8 +447,7 @@ impl Flatten<'_, '_> {
         for (c, content) in &n.children {
             let m = Mat3::from_cols_array(&c.matrix);
             let m = if self.conv.transpose { m.transpose() } else { m };
-            let t: [f32; 3] = std::array::from_fn(|i| f32::from_le_bytes(c.head[4 * i..4 * i + 4].try_into().unwrap()));
-            let local = Mat4::from_translation(Vec3::from(t).map(|v| if v.is_finite() { v } else { 0.0 })) * Mat4::from_mat3(m);
+            let local = Mat4::from_translation(Vec3::from(c.translation()).map(|v| if v.is_finite() { v } else { 0.0 })) * Mat4::from_mat3(m);
             let world = xf * local;
             match content {
                 ChildContent::Node(sub) => {
@@ -469,8 +467,9 @@ impl Flatten<'_, '_> {
                     self.stats.vertices += mesh.vertices.len();
                     self.stats.triangles += mesh.faces.len();
                     let normal_m = Mat3::from_mat4(world).inverse().transpose();
-                    let texs: Vec<Option<String>> = mesh.materials.clone().iter().map(|m| self.material_texture(m)).collect();
-                    for f in &mesh.faces {
+                    let texs: Vec<Option<String>> = mesh.materials.iter().map(|m| self.material_texture(m)).collect();
+                    // A face naming a vertex past the mesh is dropped.
+                    for f in mesh.faces.iter().filter(|f| f.idx.iter().all(|&i| (i as usize) < mesh.vertices.len())) {
                         let key = texs.get(f.material as usize).cloned().flatten();
                         let (vs, is) = self.batches.entry(key).or_default();
                         for &i in &f.idx {
@@ -567,17 +566,14 @@ impl ModelView {
                 count: is.len() as u32,
             });
         }
-        Ok(Loaded { path: path.to_owned(), batches, center, radius, stats, tree })
+        Ok(Loaded { batches, center, radius, stats, tree })
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame, install: &Install, path: &str) {
-        let stale = match &self.loaded {
-            Some(Ok(l)) => l.path != path,
-            Some(Err(_)) => true,
-            None => true,
-        } || self.built_with != Some(self.conv);
+        // A failed load stays shown until the path or the conventions change.
+        let stale = self.loaded.as_ref().map(|(p, _)| p.as_str()) != Some(path) || self.built_with != Some(self.conv);
         if stale {
-            self.loaded = Some(self.load(install, path));
+            self.loaded = Some((path.to_owned(), self.load(install, path)));
             self.built_with = Some(self.conv);
         }
         ui.horizontal(|ui| {
@@ -589,8 +585,8 @@ impl ModelView {
             }
         });
         let loaded = match &self.loaded {
-            Some(Ok(l)) => l,
-            Some(Err(e)) => {
+            Some((_, Ok(l))) => l,
+            Some((_, Err(e))) => {
                 ui.colored_label(egui::Color32::LIGHT_RED, e);
                 return;
             }

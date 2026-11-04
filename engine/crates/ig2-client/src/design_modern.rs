@@ -115,58 +115,45 @@ pub struct State {
     count: Option<(usize, bool)>,
 }
 
-const EDGE: f32 = 24.0;
 const LIST_W: f32 = 400.0;
 const DATA_W: f32 = 780.0;
 const PARTS_W: f32 = 540.0;
-const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 /// A pod row's class (600 12 / 0.14 em upper case) and value (500 17 / 0.06 em).
 const CLASS: Font = Font::LABEL.sized(12.0);
 const VALUE: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
 
-/// The original's buttons act on the press (`Mouse_Lenyom`, design.md §4).
-fn pressed(r: &egui::Response) -> bool {
-    r.hovered() && r.enabled() && r.ctx.input(|i| i.pointer.any_pressed())
-}
-
-fn tip(v: &View, id: u32) -> &str {
-    v.tips.get(id as usize).map_or("", |s| s.as_str())
-}
-
 /// One frame of the screen; the acts in the order they happened.
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
-    let mut bar = Vec::new();
-    sm::bar(ctx, &v.bar, &mut st.bar, &mut bar);
-    let mut acts: Vec<Act> = bar.into_iter().map(Act::Bar).collect();
-    let top = ctx.memory(|m| m.area_rect(egui::Id::new("smh-left"))).map_or(44.0, |r| r.bottom()) + 20.0;
+    let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
+    let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row: the properties, the console buttons, the exit.
-    let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
+    let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| properties(ui, v, &mut acts));
     });
     let room = props.response.rect.top() - 16.0 - top;
-    egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, room - 32.0 - 34.0, &mut acts));
     });
     // The data panel between the list and the parts, as wide as fits (the board's 780).
     // Its right edge 16 from the parts (the board: 560..1340); the console centred under it.
-    let mid = (screen.width() - 2.0 * EDGE - LIST_W - PARTS_W - 2.0 * 16.0).clamp(360.0, DATA_W);
-    let right = screen.right() - EDGE - PARTS_W - 16.0;
+    let mid = (screen.width() - 2.0 * ds::EDGE - LIST_W - PARTS_W - 2.0 * 16.0).clamp(360.0, DATA_W);
+    let right = screen.right() - ds::EDGE - PARTS_W - 16.0;
     // The console under the data panel, kept between the properties and the exit (4:3).
     let cw = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-console"))).map_or(560.0, |r| r.width());
-    let centre = (right - mid / 2.0).max(EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
+    let centre = (right - mid / 2.0).max(ds::EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - ds::EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
     egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::RIGHT_TOP, vec2(right - screen.right(), top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, mid - 32.0));
     });
-    egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-EDGE, top)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| parts(ui, v, st, &mut acts));
     });
     // Too narrow for it between them (a large UI scale): above the exit instead.
-    let fits = cw <= screen.width() - 2.0 * EDGE - LIST_W - 320.0 - 32.0;
-    let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE - 56.0 - 12.0)) };
+    let fits = cw <= screen.width() - 2.0 * ds::EDGE - LIST_W - 320.0 - 32.0;
+    let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -ds::EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE - 56.0 - 12.0)) };
     let console = egui::Area::new(egui::Id::new("dmh-console")).anchor(pivot, at).fade_in(false).show(ctx, |ui| console(ui, v, &mut acts));
-    egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
-        if pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
+    egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
+        if ds::pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });
@@ -194,7 +181,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     let w = LIST_W - 32.0;
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 8.0;
-    Text::new(&v.labels.designs, TITLE).show(ui, vec2(w, 26.0));
+    Text::new(&v.labels.designs, Font::PANEL_TITLE).show(ui, vec2(w, 26.0));
     egui::ScrollArea::vertical().max_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let k = ds::tokens();
@@ -209,8 +196,8 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
             let kf = Font::DATA.sized(14.0).weight(Weight::Regular).tracking(0.06);
             let kw = Text::new(&r.kind, kf).right().color(if on { k.ink_silver } else { k.ink_muted }).baseline(base).paint(ui, inner.with_min_x(inner.right() - inner.width() * 0.45)).width;
             Text::new(&r.name, Font::BODY).color(if r.off { k.ink_muted } else { k.ink }).baseline(base).paint(ui, inner.with_max_x(inner.right() - kw - 12.0));
-            let resp = ds::tip(resp, tip(v, 9));
-            if pressed(&resp) {
+            let resp = ds::tip(resp, ds::tip_text(&v.tips, 9));
+            if ds::pressed(&resp) {
                 acts.push(Act::Row(r.n));
             }
             if r.n == v.pointer && ui.ctx().input(|i| i.key_pressed(egui::Key::ArrowUp) || i.key_pressed(egui::Key::ArrowDown)) {
@@ -255,10 +242,10 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 10.0;
     let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-    let base = ds::fit::baseline(r, TITLE);
+    let base = ds::fit::baseline(r, Font::PANEL_TITLE);
     let count = format!("{} {}", v.pods.len(), v.labels.pods);
     let cw = Text::new(&count, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - 120.0)).width;
-    Text::new(&v.labels.parts, TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
+    Text::new(&v.labels.parts, Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
     for p in &v.pods {
         let open = v.popup.as_ref().is_some_and(|x| x.button == 0x54) && v.pod == p.k;
         let (r, resp) = ui.allocate_exact_size(vec2(w, 52.0), Sense::click());
@@ -282,12 +269,12 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         c.spacing_mut().item_spacing.x = 8.0;
         let mut ctl_w = 0.0;
         if p.counts {
-            let plus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Plus), true, false), tip(v, 0x34));
+            let plus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Plus), true, false), ds::tip_text(&v.tips, 0x34));
             ds::lcd(&mut c, &p.count.to_string(), 22.0, 2);
-            let minus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Minus), true, false), tip(v, 0x33));
-            if pressed(&minus) {
+            let minus = ds::tip(ds::round_button(&mut c, Glyph::Icon(Icon::Minus), true, false), ds::tip_text(&v.tips, 0x33));
+            if ds::pressed(&minus) {
                 st.count = Some((p.k, false));
-            } else if pressed(&plus) {
+            } else if ds::pressed(&plus) {
                 st.count = Some((p.k, true));
             }
             ctl_w = 156.0;
@@ -296,7 +283,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         } else if v.editing {
             let b = c.add(Plate::new(&v.labels.choose).height(34.0).font(Plate::FONT.sized(14.0).tracking(0.10)));
             ctl_w = b.rect.width();
-            if pressed(&ds::tip(b, tip(v, 0x54))) {
+            if ds::pressed(&ds::tip(b, ds::tip_text(&v.tips, 0x54))) {
                 acts.push(Act::Pod(p.k));
             }
         }
@@ -305,7 +292,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
         Text::new(&p.class, CLASS).color(k.ink_muted).baseline(a.top() + 12.0).paint(ui, a);
         let (val, col) = if p.tech.is_empty() { (&v.labels.empty, k.ink_muted) } else { (&p.tech, k.ink.lerp_to_gamma(Color32::WHITE, hot)) };
         Text::new(val, VALUE).color(col).baseline(b.top() + 17.0).paint(ui, b);
-        if pressed(&ds::tip(resp.clone(), tip(v, 0x54))) {
+        if ds::pressed(&ds::tip(resp.clone(), ds::tip_text(&v.tips, 0x54))) {
             acts.push(Act::Pod(p.k));
         }
         // The chosen pod's tech list, inline under it (`DesigndSelectPodMode2`).
@@ -320,7 +307,7 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
                         ui.set_width(w - 40.0 - 12.0);
                         ui.spacing_mut().item_spacing.y = 0.0;
                         for (sel, name) in &pop.rows {
-                            if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)).selected(*sel != 0 && *name == p.tech))) {
+                            if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)).selected(*sel != 0 && *name == p.tech))) {
                                 acts.push(Act::Pick(*sel));
                             }
                         }
@@ -371,7 +358,7 @@ fn properties(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             ui.ctx().request_repaint();
         }
         let _ = fit;
-        if pressed(&ds::tip(resp, tip(v, 0x56))) {
+        if ds::pressed(&ds::tip(resp, ds::tip_text(&v.tips, 0x56))) {
             acts.push(Act::Name);
         }
     });
@@ -391,18 +378,18 @@ fn console(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 10.0;
         let key = |ui: &mut Ui, i: Icon| ui.add(IconKey::icon(i).size(vec2(36.0, 52.0)));
-        if pressed(&key(ui, Icon::ChevronLeft)) {
+        if ds::pressed(&key(ui, Icon::ChevronLeft)) {
             acts.push(Act::Key(true));
         }
         for (id, label, on) in &v.buttons {
             let open = v.popup.as_ref().is_some_and(|p| p.button == *id);
             let b = ui.add_enabled(*on, Plate::new(label).width(70.0).height(48.0).primary(open || (*id == 5 && v.editing)).font(Plate::FONT.sized(17.0)));
             ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(("dmh-button", *id)), b.rect));
-            if pressed(&ds::tip(b, tip(v, *id))) {
+            if ds::pressed(&ds::tip(b, ds::tip_text(&v.tips, *id))) {
                 acts.push(if open { Act::Close } else { Act::Button(*id) });
             }
         }
-        if pressed(&key(ui, Icon::ChevronRight)) {
+        if ds::pressed(&key(ui, Icon::ChevronRight)) {
             acts.push(Act::Key(false));
         }
     });
@@ -419,7 +406,7 @@ fn popup(ctx: &egui::Context, p: &Popup, at: egui::Pos2, pivot: Align2, acts: &m
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical().max_height(26.0 * 14.0).show(ui, |ui| {
                 for (sel, name) in &p.rows {
-                    if pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
+                    if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
                         acts.push(Act::Pick(*sel));
                     }
                 }
