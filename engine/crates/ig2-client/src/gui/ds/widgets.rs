@@ -943,8 +943,11 @@ pub fn card<R>(ui: &mut Ui, title: Option<&str>, add: impl FnOnce(&mut Ui) -> R)
     r.inner
 }
 
-/// A rich tooltip on `resp`: `text` wrapped at 320 points in the body style, at most 8 lines.
+/// A rich tooltip on `resp`: `text` wrapped at 320 points in the body style, at most 8 lines; none for no text.
 pub fn tip(resp: Response, text: &str) -> Response {
+    if text.is_empty() {
+        return resp;
+    }
     resp.on_hover_ui(|ui| {
         let f = Font::DATA.weight(Weight::Regular).tracking(0.05);
         let fit = Text::new(text, f).lines(8).layout(ui.ctx(), 320.0);
@@ -959,7 +962,9 @@ pub fn tip_at(ctx: &egui::Context, id: &str, at: egui::Pos2, text: &str) {
     egui::Area::new(egui::Id::new(id)).order(egui::Order::Tooltip).interactable(false).fixed_pos(at + Vec2::new(16.0, 18.0)).constrain(true).fade_in(false).show(ctx, |ui| {
         panel(ui, PanelKind::Deep, 0.97, 8.0, |ui| {
             ui.set_max_width(320.0);
-            Text::new(text, Font::DATA).lines(3).show(ui, Vec2::new(Text::new(text, Font::DATA).layout(ui.ctx(), 320.0).width.min(320.0), 20.0));
+            let fit = Text::new(text, Font::DATA).lines(3).layout(ui.ctx(), 320.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width.min(320.0), fit.galley.size().y), Sense::hover());
+            ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
         });
     });
 }

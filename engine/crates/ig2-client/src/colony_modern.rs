@@ -394,7 +394,7 @@ fn ico(p: &egui::Painter, rect: Rect, i: Ico, c: Color32) {
 fn key(ui: &mut Ui, i: Ico, on: bool, size: egui::Vec2, tip: &str) -> egui::Response {
     let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
     let r = ui.add(IconKey::new(Glyph::Custom(&g)).on(on).size(size));
-    if tip.is_empty() { r } else { ds::tip(r, tip) }
+    ds::tip(r, tip)
 }
 
 /// A round action button (60 across) with its label on a black tag under it (`active` lit); the response is the
@@ -414,7 +414,7 @@ fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Res
         let tag = Rect::from_center_size(row.center(), vec2(tag_w, 18.0));
         ui.painter().rect_filled(tag, ds::RADIUS_PLATE, Color32::BLACK);
         Text::new(label, f).center().shrink(9.0).color(if active { k.ink } else { k.ink_silver }).paint(ui, tag.shrink2(vec2(8.0, 0.0)));
-        if tip.is_empty() || tip == label { r } else { ds::tip(r, tip) }
+        if tip == label { r } else { ds::tip(r, tip) }
     })
     .inner
 }
@@ -547,7 +547,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
         } else if hot > 0.0 {
             ds::rim(ui.painter(), w.rect, ds::RADIUS_PLATE, k.rim_bright.gamma_multiply(hot));
         }
-        let w = if b.cursor_tip.is_empty() { w } else { ds::tip(w, &b.cursor_tip) };
+        let w = ds::tip(w, &b.cursor_tip);
         if !b.pending && either(&w) {
             acts.push(Act::Pick(-1));
         }
