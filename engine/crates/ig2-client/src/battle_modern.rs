@@ -207,9 +207,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
         egui::Area::new(egui::Id::new("bmh-retreat")).order(egui::Order::Foreground).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| retreat(ui, r, st, screen, key));
     }
     tooltip(ctx, v, st);
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    ds::wells_in_pixels(&mut st.wells, ppp);
 }
 
 /// The weapon rail: a key per shown group (the original's icon in a well, its name, the charge bar), the info key

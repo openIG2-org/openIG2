@@ -431,6 +431,13 @@ pub fn glowing_galley(p: &Painter, pos: Pos2, galley: &Arc<egui::Galley>, c: Col
     p.galley(pos, galley.clone(), Color32::WHITE);
 }
 
+/// The wells a page leaves for the renderer's pictures (what, where, the opacity) from points into pixels.
+pub fn wells_in_pixels<T>(wells: &mut [(T, Rect, f32)], ppp: f32) {
+    for w in wells {
+        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
+    }
+}
+
 /// The kit's animations run (off: every state change is instant, a snapshot's still or a reduced-motion setting).
 static MOTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 

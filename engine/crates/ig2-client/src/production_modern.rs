@@ -178,9 +178,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Ve
     }
     let held = st.count;
     let ppp = ctx.pixels_per_point();
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    ds::wells_in_pixels(&mut st.wells, ppp);
     acts.push(Act::Hold(held));
     acts
 }

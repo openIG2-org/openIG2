@@ -488,9 +488,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         st.menu = None;
     }
     egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
-    for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
-    }
+    ds::wells_in_pixels(&mut st.wells, ppp);
     acts
 }
 
@@ -1124,7 +1122,6 @@ fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>
 /// (`crate::colony_ui::PANEL_VIEW`'s pass about (98, 88)) and the short info's model (the info box's corner,
 /// 0..50 × 400..480), each fitted into its well and drawn over the panels.
 pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], building: Option<crate::render::TexId>, info: Option<crate::render::TexId>, v: &crate::font::Virtual) {
-    let wide = crate::kit::Wide::new(v);
     for &(pic, r, alpha) in wells {
         let (tex, src) = match pic {
             // The middle of the panel's picture (the model turns about (98, 88)), larger in the well.
@@ -1141,11 +1138,7 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], buildi
             let (w1, h1) = if w0 / h0 > aspect { (h0 * aspect, h0) } else { (w0, w0 / aspect) };
             (x0, y0, w0, h0) = (x0 + (w0 - w1) / 2.0, y0 + (h0 - h1) / 2.0, w1, h1);
         }
-        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
-        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
-        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
-        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
-        f.push(tex, crate::render::Blend::GammaPremul, i);
+        crate::fleet_modern::well_sprite(f, tex, crate::render::Blend::GammaPremul, [x0, y0, w0, h0], r, alpha, v);
     }
 }
 

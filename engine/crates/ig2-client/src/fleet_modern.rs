@@ -238,8 +238,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     if let Some((m, _)) = &st.menu {
         st.wells.retain(|w| !w.1.intersects(*m));
     }
+    ds::wells_in_pixels(&mut st.wells, ppp);
     for w in &mut st.wells {
-        w.1 = Rect::from_min_max((w.1.min.to_vec2() * ppp).to_pos2(), (w.1.max.to_vec2() * ppp).to_pos2());
         w.2 *= o;
     }
 }
@@ -655,15 +655,21 @@ fn tanks(ui: &mut egui::Ui, t: &TankInfo, st: &mut State, screen: Rect, top: f32
 /// [`show`] left, each fitted into its well.
 pub fn pictures(f: &mut crate::render::Frame, wells: &[([f32; 4], Rect, f32)], models: Option<crate::render::TexId>, v: &crate::font::Virtual) {
     let Some(tex) = models else { return };
-    let wide = crate::kit::Wide::new(v);
     for &(src, r, alpha) in wells {
-        let [x0, y0, w0, h0] = src;
-        let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
-        let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
-        let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
-        i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
-        f.push(tex, crate::render::Blend::Alpha, i);
+        well_sprite(f, tex, crate::render::Blend::Alpha, src, r, alpha, v);
     }
+}
+
+/// The part `src` (x, y, width, height on the virtual 640 × 480 screen) of a screen-sized target `tex`, fitted into
+/// the well `r` (pixels) in its own shape at `alpha`.
+pub(crate) fn well_sprite(f: &mut crate::render::Frame, tex: crate::render::TexId, blend: crate::render::Blend, src: [f32; 4], r: Rect, alpha: f32, v: &crate::font::Virtual) {
+    let wide = crate::kit::Wide::new(v);
+    let [x0, y0, w0, h0] = src;
+    let s = (r.width() / (w0 * v.k)).min(r.height() / (h0 * v.k));
+    let half = [w0 * v.k * s / 2.0, h0 * v.k * s / 2.0];
+    let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], half, [alpha; 4]);
+    i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+    f.push(tex, blend, i);
 }
 
 fn i16_at(b: &[u8], o: usize) -> i16 {
