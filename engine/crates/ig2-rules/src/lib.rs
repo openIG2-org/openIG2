@@ -7,6 +7,8 @@
 
 pub mod install;
 mod patch;
+/// Techs per research category (a tech `t` is field `(t − 1) % TECH_FIELDS + 1` of category `(t − 1) / TECH_FIELDS + 1`).
+pub use patch::FIELDS as TECH_FIELDS;
 mod pe;
 pub mod sounds;
 pub mod speech;

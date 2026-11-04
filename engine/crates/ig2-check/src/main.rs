@@ -42,6 +42,108 @@ impl Group {
     }
 }
 
+impl Group {
+    /// A check whose success leaves a note: the note and a pass, or the failure under `what`.
+    fn record(&mut self, what: String, checked: Result<String, String>) {
+        match checked {
+            Ok(note) => {
+                self.notes.push(note);
+                self.ok += 1;
+            }
+            Err(e) => self.failed.push((what, e)),
+        }
+    }
+}
+
+/// The enabled mods (ADR 0044): the ones that didn't load, each mod's files, and each rules, text and story patch
+/// on its own.
+fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Group {
+    let mut g = Group::new("mods");
+    for (n, why) in missing {
+        g.check(&format!("mod {n}"), || Err(why));
+    }
+    let overrides = inst.overrides();
+    for m in inst.mods() {
+        let files: Vec<_> = overrides.iter().filter(|o| o.mod_name == m.name).collect();
+        g.notes.push(format!("mod {} ({}): {} files", m.name, m.dir.display(), files.len()));
+        g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
+        g.ok += 1;
+    }
+    rule_patches(inst, &mut g);
+    // Each text patch file on its own (ADR 0044 §12); together they were applied when the install opened.
+    for (name, file, bytes) in inst.text_patches().unwrap_or_default() {
+        let lang = ig2_formats::textpatch::file_lang(&file).unwrap_or(lang);
+        let from = format!("mod {name}: {file}");
+        let checked = utf8(bytes).and_then(|t| ig2_formats::textpatch::TextPatch::default().add(&t, &from, lang));
+        g.record(from.clone(), checked.map(|n| format!("{from} sets {n} lines")));
+    }
+    story_files(inst, &mut g);
+    g
+}
+
+fn utf8(bytes: Vec<u8>) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())
+}
+
+/// Each mod's `rules.toml` on its own against the exe's tables (ADR 0044 §8), with where its added entries landed,
+/// then all of them together in load order (a mod's entries may name an earlier mod's keys, ADR 0069).
+fn rule_patches(inst: &Install, g: &mut Group) {
+    let exe = ig2_rules::Rules::from_exe(&inst.read_raw("ig2.exe").unwrap_or_default());
+    let patches = inst.rule_patches().unwrap_or_default();
+    let several = patches.len() > 1;
+    for (name, bytes) in patches {
+        let applied = || -> Result<(usize, ig2_rules::Rules), String> {
+            let mut r = exe.as_ref().map_err(|e| e.to_string())?.clone();
+            let n = r.apply_patch(&utf8(bytes)?)?;
+            Ok((n, r))
+        };
+        let checked = applied().map(|(n, r)| {
+            let mut lines = vec![format!("mod {name}: rules.toml sets {n} fields")];
+            lines.extend(r.added_techs.iter().map(|a| format!("  adds tech {} \"{}\" (category {}, field {})", a.index, a.key, (a.index - 1) / ig2_rules::TECH_FIELDS + 1, (a.index - 1) % ig2_rules::TECH_FIELDS + 1)));
+            lines.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
+            lines.extend(r.added_hulls.iter().map(|a| format!("  adds hull {} \"{}\" (like {}, tech {})", a.index, a.key, r.hulls[a.index].like, a.tech)));
+            lines.extend(r.added_weapons.iter().map(|a| format!("  adds space weapon {} \"{}\" (tech {})", a.index, a.key, a.tech)));
+            lines.extend(r.added_races.iter().map(|a| format!("  adds race {} \"{}\" (like {}, AI like {})", a.race, a.key, a.like, a.ai)));
+            lines.extend(r.added_planet_types.iter().map(|a| format!("  adds planet type {} \"{}\" (like {}, {}% of a new game's)", a.surface, a.key, a.like, a.share)));
+            lines.extend(r.added_techs.iter().filter(|a| r.techs[a.index].like != 0).map(|a| format!("  tech {} \"{}\" is like tech {}", a.index, a.key, r.techs[a.index].like)));
+            lines.join("\n")
+        });
+        match checked {
+            Ok(note) => {
+                g.notes.extend(note.lines().map(str::to_string));
+                g.ok += 1;
+            }
+            Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),
+        }
+    }
+    if several {
+        g.check("mods: every rules.toml together", || ig2_rules::Rules::from_install(inst).map(|_| ()).map_err(|e| e.to_string()));
+    }
+}
+
+/// Each story file on its own (ADR 0061 §7), and the messages its stories send: in `uzenetek.txt`'s index, with
+/// their text file.
+fn story_files(inst: &Install, g: &mut Group) {
+    let index = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| ig2_formats::dialogue::parse_message_index(&String::from_utf8_lossy(&b))).unwrap_or_default();
+    for (name, bytes) in inst.story_files().unwrap_or_default() {
+        let from = format!("mod {name}: {}", ig2_formats::vfs::STORY_FILE);
+        let checked = utf8(bytes).and_then(|t| ig2_sim::story_mods::parse(&t, name)).and_then(|stories| {
+            let missing: Vec<String> = stories
+                .iter()
+                .flat_map(|s| s.actions.iter())
+                .filter_map(|a| match a {
+                    &ig2_sim::story_mods::Action::Message(id) => Some(id),
+                    _ => None,
+                })
+                .filter(|&id| !index.iter().any(|k| k.id as i32 == id) || inst.resolve(&format!("dataraw/uzenetek/txt{id:04}.txt")).is_none())
+                .map(|id| id.to_string())
+                .collect();
+            if missing.is_empty() { Ok(stories.len()) } else { Err(format!("messages not in uzenetek.txt or without their txtNNNN.txt: {}", missing.join(", "))) }
+        });
+        g.record(from.clone(), checked.map(|n| format!("{from} holds {n} stories")));
+    }
+}
+
 /// One group's loader pass.
 type Step = dyn Fn(&Install, &mut Group);
 
@@ -351,84 +453,7 @@ fn main() {
     report(&install, Instant::now());
     groups.push(install);
     if !inst.mods().is_empty() || !missing.is_empty() {
-        let mut g = Group::new("mods");
-        for (n, why) in missing {
-            g.check(&format!("mod {n}"), || Err(why));
-        }
-        for m in inst.mods() {
-            let files: Vec<_> = inst.overrides().into_iter().filter(|o| o.mod_name == m.name).collect();
-            g.notes.push(format!("mod {} ({}): {} files", m.name, m.dir.display(), files.len()));
-            g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
-            g.ok += 1;
-        }
-        // Each patch on its own, against the exe's tables (ADR 0044 §8).
-        let exe = ig2_rules::Rules::from_exe(&inst.read_raw("ig2.exe").unwrap_or_default());
-        for (name, bytes) in inst.rule_patches().unwrap_or_default() {
-            let applied = || -> Result<(usize, ig2_rules::Rules), String> {
-                let mut r = exe.as_ref().map_err(|e| e.to_string())?.clone();
-                let n = r.apply_patch(&String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string())?)?;
-                Ok((n, r))
-            };
-            match applied() {
-                Ok((n, r)) => {
-                    g.notes.push(format!("mod {name}: rules.toml sets {n} fields"));
-                    // Added entries (ADR 0069): where each landed.
-                    g.notes.extend(r.added_techs.iter().map(|a| format!("  adds tech {} \"{}\" (category {}, field {})", a.index, a.key, (a.index - 1) / 16 + 1, (a.index - 1) % 16 + 1)));
-                    g.notes.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
-                    g.notes.extend(r.added_hulls.iter().map(|a| format!("  adds hull {} \"{}\" (like {}, tech {})", a.index, a.key, r.hulls[a.index].like, a.tech)));
-                    g.notes.extend(r.added_weapons.iter().map(|a| format!("  adds space weapon {} \"{}\" (tech {})", a.index, a.key, a.tech)));
-                    g.notes.extend(r.added_races.iter().map(|a| format!("  adds race {} \"{}\" (like {}, AI like {})", a.race, a.key, a.like, a.ai)));
-                    g.notes.extend(r.added_planet_types.iter().map(|a| format!("  adds planet type {} \"{}\" (like {}, {}% of a new game's)", a.surface, a.key, a.like, a.share)));
-                    g.notes.extend(r.added_techs.iter().filter(|a| r.techs[a.index].like != 0)
-.map(|a| format!("  tech {} \"{}\" is like tech {}", a.index, a.key, r.techs[a.index].like)));
-                    g.ok += 1;
-                }
-                Err(e) => g.failed.push((format!("mod {name}: rules.toml"), e)),
-            }
-        }
-        // Together, in load order: a mod's entries may name an earlier mod's keys (ADR 0069).
-        if inst.rule_patches().is_ok_and(|p| p.len() > 1) {
-            g.check("mods: every rules.toml together", || ig2_rules::Rules::from_install(&inst).map(|_| ()).map_err(|e| e.to_string()));
-        }
-        // Each text patch file on its own (ADR 0044 §12); together they were applied when the install opened.
-        for (name, file, bytes) in inst.text_patches().unwrap_or_default() {
-            let lang = ig2_formats::textpatch::file_lang(&file).unwrap_or(lang);
-            let from = format!("mod {name}: {file}");
-            let checked = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string()).and_then(|t| ig2_formats::textpatch::TextPatch::default().add(&t, &from, lang));
-            match checked {
-                Ok(n) => {
-                    g.notes.push(format!("{from} sets {n} lines"));
-                    g.ok += 1;
-                }
-                Err(e) => g.failed.push((from, e)),
-            }
-        }
-        // Each story file on its own (ADR 0061 §7), and the messages its stories send: in `uzenetek.txt`'s index, with
-        // their text file.
-        let index = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| ig2_formats::dialogue::parse_message_index(&String::from_utf8_lossy(&b))).unwrap_or_default();
-        for (name, bytes) in inst.story_files().unwrap_or_default() {
-            let from = format!("mod {name}: {}", ig2_formats::vfs::STORY_FILE);
-            let checked = String::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string()).and_then(|t| ig2_sim::story_mods::parse(&t, name)).and_then(|stories| {
-                let missing: Vec<String> = stories
-                    .iter()
-                    .flat_map(|s| s.actions.iter())
-                    .filter_map(|a| match a {
-                        &ig2_sim::story_mods::Action::Message(id) => Some(id),
-                        _ => None,
-                    })
-                    .filter(|&id| !index.iter().any(|k| k.id as i32 == id) || inst.resolve(&format!("dataraw/uzenetek/txt{id:04}.txt")).is_none())
-                    .map(|id| id.to_string())
-                    .collect();
-                if missing.is_empty() { Ok(stories.len()) } else { Err(format!("messages not in uzenetek.txt or without their txtNNNN.txt: {}", missing.join(", "))) }
-            });
-            match checked {
-                Ok(n) => {
-                    g.notes.push(format!("{from} holds {n} stories"));
-                    g.ok += 1;
-                }
-                Err(e) => g.failed.push((from, e)),
-            }
-        }
+        let g = check_mods(&inst, missing, lang);
         report(&g, Instant::now());
         groups.push(g);
     }

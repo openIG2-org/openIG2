@@ -143,7 +143,7 @@ macro_rules! dispatch {
 
 /// Research-screen categories (`(t − 1) / 16 + 1`) and their fields.
 const CATEGORIES: usize = 12;
-const FIELDS: usize = 16;
+pub const FIELDS: usize = 16;
 /// Kinds a new building can't be like (ADR 0069 §3): the defences, which the ground war drives by kind.
 const DEFENCES: std::ops::RangeInclusive<usize> = 28..=43;
 /// The buildings' techs, the colony pick list's (categories 6..=9).
