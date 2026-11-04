@@ -45,6 +45,7 @@ use crate::orders::{self, Keys, Selection};
 
 mod do_keyboard;
 mod pointer;
+mod presence;
 mod top_bar;
 use crate::render::Renderer;
 use crate::starmap::{Assets, Pick, View};
@@ -459,6 +460,9 @@ struct App {
     /// screen whose row frame carried them last (re/screens/trade.md §13).
     dk: crate::kit::DesignFrame,
     dk_owner: u8,
+    /// Ours (ADR 0080): Discord Rich Presence, and the race names its texts use (read on the first report).
+    discord: crate::discord::Presence,
+    discord_races: Vec<String>,
 }
 
 /// The Options screen up: its state, its 10 ms UI clock, the lasers' glow, and `OptionsOldIdoPause`.
@@ -959,6 +963,8 @@ impl App {
             // The exe's boot values (`.data`): `dkm` 0, `dkmcel` π/2.
             dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
+            discord: Default::default(),
+            discord_races: Vec::new(),
         }
     }
 
@@ -6663,6 +6669,7 @@ impl ApplicationHandler for App {
                     }
                 }
                 self.frame();
+                self.discord_frame();
                 crate::prof::frame(self.profile_screen());
                 if self.front.as_ref().is_some_and(|f| f.quit) {
                     el.exit();
