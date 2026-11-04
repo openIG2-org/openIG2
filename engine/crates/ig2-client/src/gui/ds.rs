@@ -143,6 +143,11 @@ pub(crate) fn set_tokens(k: Tokens) {
 
 /// Spacing steps (`--space-1` … `--space-5`), corner radii.
 pub const SPACE: [f32; 5] = [4.0, 8.0, 16.0, 24.0, 40.0];
+/// The boards' gap to the screen's edges: a HUD's panels over a scene (24), a full-screen board's (40).
+pub const EDGE: f32 = SPACE[3];
+pub const BOARD_EDGE: f32 = SPACE[4];
+/// A board's exit plate's width.
+pub const EXIT_W: f32 = 220.0;
 pub const RADIUS_PANEL: u8 = 8;
 pub const RADIUS_PLATE: u8 = 4;
 /// State changes: hover and press fades, a selection's glide, a panel's open and close.
@@ -192,6 +197,13 @@ impl Font {
     pub const READOUT: Font = Font { size: 24.0, line: 28.0, weight: Weight::Regular, tracking: 0.12, upper: false, lcd: true };
     /// A page's big title ("BEÁLLÍTÁSOK": 600 30/36, 0.3 em).
     pub const PAGE_TITLE: Font = Font::ui(30.0, 36.0, Weight::SemiBold, 0.30, true);
+    /// A board panel's title (600 20 / 0.16 em, upper case).
+    pub const PANEL_TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
+    /// A card's name (22) and lines (`.ig-card .line`: 15, 0.12 em, upper case), an empire's name (`.ig-star`: 600 13
+    /// / 0.16 em, upper case).
+    pub const CARD_NAME: Font = Font::ui(22.0, 26.0, Weight::Regular, 0.08, false);
+    pub const CARD_LINE: Font = Font::ui(15.0, 20.0, Weight::Regular, 0.12, true);
+    pub const OWNER: Font = Font::ui(13.0, 16.0, Weight::SemiBold, 0.16, true);
 
     /// The same style at another size, the line box scaled with it.
     pub const fn sized(self, size: f32) -> Self {

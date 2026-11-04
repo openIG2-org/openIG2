@@ -106,8 +106,7 @@ pub struct State {
     count: Option<(usize, usize, bool)>,
 }
 
-/// The boards' gap to the screen's edges, a line panel's width, a slot's height and the gap between slots.
-const EDGE: f32 = 24.0;
+/// A line panel's width, a slot's height and the gap between slots.
 const PANEL_W: f32 = 600.0;
 const SLOT_H: f32 = 90.0;
 const SLOT_GAP: f32 = 10.0;
@@ -122,11 +121,10 @@ const LIST_W: f32 = 340.0;
 const ROW_H: f32 = 26.0;
 
 /// The type of the board's slots: the name (500 17 / 0.06 em), the hull (600 12 / 0.14 em upper case), the price
-/// (500 15 / 0.1 em), the line's title (600 20 / 0.16 em), the lamps (11 / 0.12 em).
+/// (500 15 / 0.1 em), the lamps (11 / 0.12 em).
 const NAME: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
 const KIND: Font = Font::LABEL.sized(12.0);
 const PRICE: Font = Font::DATA.tracking(0.10);
-const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 const LAMP: Font = Font::LABEL.sized(11.0).tracking(0.12);
 
 /// One frame of the production view (after the HUD's, under its bar); the acts in the order they happened.
@@ -150,21 +148,21 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State, _race: Color32) -> Ve
     let slide = (1.0 - t) * 200.0;
     // Narrower than the board's two panels and the plate between them (4:3, a large UI scale): the plate goes to the
     // bottom, between the starmap HUD's card (380 wide) and the exit.
-    let narrow = ctx.screen_rect().width() < 2.0 * (EDGE + PANEL_W + 12.0) + PLATE_ROW_W;
-    let (pivot, at) = if narrow { (Align2::CENTER_BOTTOM, vec2((EDGE + 380.0 + 16.0 - EDGE - 320.0 - 16.0) / 2.0, -EDGE + slide * 0.3)) } else { (Align2::CENTER_TOP, vec2(0.0, top - slide * 0.3)) };
+    let narrow = ctx.screen_rect().width() < 2.0 * (ds::EDGE + PANEL_W + 12.0) + PLATE_ROW_W;
+    let (pivot, at) = if narrow { (Align2::CENTER_BOTTOM, vec2((ds::EDGE + 380.0 + 16.0 - ds::EDGE - 320.0 - 16.0) / 2.0, -ds::EDGE + slide * 0.3)) } else { (Align2::CENTER_TOP, vec2(0.0, top - slide * 0.3)) };
     egui::Area::new(egui::Id::new("pmh-planet")).anchor(pivot, at).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(t);
         planet_plate(ui, v, &mut acts);
     });
     let panels_top = top;
     for (l, line) in v.lines.iter().enumerate() {
-        let (align, x) = if l == 0 { (Align2::LEFT_TOP, EDGE - slide) } else { (Align2::RIGHT_TOP, -EDGE + slide) };
+        let (align, x) = if l == 0 { (Align2::LEFT_TOP, ds::EDGE - slide) } else { (Align2::RIGHT_TOP, -ds::EDGE + slide) };
         egui::Area::new(egui::Id::new(("pmh-line", l))).anchor(align, vec2(x, panels_top)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
             ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| line_panel(ui, l, line, v, st, &mut acts));
         });
     }
-    egui::Area::new(egui::Id::new("pmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE + slide * 0.3)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("pmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE + slide * 0.3)).order(egui::Order::Foreground).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(t);
         let exit = ui.add_enabled(!v.exit_locked, Plate::new(&v.exit).width(320.0).height(56.0));
         if ds::pressed(&ds::tip(exit, &v.tips[8])) {
@@ -226,10 +224,10 @@ fn line_panel(ui: &mut Ui, l: usize, line: &Line, v: &View, st: &mut State, acts
         }
         let rest = ui.available_width();
         let (r, _) = ui.allocate_exact_size(vec2(rest, 30.0), Sense::hover());
-        let base = ds::fit::baseline(r, TITLE);
+        let base = ds::fit::baseline(r, Font::PANEL_TITLE);
         let label = Text::new(&line.capacity.0, Font::LABEL).right().color(k.ink_muted).baseline(base).layout(ui.ctx(), rest * 0.5).width;
         Text::new(&line.capacity.0, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - label));
-        Text::new(&line.title, TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - label - 12.0));
+        Text::new(&line.title, Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - label - 12.0));
     });
     for (s, slot) in line.slots.iter().enumerate() {
         slot_row(ui, l, s, slot.as_ref(), line, v, st, acts);
@@ -461,7 +459,7 @@ mod tests {
         let (ctx, last) = run(&view("Fighter"), &mut st, 1920.0);
         assert_eq!(last, vec![Act::Hold(None)]);
         let r = ctx.memory(|m| m.area_rect(egui::Id::new(("pmh-line", 1)))).unwrap();
-        assert!(r.right() <= 1920.0 - EDGE + 0.5 && (r.width() - PANEL_W).abs() < 1.0, "{r:?}");
+        assert!(r.right() <= 1920.0 - ds::EDGE + 0.5 && (r.width() - PANEL_W).abs() < 1.0, "{r:?}");
         // A well per filled slot.
         assert_eq!(st.wells.iter().map(|w| w.0).collect::<Vec<_>>(), vec![0, 4]);
     }

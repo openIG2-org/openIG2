@@ -538,8 +538,6 @@ pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egu
     })
 }
 
-/// The boards' gap of the corner panels to the screen's edges (`left: 24px; bottom: 24px`).
-const GAP: f32 = 24.0;
 /// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).
 const BAR_H: f32 = 44.0;
 const BAR_PAD: Vec2 = vec2(12.0, 4.0);
@@ -562,9 +560,7 @@ const CAM_KEY: Vec2 = vec2(32.0, 28.0);
 /// The ticker's and the research button's type (`15px/30px`, 0.06 em; `500 14px`, 0.08 em).
 const TICKER: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
 const BUTTON_TEXT: Font = Font { size: 14.0, line: 18.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
-/// The card's name (22) and lines (`.ig-card .line`: 15, 0.12 em, upper case), its side ratios (500 12, 0.08 em).
-const CARD_NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: false };
-const CARD_LINE: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.12, upper: true, lcd: false };
+/// The card's side ratios (500 12, 0.08 em).
 const RATIO: Font = Font { size: 12.0, line: 14.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
 
 /// The hand over what a click works.
@@ -581,11 +577,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     st.wells.clear();
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(GAP, -GAP)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, &mut st.wells));
+        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, &mut st.wells));
     }
     // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
-        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-GAP, -GAP)).fade_in(false).show(ctx, |ui| {
+        egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
             let at = ui.painter().add(Shape::Noop);
             let r = egui::Frame::new().inner_margin(10).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
@@ -931,9 +927,9 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             ui.vertical(|ui| {
                 ui.set_width(main_w);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                Text::new(&info.title, CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0));
+                Text::new(&info.title, Font::CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0));
                 for (l, c) in info.lines.iter().take(6) {
-                    Text::new(l, CARD_LINE).color(*c).show(ui, vec2(main_w, 20.0));
+                    Text::new(l, Font::CARD_LINE).color(*c).show(ui, vec2(main_w, 20.0));
                 }
                 if info.redirect {
                     Text::new(&v.labels.redirect, Font::LABEL).color(k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.45 })).show(ui, vec2(main_w, 20.0));
@@ -1211,7 +1207,6 @@ const LI_ALL: f32 = 64.0;
 const LI_ROUND: f32 = 42.0;
 const LI_PLATES: f32 = 44.0;
 const LI_NAME: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
-const LI_OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
 
 /// Where the modern long info put the original's hot-spots this frame (points), so the pointer reaches them there.
 #[derive(Debug, Clone)]
@@ -1481,7 +1476,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
     let k = ds::tokens();
     let q = i.q.clamp(0.0, 1.0).max(i.exit_in.clamp(0.0, 1.0));
     let ease = 1.0 - (1.0 - q) * (1.0 - q);
-    let at = pos2(ctx.screen_rect().right() - GAP - LI_W + 24.0 * (1.0 - ease), BAR_H + 28.0);
+    let at = pos2(ctx.screen_rect().right() - ds::EDGE - LI_W + 24.0 * (1.0 - ease), BAR_H + 28.0);
     let card = v.info.as_ref().filter(|c| c.planet);
     let mut spots = Vec::new();
     let mut plates = Rect::NOTHING;
@@ -1507,9 +1502,9 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
         Text::new(&i.title, LI_NAME).color(k.ink).paint(ui, Rect::from_min_size(pos2(tx, y), vec2(tw, 30.0)));
         y += 34.0;
         if !owner.is_empty() {
-            let f = Text::new(owner, LI_OWNER).color(i.colour).layout(ui.ctx(), tw);
+            let f = Text::new(owner, Font::OWNER).color(i.colour).layout(ui.ctx(), tw);
             let r = Rect::from_min_size(pos2(tx, y), vec2(tw, 18.0));
-            ds::glowing_galley(ui.painter(), pos2(tx, crate::gui::ds::fit::baseline(r, LI_OWNER) - f.baseline()), &f.galley, i.colour);
+            ds::glowing_galley(ui.painter(), pos2(tx, crate::gui::ds::fit::baseline(r, Font::OWNER) - f.baseline()), &f.galley, i.colour);
             y += 22.0;
         }
         if !sub.is_empty() {
@@ -1521,7 +1516,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
         let shown = |l: &&InfoRow| !(l.n == 2 || l.n == 3 || (l.special && l.value.trim().is_empty()));
         let rows = i.lines.iter().filter(shown).count() + i.problems.as_ref().map_or(0, |p| p.2.len());
         let rest = 4.0 + 12.0 + if i.settings.is_some() { 14.0 + 3.0 * (LI_ROUND + 8.0) } else { 0.0 } + LI_PLATES + LI_PAD + 4.0;
-        let room = ctx.screen_rect().bottom() - GAP - at.y - LI_HEAD - rest;
+        let room = ctx.screen_rect().bottom() - ds::EDGE - at.y - LI_HEAD - rest;
         let pitch = (room / rows.max(1) as f32).clamp(20.0, 26.0);
         for l in i.lines.iter().filter(shown) {
             let c = if l.short { k.enemy } else if l.special { k.own } else { k.info };
@@ -1723,7 +1718,7 @@ mod tests {
             info: Some(LongInfo { q: 1.0, exit_in: 1.0, title: "Magellan 10".into(), ..Default::default() }),
         };
         // On the select menu's row, on the long info's panel (at the screen's right), on a radial icon.
-        for at in [pos2(240.0 + 450.0 * 2.25, 306.0 * 2.25), pos2(SIZE.0 as f32 - GAP - LI_W / 2.0, BAR_H + 28.0 + 100.0), pos2(240.0 + 370.0 * 2.25, 242.0 * 2.25)] {
+        for at in [pos2(240.0 + 450.0 * 2.25, 306.0 * 2.25), pos2(SIZE.0 as f32 - ds::EDGE - LI_W / 2.0, BAR_H + 28.0 + 100.0), pos2(240.0 + 370.0 * 2.25, 242.0 * 2.25)] {
             let acts = drive(&v, &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], |_| at);
             assert!(acts.is_empty(), "{acts:?}");
             let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
@@ -1790,7 +1785,7 @@ mod tests {
         // Each control on its spot; the tax field (0x5a: 400, 289, 100 × 16) and the priority's plus (0x63).
         for (id, want) in [(0x5a, [450.0, 297.0]), (0x63, [578.0, 341.0]), (0x5f, [521.0, 319.0])] {
             let r = pl.spots.iter().find(|s| s.0 == id).expect("spot").1;
-            assert!(r.left() > SIZE.0 as f32 - GAP - LI_W, "{id:#x} {r:?}");
+            assert!(r.left() > SIZE.0 as f32 - ds::EDGE - LI_W, "{id:#x} {r:?}");
             assert_eq!(st.info_pointer(virt(r.center())), want, "{id:#x}");
         }
         // The panel's header: the original panel's empty part, no control.

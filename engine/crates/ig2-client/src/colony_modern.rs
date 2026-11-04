@@ -243,7 +243,6 @@ pub struct State {
 }
 
 /// The boards' measures in points.
-const EDGE: f32 = 24.0;
 const BUILD_W: f32 = 430.0;
 const CARD_W: f32 = 440.0;
 const WAR_CARD_W: f32 = 400.0;
@@ -432,11 +431,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let screen = ctx.screen_rect();
     let top = top(ctx);
     if let Some(b) = &v.build {
-        let card_top = screen.bottom() - EDGE - 190.0;
-        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
+        let card_top = screen.bottom() - ds::EDGE - 190.0;
+        egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
     }
     let war = v.war.is_some();
-    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
+    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
     let card = card.response.rect;
     // The selected building's round buttons right of the card, the window over them.
     let a = &v.actions;
@@ -469,15 +468,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ds::open_t(ctx, egui::Id::new("cmh-confirm"), false);
     }
     if let Some(w) = &v.war {
-        let width = (screen.width() - 2.0 * (EDGE + WAR_CARD_W + 16.0)).clamp(480.0, INFO_W);
-        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -EDGE)).fade_in(false).show(ctx, |ui| war_strip(ui, w, width, &mut acts));
+        let width = (screen.width() - 2.0 * (ds::EDGE + WAR_CARD_W + 16.0)).clamp(480.0, INFO_W);
+        egui::Area::new(egui::Id::new("cmh-war")).anchor(Align2::CENTER_BOTTOM, vec2(0.0, -ds::EDGE)).fade_in(false).show(ctx, |ui| war_strip(ui, w, width, &mut acts));
     }
     // The banner, the war's lines and the self-destruct under the top bar, centred.
     if v.banner.is_some() || v.destruct.is_some() || v.war.as_ref().is_some_and(|w| !w.notices.is_empty()) {
         egui::Area::new(egui::Id::new("cmh-notice")).anchor(Align2::CENTER_TOP, vec2(0.0, top)).fade_in(false).show(ctx, |ui| notices(ui, v, &mut acts));
     }
     if let Some(i) = &v.info {
-        let x = (screen.right() - 150.0 - INFO_W).max(EDGE);
+        let x = (screen.right() - 150.0 - INFO_W).max(ds::EDGE);
         let t = ds::open_t(ctx, egui::Id::new("cmh-info"), true);
         egui::Area::new(egui::Id::new("cmh-info")).fixed_pos(pos2(x, top + 20.0 + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
@@ -487,7 +486,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ds::open_t(ctx, egui::Id::new("cmh-info"), false);
         st.menu = None;
     }
-    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
+    egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
     ds::wells_in_pixels(&mut st.wells, ppp);
     acts
 }

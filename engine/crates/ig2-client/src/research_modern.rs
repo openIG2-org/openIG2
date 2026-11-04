@@ -130,14 +130,11 @@ pub struct State {
     pub bar: sm::State,
 }
 
-/// The boards' gap to the screen's edges, the list's and the detail's widths, the category tiles' height.
-const EDGE: f32 = 24.0;
+/// The list's and the detail's widths, the category tiles' height.
 const LIST_W: f32 = 460.0;
 const INFO_W: f32 = 470.0;
 const TILE_H: f32 = 44.0;
-const EXIT_W: f32 = 220.0;
-/// The panels' titles (600 20 / 0.16 em), a status word (500 14 / 0.1 em), a tile's name (15 / 0.06 em).
-const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
+/// A status word (500 14 / 0.1 em), a tile's name (15 / 0.06 em).
 const STATUS: Font = Font::DATA.sized(14.0).tracking(0.10).upper(true);
 const TILE: Font = Font::DATA.sized(15.0).tracking(0.06);
 
@@ -150,15 +147,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row first: the panels above stop over it.
-    let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| categories(ui, v, screen.width() - 2.0 * EDGE, &mut acts));
+    let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| categories(ui, v, screen.width() - 2.0 * ds::EDGE, &mut acts));
     let room = nav.response.rect.top() - 16.0 - top;
-    let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| {
+    let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 240.0).max(26.0 * 4.0), &mut acts));
     });
-    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(EDGE, list.response.rect.bottom() + 16.0)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(ds::EDGE, list.response.rect.bottom() + 16.0)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
     });
-    egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-EDGE, top)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| info(ui, v, room - 32.0, &mut acts));
     });
     acts
@@ -172,11 +169,11 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     ui.spacing_mut().item_spacing.y = 8.0;
     let area = v.areas.iter().find(|a| a.n == v.area);
     let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-    let base = ds::fit::baseline(r, TITLE);
+    let base = ds::fit::baseline(r, Font::PANEL_TITLE);
     let count = area.map_or(String::new(), |a| format!("{} / {} {}", a.owned, a.known, v.labels.done));
     let cw = Text::new(&count, Font::LABEL).layout(ui.ctx(), w * 0.45).width;
     Text::new(&count, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - cw));
-    Text::new(area.map_or("", |a| a.name.as_str()), TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
+    Text::new(area.map_or("", |a| a.name.as_str()), Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
     egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for t in &v.techs {
@@ -378,7 +375,7 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
-        let room = width - EXIT_W - 3.0 * 12.0;
+        let room = width - ds::EXIT_W - 3.0 * 12.0;
         let h = 8.0 + 16.0 + 6.0 + 2.0 * TILE_H + 6.0 + 10.0;
         for (g, ns) in GROUPS.iter().enumerate() {
             let cols = ns.len().div_ceil(2);
@@ -405,8 +402,8 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
             }
         }
         // The exit: the top bar's starmap pick (`AktKepKell` 2).
-        ui.allocate_ui_with_layout(vec2(EXIT_W, h), egui::Layout::bottom_up(egui::Align::Min), |ui| {
-            if ui.add(Plate::new(&v.labels.exit).width(EXIT_W).height(56.0)).clicked() {
+        ui.allocate_ui_with_layout(vec2(ds::EXIT_W, h), egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            if ui.add(Plate::new(&v.labels.exit).width(ds::EXIT_W).height(56.0)).clicked() {
                 acts.push(Act::Bar(sm::Act::Screen(2)));
             }
         });
@@ -547,7 +544,7 @@ mod tests {
             let (l, a, i, n) = (r("rmh-list"), r("rmh-auto"), r("rmh-info"), r("rmh-areas"));
             assert!((l.width() - LIST_W).abs() < 1.0 && (i.width() - INFO_W).abs() < 1.0, "{w}: {l:?} {i:?}");
             assert!(l.bottom() < a.top() && a.bottom() < n.top() && i.bottom() < n.top(), "{w}");
-            assert!(i.right() <= w - EDGE + 0.5 && n.right() <= w - EDGE + 0.5, "{w}: {n:?}");
+            assert!(i.right() <= w - ds::EDGE + 0.5 && n.right() <= w - ds::EDGE + 0.5, "{w}: {n:?}");
         }
     }
 
@@ -568,7 +565,7 @@ mod tests {
         let l = ctx.memory(|m| m.area_rect(egui::Id::new("rmh-list"))).unwrap();
         let click = |p: egui::Pos2| vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
         // The first group's third tile (category 3): column 1, row 0.
-        let room = 1920.0 - 2.0 * EDGE - EXIT_W - 36.0;
+        let room = 1920.0 - 2.0 * ds::EDGE - ds::EXIT_W - 36.0;
         let widths = columns(&ctx, &v, GROUPS[0], room * 3.0 / 6.0 - 20.0);
         let at = pos2(n.left() + 10.0 + widths[0] + 6.0 + 20.0, n.top() + 8.0 + 16.0 + 6.0 + 20.0);
         let (_, acts) = run(&v, &mut st, click(at), 1920.0);

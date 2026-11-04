@@ -174,7 +174,6 @@ impl State {
     }
 }
 
-const EDGE: f32 = 24.0;
 const HEAD: f32 = 64.0;
 const FOOT: f32 = 64.0;
 const PAD: Vec2 = vec2(22.0, 20.0);
@@ -189,7 +188,6 @@ const TITLE: Font = Font { size: 26.0, line: 30.0, weight: Weight::SemiBold, tra
 const STATUS: Font = Font { size: 14.0, line: 18.0, weight: Weight::Medium, tracking: 0.1, upper: true, lcd: false };
 const CARD_NAME: Font = Font { size: 15.0, line: 20.0, weight: Weight::Medium, tracking: 0.1, upper: false, lcd: false };
 const DETAIL_NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
-const OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
 const EXIT: Font = Font { size: 18.0, line: 22.0, weight: Weight::Medium, tracking: 0.16, upper: false, lcd: false };
 
 
@@ -217,7 +215,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) {
     *st = State { map: [virt.x0 / ppp, virt.y0 / ppp, virt.k / ppp], sale_at: st.sale_at, tip: st.tip.take(), ..Default::default() };
     let top = crate::starmap_modern::bar_bottom(ctx) + 28.0;
     // Room down to the selection card (24 from the bottom, about 150 high).
-    let room = (screen.bottom() - top - EDGE - 200.0).max(360.0);
+    let room = (screen.bottom() - top - ds::EDGE - 200.0).max(360.0);
     let t = ds::open_t(ctx, egui::Id::new("fmh-open"), true);
     egui::Area::new(egui::Id::new("fmh")).order(egui::Order::Background).interactable(false).fixed_pos(screen.min).fade_in(false).show(ctx, |ui| {
         ui.set_opacity(t);
@@ -258,8 +256,8 @@ fn panel(ui: &egui::Ui, r: Rect, title: &str, owner: &str, colour: Color32, stat
     // The owner and the status centred on the title's capitals (the board's header row centres its items).
     let mid = |f: Font| base - (TITLE.cap() - f.cap()) / 2.0;
     if !owner.is_empty() {
-        let f = Text::new(owner, OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
-        ds::glowing_galley(p, pos2(x, mid(OWNER) - f.baseline()), &f.galley, colour);
+        let f = Text::new(owner, Font::OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
+        ds::glowing_galley(p, pos2(x, mid(Font::OWNER) - f.baseline()), &f.galley, colour);
         x += f.width + 18.0;
     }
     if !status.is_empty() {
@@ -369,7 +367,7 @@ fn scroll(ui: &egui::Ui, body: Rect, first: i32, total: i32, st: &mut State) {
 
 fn fleet(ui: &mut egui::Ui, f: &FleetInfo, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
     let k = ds::tokens();
-    let w = FLEET_W.min(screen.width() - 2.0 * EDGE);
+    let w = FLEET_W.min(screen.width() - 2.0 * ds::EDGE);
     let h = 700.0f32.min(room);
     let r = Rect::from_min_size(pos2(screen.center().x - w / 2.0, top), vec2(w, h)).translate(slide);
     panel(ui, r, &f.title, &f.owner, f.colour, &f.status);
@@ -486,7 +484,7 @@ fn sale(ui: &egui::Ui, s: &Sale, st: &mut State, screen: Rect) {
 
 fn transfer(ui: &mut egui::Ui, t: &Transfer, st: &mut State, screen: Rect, top: f32, room: f32, slide: Vec2) {
     let k = ds::tokens();
-    let sw = SIDE_W.min((screen.width() - 2.0 * EDGE - SIDES_GAP) / 2.0);
+    let sw = SIDE_W.min((screen.width() - 2.0 * ds::EDGE - SIDES_GAP) / 2.0);
     let h = 700.0f32.min(room);
     let x0 = screen.center().x - sw - SIDES_GAP / 2.0;
     for (s, side) in t.sides.iter().enumerate() {
@@ -568,13 +566,13 @@ fn tanks(ui: &mut egui::Ui, t: &TankInfo, st: &mut State, screen: Rect, top: f32
     // The board dims the starmap under the panels (`brightness(0.45)`); the HUD's own areas lie over it.
     ui.painter().rect_filled(screen, 0, Color32::from_black_alpha((140.0 * ui.opacity()) as u8));
     let tw = Text::new(&t.title, Font::TITLE_PLATE.upper(false)).layout(ui.ctx(), f32::INFINITY).width;
-    let pw = (tw + 2.0 * (ds::SPACE[4] + ds::SPACE[3])).clamp(320.0, (screen.width() - 2.0 * EDGE).min(900.0));
+    let pw = (tw + 2.0 * (ds::SPACE[4] + ds::SPACE[3])).clamp(320.0, (screen.width() - 2.0 * ds::EDGE).min(900.0));
     let pr = Rect::from_min_size(pos2(screen.center().x - pw / 2.0, plate_top), vec2(pw, 60.0)).translate(slide);
     ds::title_plate(&mut ui.new_child(egui::UiBuilder::new().max_rect(pr)), &t.title, pw);
     let y0 = pr.bottom() + 42.0;
     let h = (screen.bottom() - y0 - 230.0).clamp(300.0, 680.0);
     let total = TANKS_LIST_W + TANKS_GAP + TANKS_DATA_W;
-    let s = ((screen.width() - 2.0 * EDGE) / total).min(1.0);
+    let s = ((screen.width() - 2.0 * ds::EDGE) / total).min(1.0);
     let x0 = screen.center().x - total * s / 2.0;
     let list = Rect::from_min_size(pos2(x0, y0), vec2((TANKS_LIST_W * s).round(), h));
     let data = Rect::from_min_size(pos2(list.right() + (TANKS_GAP * s).round(), y0), vec2((TANKS_DATA_W * s).round(), h));

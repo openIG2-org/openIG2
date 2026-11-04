@@ -115,11 +115,9 @@ pub struct State {
     count: Option<(usize, bool)>,
 }
 
-const EDGE: f32 = 24.0;
 const LIST_W: f32 = 400.0;
 const DATA_W: f32 = 780.0;
 const PARTS_W: f32 = 540.0;
-const TITLE: Font = Font::HEADING.tracking(0.16).upper(true);
 /// A pod row's class (600 12 / 0.14 em upper case) and value (500 17 / 0.06 em).
 const CLASS: Font = Font::LABEL.sized(12.0);
 const VALUE: Font = Font::BODY.weight(Weight::Medium).tracking(0.06);
@@ -130,31 +128,31 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row: the properties, the console buttons, the exit.
-    let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
+    let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| properties(ui, v, &mut acts));
     });
     let room = props.response.rect.top() - 16.0 - top;
-    egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(EDGE, top)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, room - 32.0 - 34.0, &mut acts));
     });
     // The data panel between the list and the parts, as wide as fits (the board's 780).
     // Its right edge 16 from the parts (the board: 560..1340); the console centred under it.
-    let mid = (screen.width() - 2.0 * EDGE - LIST_W - PARTS_W - 2.0 * 16.0).clamp(360.0, DATA_W);
-    let right = screen.right() - EDGE - PARTS_W - 16.0;
+    let mid = (screen.width() - 2.0 * ds::EDGE - LIST_W - PARTS_W - 2.0 * 16.0).clamp(360.0, DATA_W);
+    let right = screen.right() - ds::EDGE - PARTS_W - 16.0;
     // The console under the data panel, kept between the properties and the exit (4:3).
     let cw = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-console"))).map_or(560.0, |r| r.width());
-    let centre = (right - mid / 2.0).max(EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
+    let centre = (right - mid / 2.0).max(ds::EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - ds::EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
     egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::RIGHT_TOP, vec2(right - screen.right(), top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, mid - 32.0));
     });
-    egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-EDGE, top)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| parts(ui, v, st, &mut acts));
     });
     // Too narrow for it between them (a large UI scale): above the exit instead.
-    let fits = cw <= screen.width() - 2.0 * EDGE - LIST_W - 320.0 - 32.0;
-    let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE - 56.0 - 12.0)) };
+    let fits = cw <= screen.width() - 2.0 * ds::EDGE - LIST_W - 320.0 - 32.0;
+    let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -ds::EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE - 56.0 - 12.0)) };
     let console = egui::Area::new(egui::Id::new("dmh-console")).anchor(pivot, at).fade_in(false).show(ctx, |ui| console(ui, v, &mut acts));
-    egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-EDGE, -EDGE)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
         if ds::pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
@@ -183,7 +181,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     let w = LIST_W - 32.0;
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 8.0;
-    Text::new(&v.labels.designs, TITLE).show(ui, vec2(w, 26.0));
+    Text::new(&v.labels.designs, Font::PANEL_TITLE).show(ui, vec2(w, 26.0));
     egui::ScrollArea::vertical().max_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let k = ds::tokens();
@@ -244,10 +242,10 @@ fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 10.0;
     let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
-    let base = ds::fit::baseline(r, TITLE);
+    let base = ds::fit::baseline(r, Font::PANEL_TITLE);
     let count = format!("{} {}", v.pods.len(), v.labels.pods);
     let cw = Text::new(&count, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - 120.0)).width;
-    Text::new(&v.labels.parts, TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
+    Text::new(&v.labels.parts, Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
     for p in &v.pods {
         let open = v.popup.as_ref().is_some_and(|x| x.button == 0x54) && v.pod == p.k;
         let (r, resp) = ui.allocate_exact_size(vec2(w, 52.0), Sense::click());

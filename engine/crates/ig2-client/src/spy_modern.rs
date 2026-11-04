@@ -106,10 +106,8 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const PANEL_TOP: f32 = 520.0;
 const PANEL_W: f32 = 600.0;
-const EXIT_W: f32 = 220.0;
 
 /// A point of the original's 640 × 480 screen in this page's points.
 fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
@@ -163,14 +161,14 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
     }
     let top = PANEL_TOP * g;
-    let left = Rect::from_min_size(pos2(EDGE, top), vec2(PANEL_W.min(w * 0.32), h - 40.0 * g - top));
+    let left = Rect::from_min_size(pos2(ds::BOARD_EDGE, top), vec2(PANEL_W.min(w * 0.32), h - 40.0 * g - top));
     ds::place(ctx, "ksh-agent", left, |ui| agent_panel(ui, v, left.size(), &mut acts));
     let right_w = PANEL_W.min(w * 0.32);
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 52.0), vec2(EXIT_W, 52.0));
-    let right = Rect::from_min_max(pos2(w - EDGE - right_w, top), pos2(w - EDGE, exit.top() - 28.0 * g));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 52.0), vec2(ds::EXIT_W, 52.0));
+    let right = Rect::from_min_max(pos2(w - ds::BOARD_EDGE - right_w, top), pos2(w - ds::BOARD_EDGE, exit.top() - 28.0 * g));
     ds::place(ctx, "ksh-plan", right, |ui| plan_panel(ui, v, st, right.size(), &mut acts));
     ds::place(ctx, "ksh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(52.0)).clicked() {
+        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(52.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });

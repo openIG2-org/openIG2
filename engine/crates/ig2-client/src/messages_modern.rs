@@ -87,7 +87,6 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const TOP: f32 = 72.0;
 const INBOX_W: f32 = 540.0;
 const HEAD: egui::Vec2 = egui::Vec2::new(720.0, 405.0);
@@ -105,23 +104,23 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ui.allocate_rect(ui.max_rect(), Sense::click_and_drag());
     });
     let bottom = h - 40.0 * g;
-    let inbox = Rect::from_min_max(pos2(EDGE, top), pos2(EDGE + INBOX_W.min(w * 0.3), bottom));
+    let inbox = Rect::from_min_max(pos2(ds::BOARD_EDGE, top), pos2(ds::BOARD_EDGE + INBOX_W.min(w * 0.3), bottom));
     ds::place(ctx, "mmh-inbox", inbox, |ui| inbox_panel(ui, v, inbox.size(), &mut acts));
     // Right of the inbox: the head and the message's card side by side, the text under them, the plates at the foot.
     let x0 = inbox.right() + GAP;
-    let room = w - EDGE - x0;
+    let room = w - ds::BOARD_EDGE - x0;
     let head_w = HEAD.x.min(room * 0.6);
     let head = Rect::from_min_size(pos2(x0, top), vec2(head_w, (head_w * 9.0 / 16.0).min(HEAD.y)));
     ds::place(ctx, "mmh-head", head, |ui| {
         well(ui, head);
         st.well = Some(Rect::from_min_max(head.min * ctx.pixels_per_point(), head.max * ctx.pixels_per_point()));
     });
-    let card = Rect::from_min_max(pos2(head.right() + GAP, top), pos2(w - EDGE, head.bottom()));
+    let card = Rect::from_min_max(pos2(head.right() + GAP, top), pos2(w - ds::BOARD_EDGE, head.bottom()));
     ds::place(ctx, "mmh-card", card, |ui| card_panel(ui, v, card.size(), &mut acts));
     let plates = 48.0;
     // The board's 430-high text panel, shorter where the window is.
     let text_top = head.bottom() + 28.0 * g;
-    let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - EDGE, (text_top + 430.0).min(bottom - plates - 24.0 * g)));
+    let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - ds::BOARD_EDGE, (text_top + 430.0).min(bottom - plates - 24.0 * g)));
     ds::place(ctx, "mmh-text", text, |ui| text_panel(ui, v, text.size(), &mut acts));
     let full = Rect::from_min_size(pos2(x0, bottom - plates), vec2(260.0, plates));
     ds::place(ctx, "mmh-full", full, |ui| {
@@ -130,7 +129,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             acts.push(Act::Hurry);
         }
     });
-    let exit = Rect::from_min_size(pos2(w - EDGE - 220.0, bottom - plates), vec2(220.0, plates));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - 220.0, bottom - plates), vec2(220.0, plates));
     ds::place(ctx, "mmh-exit", exit, |ui| {
         if ds::either(&ui.add_enabled(v.leave, ds::Plate::new(&v.labels.exit).width(220.0).height(plates))) {
             acts.push(Act::Leave);

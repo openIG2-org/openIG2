@@ -108,7 +108,6 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const CARD_W: f32 = 360.0;
 const CARD_H: f32 = 112.0;
 const INFO_W: f32 = 440.0;
@@ -117,7 +116,6 @@ const ROOT_W: f32 = 330.0;
 const SUB_W: f32 = 240.0;
 const ROW_H: f32 = 38.0;
 const TEXT: Rect = Rect { min: egui::Pos2::new(640.0, 790.0), max: egui::Pos2::new(1440.0, 1020.0) };
-const EXIT_W: f32 = 220.0;
 
 /// The menus whose rows open sub-menus (`run_cascade`); the others are one-level answers (`run_plain`).
 const CASCADES: [usize; 3] = [menu::MAIN, menu::EXCHANGE, menu::BLOCKED];
@@ -142,15 +140,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
         st.root = root;
     }
-    let contacts = Rect::from_min_max(pos2(EDGE, top + 40.0), pos2(EDGE + CARD_W, MENUS_TOP * g - 16.0));
+    let contacts = Rect::from_min_max(pos2(ds::BOARD_EDGE, top + 40.0), pos2(ds::BOARD_EDGE + CARD_W, MENUS_TOP * g - 16.0));
     ds::place(ctx, "dmh-contacts", contacts, |ui| contacts_panel(ui, v, st, contacts.size(), &mut acts));
     if let Some(info) = &v.info {
-        let r = Rect::from_min_size(pos2(w - EDGE - INFO_W.min(w * 0.25), top + 28.0), vec2(INFO_W.min(w * 0.25), 156.0));
+        let r = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - INFO_W.min(w * 0.25), top + 28.0), vec2(INFO_W.min(w * 0.25), 156.0));
         ds::place(ctx, "dmh-info", r, |ui| info_panel(ui, v, info, r.size()));
     }
     // The cascade: the root, then each opened sub-menu beside the one before, its top level with the opening row.
     if let Some(root) = root {
-        let mut x = EDGE;
+        let mut x = ds::BOARD_EDGE;
         let mut y = MENUS_TOP * g;
         let mut id = root;
         for level in 0..3 {
@@ -185,9 +183,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let text = Rect::from_min_max(pos2(TEXT.left().max(w / 2.0 - 320.0), TEXT.top() * g), pos2(TEXT.right().min(w / 2.0 + 480.0), h - 60.0 * g));
     let plain: Vec<usize> = v.shown.iter().copied().filter(|m| !CASCADES.contains(m)).collect();
     ds::place(ctx, "dmh-text", text, |ui| text_panel(ui, v, st, &plain, text.size(), &mut acts));
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 44.0), vec2(ds::EXIT_W, 44.0));
     ds::place(ctx, "dmh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(44.0)).clicked() {
+        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(44.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });

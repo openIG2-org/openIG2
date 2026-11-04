@@ -165,15 +165,11 @@ pub fn replaced(id: u32) -> bool {
     matches!(id, 0x1f | 0x21..=0x2a | 0x37 | 0x42 | 0x46..=0x4b)
 }
 
-const EDGE: f32 = 24.0;
 const RAIL_W: f32 = 96.0;
 const CARD_W: f32 = 380.0;
 const NAV_W: f32 = 300.0;
 const RAIL: Font = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.1, upper: true, lcd: false };
-const NAME: Font = Font { size: 22.0, line: 26.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: false };
-const LINE: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.12, upper: true, lcd: false };
 const BIG_TITLE: Font = Font { size: 20.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
-const OWNER: Font = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
 
 fn pointer(ui: &egui::Ui) -> Option<Pos2> {
     ui.ctx().input(|i| i.pointer.hover_pos())
@@ -290,7 +286,7 @@ fn card(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) {
     let c = &v.card;
     let rows = if c.overview.is_empty() { c.lines.len() as f32 * 22.0 + if c.hull.is_some() { 26.0 } else { 0.0 } } else { c.overview.len() as f32 * 22.0 + 36.0 };
     let h = (26.0 + 22.0 + rows + 28.0).max(124.0);
-    let r = Rect::from_min_size(pos2(screen.left() + EDGE, screen.bottom() - EDGE - h), vec2(CARD_W, h));
+    let r = Rect::from_min_size(pos2(screen.left() + ds::EDGE, screen.bottom() - ds::EDGE - h), vec2(CARD_W, h));
     let p = ui.painter().clone();
     let hot = ds::hover_t(ui.ctx(), egui::Id::new("bmh-card"), pointer(ui).is_some_and(|q| r.contains(q)));
     ds::paint_panel(&p, r, ds::PanelKind::Deep, 0.88);
@@ -304,23 +300,23 @@ fn card(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) {
     let x = side.right() + 16.0;
     let w = inner.right() - x;
     let mut y = inner.top();
-    Text::new(&c.title, NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 26.0)));
+    Text::new(&c.title, Font::CARD_NAME).color(k.ink).shrink(15.0).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 26.0)));
     y += 28.0;
     if !c.sub.is_empty() {
-        Text::new(&c.sub, LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(&c.sub, Font::CARD_LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     if !c.owner.is_empty() {
-        Text::new(&c.owner, LINE).color(c.colour).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(&c.owner, Font::CARD_LINE).color(c.colour).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     for l in &c.lines {
-        Text::new(l, LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
+        Text::new(l, Font::CARD_LINE).color(k.info).paint(ui, Rect::from_min_size(pos2(x, y), vec2(w, 20.0)));
         y += 22.0;
     }
     if let Some((label, f)) = &c.hull {
         let row = Rect::from_min_size(pos2(x, y + 4.0), vec2(w, 20.0));
-        let lw = Text::new(label, LINE).color(k.info).paint(ui, row.with_max_x(row.left() + w * 0.45)).width;
+        let lw = Text::new(label, Font::CARD_LINE).color(k.info).paint(ui, row.with_max_x(row.left() + w * 0.45)).width;
         let bar = Rect::from_min_size(pos2(row.left() + lw + 10.0, row.center().y - 3.0), vec2((w - lw - 10.0).max(20.0), 6.0));
         hull_bar(&p, bar, *f);
     }
@@ -375,7 +371,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
     let radar_h = (280.0 * 67.0 / 94.0f32).round();
     let key = vec2(34.0, 28.0);
     let h = 10.0 + radar_h + 8.0 + key.y + 4.0 + 10.0;
-    let r = Rect::from_min_size(pos2(screen.right() - EDGE - NAV_W, screen.bottom() - EDGE - h), vec2(NAV_W, h));
+    let r = Rect::from_min_size(pos2(screen.right() - ds::EDGE - NAV_W, screen.bottom() - ds::EDGE - h), vec2(NAV_W, h));
     let p = ui.painter().clone();
     crate::starmap_modern::metal_plate(&p, r, 18);
     st.panels.push(r);
@@ -443,7 +439,7 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip:
     let base = ds::fit::baseline(inner, BIG_TITLE);
     let tw = Text::new(&b.title, BIG_TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.55)).width;
     if !b.owner.is_empty() {
-        let g = Text::new(&b.owner, OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - 16.0);
+        let g = Text::new(&b.owner, Font::OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - 16.0);
         ds::glowing_galley(&p, pos2(inner.left() + tw + 16.0, base - g.baseline()), &g.galley, b.colour);
     }
     // The selection's model on the void (the original's info model), the count in an LCD window.

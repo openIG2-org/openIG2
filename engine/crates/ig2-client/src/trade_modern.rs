@@ -94,7 +94,6 @@ pub struct State {
 }
 
 /// The board's measures (1920 × 1080).
-const EDGE: f32 = 40.0;
 const LIST: egui::Vec2 = egui::Vec2::new(560.0, 560.0);
 const WELL: egui::Vec2 = egui::Vec2::new(560.0, 310.0);
 /// The well's centre on the original's 640 × 480 screen (the board's (960, 247) at 1080 lines).
@@ -114,7 +113,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let list_w = LIST.x.min(w * 0.29);
     let list_h = LIST.y * g;
     for k in 0..2 {
-        let x = if k == 0 { EDGE } else { w - EDGE - list_w };
+        let x = if k == 0 { ds::BOARD_EDGE } else { w - ds::BOARD_EDGE - list_w };
         let r = Rect::from_min_size(pos2(x, top), vec2(list_w, list_h));
         ds::place(ctx, format!("tmh-list{k}"), r, |ui| list_panel(ui, v, k, r.size(), &mut acts));
     }
@@ -137,9 +136,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let r = Rect::from_min_size(pos2(well.center().x - 300.0, well.bottom() + 28.0 * g), vec2(600.0, 78.0 + if v.weapons.is_empty() { 0.0 } else { 26.0 }));
         ds::place(ctx, "tmh-card", r, |ui| card_panel(ui, v, r.size()));
     }
-    let order = Rect::from_min_size(pos2(EDGE, 664.0 * g), vec2(w - 2.0 * EDGE, 150.0 * g.max(0.8)));
+    let order = Rect::from_min_size(pos2(ds::BOARD_EDGE, 664.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 150.0 * g.max(0.8)));
     ds::place(ctx, "tmh-order", order, |ui| order_panel(ui, v, order.size(), &mut acts));
-    let line = Rect::from_min_size(pos2(EDGE, order.bottom() + 12.0 * g), vec2(w - 2.0 * EDGE, 34.0));
+    let line = Rect::from_min_size(pos2(ds::BOARD_EDGE, order.bottom() + 12.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 34.0));
     if !v.line.is_empty() {
         ds::place(ctx, "tmh-line", line, |ui| {
             let k = ds::tokens();
@@ -148,8 +147,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             Text::new(&v.line, Font::BODY.sized(17.0)).shrink(12.0).color(k.info).paint(ui, line.shrink2(vec2(16.0, 0.0)));
         });
     }
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
-    let ships = Rect::from_min_max(pos2(EDGE, line.bottom() + 20.0 * g), pos2(exit.left() - 40.0, h - 40.0 * g));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
+    let ships = Rect::from_min_max(pos2(ds::BOARD_EDGE, line.bottom() + 20.0 * g), pos2(exit.left() - 40.0, h - 40.0 * g));
     ds::place(ctx, "tmh-ships", ships, |ui| deliveries_panel(ui, v, ships.size()));
     ds::place(ctx, "tmh-exit", exit, |ui| {
         if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(44.0)).clicked() {

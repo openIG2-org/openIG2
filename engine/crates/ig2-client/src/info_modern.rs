@@ -284,16 +284,14 @@ fn grab(ui: &Ui, resp: &egui::Response, held: &mut bool) -> Option<Press> {
     }
 }
 
-/// The board's measures (1920 × 1080, one pixel one point): the side margin, the race rings, the money panel, the
-/// selected empire's panel, the list's and the charts' tops, the exit plate.
-const EDGE: f32 = 40.0;
+/// The board's measures (1920 × 1080, one pixel one point): the race rings, the money panel, the selected empire's
+/// panel, the list's and the charts' tops.
 const RING: f32 = 112.0;
 const RING_GAP: f32 = 22.0;
 const MONEY_W: f32 = 400.0;
 const EMPIRE_W: f32 = 960.0;
 const ROW_H: f32 = 92.0;
 const GLYPH: egui::Vec2 = egui::Vec2::new(76.0, 40.0);
-const EXIT_W: f32 = 220.0;
 /// The part of a leader's picture the rings show: the face (the 128-point picture has a wide margin).
 const HEAD_UV: Rect = Rect { min: pos2(0.14, 0.08), max: pos2(0.86, 0.80) };
 /// The list's columns after the picture (92): the name, then the three cells.
@@ -312,7 +310,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let r = ui.max_rect();
         ui.allocate_rect(r, Sense::click_and_drag());
     });
-    let ring = RING.min(((w - 2.0 * EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(56.0);
+    let ring = RING.min(((w - 2.0 * ds::BOARD_EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(56.0);
     rings(ctx, v, st, top, w, ring, &mut acts);
     let money = ds::place(ctx, "imh-money", Rect::from_min_size(pos2((w - MONEY_W) / 2.0, top), vec2(MONEY_W, 186.0)), |ui| {
         if let Some(m) = &v.money {
@@ -320,13 +318,13 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
     });
     let money_bottom = if v.money.is_some() { money.response.rect.bottom() } else { top + ring + 24.0 };
-    let ew = EMPIRE_W.min(w - 2.0 * EDGE);
+    let ew = EMPIRE_W.min(w - 2.0 * ds::BOARD_EDGE);
     let ey = (top + 228.0 * g).max(money_bottom + 16.0);
     let emp = ds::place(ctx, "imh-empire", Rect::from_min_size(pos2((w - ew) / 2.0, ey), vec2(ew, 0.0)), |ui| empire_panel(ui, v, st, ew, &mut acts));
     let low = (top + 406.0 * g).max(emp.response.rect.bottom() + 20.0 * g);
     let bottom = h - 80.0 * g;
-    let half = (w - 3.0 * EDGE) / 2.0;
-    let list = Rect::from_min_max(pos2(EDGE, low), pos2(EDGE + half, bottom.max(low + 240.0)));
+    let half = (w - 3.0 * ds::BOARD_EDGE) / 2.0;
+    let list = Rect::from_min_max(pos2(ds::BOARD_EDGE, low), pos2(ds::BOARD_EDGE + half, bottom.max(low + 240.0)));
     let t = ctx.animate_bool_with_time(egui::Id::new("imh-detail"), v.detail.is_some(), ds::anim(ds::OPEN_TIME));
     if t < 1.0 {
         ds::place(ctx, "imh-list", list.translate(vec2(-12.0 * t, 0.0)), |ui| {
@@ -340,11 +338,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             detail_panel(ui, v, d, st, list.size(), &mut acts)
         });
     }
-    let charts = Rect::from_min_size(pos2(w - EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
+    let charts = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
     ds::place(ctx, "imh-charts", charts, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
-    let exit = Rect::from_min_size(pos2(w - EDGE - EXIT_W, h - 40.0 * g - 48.0), vec2(EXIT_W, 48.0));
+    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 48.0), vec2(ds::EXIT_W, 48.0));
     ds::place(ctx, "imh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(48.0)).clicked() {
+        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(48.0)).clicked() {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
     });
@@ -357,7 +355,7 @@ fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, ac
     let k = ds::tokens();
     let side = 4.0 * d + 3.0 * RING_GAP;
     for e in 1..=8usize {
-        let x = if e <= 4 { EDGE + (e - 1) as f32 * (d + RING_GAP) } else { w - EDGE - side + (e - 5) as f32 * (d + RING_GAP) };
+        let x = if e <= 4 { ds::BOARD_EDGE + (e - 1) as f32 * (d + RING_GAP) } else { w - ds::BOARD_EDGE - side + (e - 5) as f32 * (d + RING_GAP) };
         let slot = Rect::from_min_size(pos2(x, top), vec2(d, d + 24.0));
         let row = v.empires.iter().find(|r| r.e == e);
         ds::place(ctx, ("imh-ring", e), slot, |ui| {

@@ -832,7 +832,7 @@ impl Tone {
 /// An empire's or a state's label (`.ig-star`: 600 15 / 0.16 em, upper case, its colour glowing), cut to
 /// `max_width`; `pill` on a faint tinted plate.
 pub fn badge(ui: &mut Ui, text: &str, tone: Tone, pill: bool, max_width: f32) -> Response {
-    let f = Font { size: 13.0, line: 16.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
+    let f = Font::OWNER;
     let c = tone.color();
     let t = Text::new(text, f).color(c);
     let fit = t.layout(ui.ctx(), max_width - if pill { 16.0 } else { 0.0 });
