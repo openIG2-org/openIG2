@@ -27,7 +27,7 @@ original has nothing of the kind; it changes nothing in the game itself.
    game, the match history, replays, mods, settings). In a room: its name, the state (waiting for players, ready),
    this member's race and the party size (humans of the seats humans may take). In a game: the mode (campaign,
    scenario, single player, tutorial, multiplayer), the race and difficulty, the screen (starmap, colony, ground war,
-   space battle, research, design, diplomacy, spy, trade, info, messages, settings, help, a story video), paused or
+   space battle, research, design, diplomacy, spy, trade, info, messages, settings, help; a video shows what was shown before it), paused or
    watching as a defeated player, the game's date, and the local empire's planets, population, ships, credits, score,
    techs and battles won (`ig2_sim::stats::sample`, the synced statistics). A replay says so. The elapsed time
    restarts when the player moves between the menu, a room and a game. The texts are the remake's (English, Hungarian
@@ -45,7 +45,7 @@ original has nothing of the kind; it changes nothing in the game itself.
 5. **The pictures are ours.** The activity names art asset keys of the application on Discord's side: `logo`,
    `race_1` to `race_8` (a mod's race shows the logo) and the small icons `menu`, `lobby`, `starmap`, `colony`,
    `ground_war`, `space_battle`, `research`, `design`, `diplomacy`, `spy`, `trade`, `info`, `messages`, `options`,
-   `replay`, `paused`, `video`. They are drawn for the project, uploaded in the Discord Developer Portal, and never
+   `replay`, `paused`. They are drawn for the project, uploaded in the Discord Developer Portal, and never
    taken from the game's install. Without an activity Join the activity has two link buttons (the releases, the
    website).
 

@@ -30,7 +30,7 @@ pub const KEY: &str = "DiscordPresence";
 #[cfg_attr(not(test), allow(dead_code))]
 pub const ASSETS: &[&str] = &[
     "logo", "race_1", "race_2", "race_3", "race_4", "race_5", "race_6", "race_7", "race_8", "menu", "lobby", "starmap", "colony", "ground_war",
-    "space_battle", "research", "design", "diplomacy", "spy", "trade", "info", "messages", "options", "replay", "paused", "video",
+    "space_battle", "research", "design", "diplomacy", "spy", "trade", "info", "messages", "options", "replay", "paused",
 ];
 
 /// The project's pages, the buttons of an activity without a Join.
@@ -70,7 +70,6 @@ pub enum Page {
     Replays,
     Mods,
     Settings,
-    Video,
 }
 
 /// A multiplayer room before its start.
@@ -119,7 +118,6 @@ pub enum Screen {
     Messages,
     Options,
     Help,
-    Video,
 }
 
 /// The local empire's numbers (`ig2_sim::stats::Row`).
@@ -276,7 +274,6 @@ fn screen_key(s: Screen) -> &'static str {
         Screen::Info => "info",
         Screen::Messages => "messages",
         Screen::Options | Screen::Help => "options",
-        Screen::Video => "video",
     }
 }
 
@@ -295,7 +292,6 @@ fn screen_text(s: Screen) -> &'static str {
         Screen::Messages => "Reading messages",
         Screen::Options => "In the settings",
         Screen::Help => "Reading the help",
-        Screen::Video => "Watching a story video",
     }
 }
 
@@ -309,7 +305,6 @@ fn page_text(p: Page) -> &'static str {
         Page::Replays => "Browsing replays",
         Page::Mods => "Managing mods",
         Page::Settings => "In the settings",
-        Page::Video => "Watching a video",
     }
 }
 
@@ -664,7 +659,7 @@ mod tests {
 
     #[test]
     fn every_key_is_an_asset() {
-        for k in (0..=11).map(race_key).chain([Screen::Starmap, Screen::Colony, Screen::GroundWar, Screen::SpaceBattle, Screen::Research, Screen::Design, Screen::Diplomacy, Screen::Spy, Screen::Trade, Screen::Info, Screen::Messages, Screen::Options, Screen::Help, Screen::Video].map(screen_key)).chain(["menu", "lobby", "replay", "paused"]) {
+        for k in (0..=11).map(race_key).chain([Screen::Starmap, Screen::Colony, Screen::GroundWar, Screen::SpaceBattle, Screen::Research, Screen::Design, Screen::Diplomacy, Screen::Spy, Screen::Trade, Screen::Info, Screen::Messages, Screen::Options, Screen::Help].map(screen_key)).chain(["menu", "lobby", "replay", "paused"]) {
             assert!(ASSETS.contains(&k), "{k}");
         }
     }

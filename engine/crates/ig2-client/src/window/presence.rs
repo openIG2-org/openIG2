@@ -85,7 +85,6 @@ impl App {
     fn discord_doing(&self) -> Doing {
         if let Some(f) = &self.front {
             let page = match () {
-                _ if self.video.is_some() => Page::Video,
                 _ if self.options.is_some() => Page::Settings,
                 _ if f.mp.is_some() => return f.mp.as_ref().and_then(|mp| mp.discord_room()).map_or(Doing::Menu(Page::Multiplayer), Doing::Room),
                 _ if f.stats.is_some() => Page::History,
@@ -110,7 +109,6 @@ impl App {
             _ => Mode::Single,
         };
         let screen = match self.akt_kep_now() {
-            _ if self.video.is_some() => Screen::Video,
             1 => Screen::Help,
             3 if self.volt_harc => Screen::GroundWar,
             3 => Screen::Colony,
