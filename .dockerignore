@@ -5,3 +5,9 @@
 !engine/crates
 !engine/vendor
 **/target
+
+# The browser image (deploy/web) needs the version file and the page too.
+!VERSION
+!web/index.html
+!web/main.js
+!deploy/web

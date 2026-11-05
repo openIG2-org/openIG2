@@ -1,8 +1,9 @@
 """Serves the browser build (web/) on 127.0.0.1 for testing: `python -I tools/serve_web.py [--port 8047] [--install DIR]`.
 
-With `--install`, the player's own install is also served, read-only and on this machine only, under `/dev-install/`
-(its file list at `/dev-install/index.json`); `http://127.0.0.1:8047/?dev-install` then copies it into the page's
-storage without the folder dialog (ADR 0047 part 3). Never bind this to another address.
+With `--install`, the player's own install is also served, read-only and on this machine only, under `/game/` (its
+file list at `/game/index.json`, as the web image serves it: ADR 0081); the page then offers to download it, and
+`http://127.0.0.1:8047/?dev-install` copies it into the page's storage without asking (ADR 0047 part 3). Never bind
+this to another address.
 """
 import argparse
 import functools
@@ -13,7 +14,7 @@ import pathlib
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-PREFIX = "/dev-install/"
+PREFIX = "/game/"
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -26,8 +27,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         if self.install and path == PREFIX + "index.json":
-            names = [p.relative_to(self.install).as_posix() for p in sorted(self.install.rglob("*")) if p.is_file()]
-            body = json.dumps(names).encode()
+            files = [[p.relative_to(self.install).as_posix(), p.stat().st_size] for p in sorted(self.install.rglob("*")) if p.is_file()]
+            body = json.dumps(files).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))

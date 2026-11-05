@@ -32,3 +32,4 @@ target/
 
 # The browser build (tools/build_web.py).
 /web/pkg/
+/deploy/web/no-game-files/

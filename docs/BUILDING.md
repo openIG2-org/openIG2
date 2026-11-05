@@ -60,8 +60,18 @@ storage (`user/`). Not there yet: videos, multiplayer, the clipboard (ADR 0047's
 only; the page holds no game data, but publishing it is a release decision.
 
 For testing without the folder dialog, `python -I tools/serve_web.py --install <your install>` also serves the
-install on 127.0.0.1 and `http://127.0.0.1:8047/?dev-install` copies it from there; `&webgl` draws through WebGL2
-even where WebGPU works. The game's error lines go to the browser console.
+install on 127.0.0.1: the page offers to download it, and `http://127.0.0.1:8047/?dev-install` copies it without asking;
+`&webgl` draws through WebGL2 even where WebGPU works. The game's error lines go to the browser console.
+
+### Web server (Docker)
+`deploy/web/compose.yaml` builds the page and the wasm module into an nginx image; a mounted folder of game files is
+offered to visitors, who download it after they agree (ADR 0081):
+```bash
+IG2_GAME_DIR=/path/to/Imperium_Galactica_II docker compose -f deploy/web/compose.yaml up -d --build
+```
+The page listens on port `IG2_WEB_PORT` (8080). Browsers need HTTPS for it outside localhost: put it behind your
+reverse proxy, or add `--profile https` with `IG2_DOMAIN=play.example.org` for Caddy with an automatic certificate.
+Without `IG2_GAME_DIR` each player picks their own install, as above.
 
 ## Tests
 ```bash

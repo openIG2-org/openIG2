@@ -16,7 +16,8 @@ cpal plays through WebAudio. What does not carry over: `std::fs`, `std::thread`,
 that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
 
 ## Decision
-1. **Game data stays the player's.** The page never uploads or hosts a game file. The player picks the install folder
+1. **Game data stays the player's.** The page never uploads or hosts a game file (a server may offer its own copy
+   with the player's agreement: ADR 0081). The player picks the install folder
    once; the page copies the install's files into OPFS and opens them from there on later
    visits. The install check (`ig2-rules::install::check`, today a folder walk) moves onto `Files` in part 2.
 2. **Files behind one trait.** `ig2_formats::vfs::Files` (scan a root, read a file, open a seekable stream) is the

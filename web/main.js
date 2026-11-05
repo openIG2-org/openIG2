@@ -1,5 +1,6 @@
 // The browser build's loader (ADR 0047): the player's own install, picked here, copied into the Origin Private File
-// System and handed to the client file by file. No game file leaves the machine.
+// System and handed to the client file by file. No game file leaves the machine. A server that hosts the game's files
+// itself (ADR 0081, `game/index.json`) is offered instead, downloaded into the same copy once the player agrees.
 import init, { add_file, add_user_file, start } from "./pkg/ig2_client.js";
 
 const $ = (id) => document.getElementById(id);
@@ -118,13 +119,18 @@ async function copy(files) {
   await root.removeEntry(STORE, { recursive: true }).catch(() => {});
   const store = await storeDir(true);
   let done = 0;
-  for (const [path, file] of files) {
+  let next = 0;
+  // A few files at a time: one by one, a distant server's round trips would take most of the download.
+  const worker = async () => {
+    while (next < files.length) await copyOne(...files[next++]);
+  };
+  const copyOne = async (path, file) => {
     const parts = path.split("/");
     let dir = store;
     for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
     const w = await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable();
     if (typeof file === "string") {
-      // A URL of the test server (?dev-install): streamed in; pipeTo closes the file.
+      // A URL of this server's game files (or the test server's): streamed in; pipeTo closes the file.
       const r = await fetch(file);
       if (!r.ok) throw new Error(`${file}: ${r.status}`);
       await r.body.pipeTo(w);
@@ -133,7 +139,8 @@ async function copy(files) {
       await w.close();
     }
     if (++done % 50 === 0) status(`Copying the install into this browser: ${done} / ${files.length} files`);
-  }
+  };
+  await Promise.all(Array.from({ length: 6 }, worker));
   await (await (await store.getFileHandle(DONE, { create: true })).createWritable()).close();
 }
 
@@ -161,24 +168,45 @@ async function play() {
   }
 }
 
-// Testing only: `tools/serve_web.py --install` serves the install on this machine; `?dev-install` copies it from there
-// instead of asking for the folder. Pages not on localhost ignore it.
 const isLocal = () => ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
 
-async function devInstall() {
-  if (!isLocal() || !new URLSearchParams(location.search).has("dev-install")) return false;
-  if (!(await stored())) {
-    const names = await (await fetch("/dev-install/index.json")).json();
-    await copy(names.map((n) => [n, "/dev-install/" + n.split("/").map(encodeURIComponent).join("/")]));
+// The game files this server hosts (ADR 0081): [path, size] pairs, or null where it hosts none.
+async function hostedFiles() {
+  try {
+    const r = await fetch("game/index.json", { cache: "no-cache" });
+    const files = r.ok ? await r.json() : null;
+    return Array.isArray(files) && looksLikeInstall(files) ? files : null;
+  } catch {
+    return null;
   }
+}
+
+const gameUrl = (path) => "game/" + path.split("/").map(encodeURIComponent).join("/");
+
+async function download(files) {
+  await copy(files.map(([path]) => [path, gameUrl(path)]));
   await play();
+}
+
+// Testing only: `tools/serve_web.py --install` serves the install on this machine; `?dev-install` downloads it without
+// asking. Pages not on localhost ignore it.
+async function devInstall(hosted) {
+  if (!isLocal() || !hosted || !new URLSearchParams(location.search).has("dev-install")) return false;
+  if (await stored()) await play();
+  else await download(hosted);
   return true;
 }
 
 async function main() {
   await init();
   const have = await stored();
+  const hosted = await hostedFiles();
   $("play").hidden = $("forget").hidden = !have;
+  $("offer").hidden = !hosted || have;
+  if (hosted) {
+    const mb = Math.ceil(hosted.reduce((n, [, size]) => n + size, 0) / 1e6);
+    $("offer-size").textContent = `${hosted.length} files, ${mb} MB`;
+  }
   status(have ? "The install is stored in this browser." : "");
   $("pick").onclick = async () => {
     try {
@@ -194,12 +222,22 @@ async function main() {
     }
   };
   $("play").onclick = play;
-  if (await devInstall()) return;
+  $("download").onclick = async () => {
+    $("download").disabled = $("pick").disabled = true;
+    try {
+      await download(hosted);
+    } catch (e) {
+      $("download").disabled = $("pick").disabled = false;
+      status(`The download stopped: ${e}`, true);
+    }
+  };
+  if (await devInstall(hosted)) return;
   $("forget").onclick = async () => {
     // The install's copy only: the saves and settings stay.
     const root = await navigator.storage.getDirectory();
     await root.removeEntry(STORE, { recursive: true }).catch(() => {});
     $("play").hidden = $("forget").hidden = true;
+    $("offer").hidden = !hosted;
     status("The stored copy is gone.");
   };
 }

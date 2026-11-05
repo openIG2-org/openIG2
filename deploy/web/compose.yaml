@@ -1,0 +1,46 @@
+# openIG2 in the browser (ADR 0047), optionally with the game's files hosted by this server (ADR 0081).
+#   IG2_GAME_DIR=/path/to/Imperium_Galactica_II docker compose -f deploy/web/compose.yaml up -d --build
+# Visitors open the page, agree to download the game files, and the main menu loads. Without IG2_GAME_DIR the page
+# asks each player for their own install folder instead.
+#
+# Browsers allow the page's storage, WebGPU and audio only over HTTPS (or on localhost). Behind your own reverse
+# proxy, point it at port IG2_WEB_PORT. Without one, the `https` profile runs Caddy with an automatic certificate:
+#   IG2_DOMAIN=play.example.org IG2_GAME_DIR=... docker compose -f deploy/web/compose.yaml --profile https up -d --build
+# (ports 80 and 443 open, the domain's DNS pointing at this server).
+services:
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/web/Dockerfile
+    image: ghcr.io/openig2-org/openig2-web:latest
+    restart: unless-stopped
+    ports:
+      - "${IG2_WEB_PORT:-8080}:8080"
+    volumes:
+      # The install folder (the GOG one, with ig2.exe), read-only. An empty folder hosts nothing.
+      - "${IG2_GAME_DIR:-./no-game-files}:/srv/game:ro"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  https:
+    profiles: [https]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    command: ["caddy", "reverse-proxy", "--from", "${IG2_DOMAIN:?set IG2_DOMAIN}", "--to", "web:8080"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy-data:/data
+    depends_on: [web]
+
+volumes:
+  caddy-data:
