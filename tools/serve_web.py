@@ -11,10 +11,18 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PREFIX = "/game/"
+# Files at the install's top that the client never reads, left out of the list (the same as deploy/web/game-index.sh).
+SKIP = re.compile(r"ig2|.*\.(dll|so|lnk|ico|pdf)|.*\.so\..*|(?!ig2\.exe$).*\.exe|(unins|goggame|language_setup|steam_api).*"
+                  r"|webcache\.zip|goglog\.ini|app\.id|eula\.txt")
+
+
+def listed(rel):
+    return "/" in rel or not SKIP.fullmatch(rel.lower())
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -27,7 +35,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
         if self.install and path == PREFIX + "index.json":
-            files = [[p.relative_to(self.install).as_posix(), p.stat().st_size] for p in sorted(self.install.rglob("*")) if p.is_file()]
+            files = [[r, p.stat().st_size] for p in sorted(self.install.rglob("*")) if p.is_file() and listed(r := p.relative_to(self.install).as_posix())]
             body = json.dumps(files).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

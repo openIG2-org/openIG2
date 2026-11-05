@@ -14,7 +14,10 @@ their visitors.
    (`IG2_GAME_DIR` in `deploy/web/compose.yaml`, read-only at `/srv/game`). Which files they mount, and their right to
    offer them, is the operator's business.
 2. **The page asks first.** At start the image lists the mounted folder as `[[path, size], …]` at `game/index.json`
-   (`deploy/web/game-index.sh`). Where that list looks like an install (`ig2.exe`, `DataRaw/Text/Scenario.txt`), a
+   (`deploy/web/game-index.sh`), leaving out the files at the top of the install that the client never reads (the
+   Linux build `ig2`, other `.exe`, `.dll` and `.so` files, the uninstaller, GOG and Steam files, the manual, the
+   EULA, shortcuts and icons, `webcache.zip`). Every language's `localization/` folder stays in: the Options screen
+   switches language after a restart. Where that list looks like an install (`ig2.exe`, `DataRaw/Text/Scenario.txt`), a
    visitor without a stored copy is told the file count and size and offered "I agree: download the game files and
    play"; only after that click does the page download them, six at a time, into the same OPFS copy as a picked folder
    (ADR 0047 part 2), and start. Picking an own install stays offered beside it; an empty folder hosts nothing and
@@ -25,6 +28,7 @@ their visitors.
    tried locally; `?dev-install` downloads without asking there.
 
 ## Consequences
-- A first visit downloads the whole folder (the GOG install: about 17,600 files, 690 MB); later visits start from the
-  copy. A new set of files on the server reaches a visitor only after "Forget the stored copy".
-- The operator decides what to mount; extra files (the manual, the uninstaller) are downloaded too unless left out.
+- A first visit downloads the listed files (the GOG install: 17,549 files, 645 MB of its 690 MB); later visits start
+  from the copy. A new set of files on the server reaches a visitor only after "Forget the stored copy".
+- The left-out files are only unlisted: nginx still serves them by their URL. `tools/serve_web.py` keeps the same list
+  (`SKIP`).
