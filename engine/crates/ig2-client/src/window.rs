@@ -624,7 +624,6 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::starmap::set_colour_blind(app.display.colour_blind);
     crate::render::set_sharp_ui(o.sharp_ui || app.display.sharp_ui);
     crate::render::set_sharp_text(o.sharp_text || app.display.sharp_text);
-    crate::theme::set(o.theme.as_deref().or(app.settings.get(crate::display::UI_THEME)).unwrap_or(""));
     crate::upscale::set_factor(o.upscale.max(app.display.upscale));
     if !o.modern_lighting {
         crate::render3d::set_lighting(app.display.lighting);
@@ -784,11 +783,9 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     Ok(())
 }
 
-/// The egui pages' theme (ADR 0062): the UI theme's look of the HUD's font and palette.
-fn page_theme(h: &crate::ui::Hud, size: [f32; 2]) -> crate::theme::Theme {
-    h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-        crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
-    })
+/// The egui pages' theme (ADR 0062): the design boards' tokens.
+fn page_theme(_h: &crate::ui::Hud, _size: [f32; 2]) -> crate::theme::Theme {
+    crate::theme::Theme::modern()
 }
 
 /// The Options screen over `frame` (after the 3D behind it).

@@ -1,16 +1,11 @@
-//! Ours (ADR 0056): UI themes for the remake's own screens. A theme is colours, the faders' frame style and the
-//! font's sizes, read from a small TOML file: the built-in Modern (`themes/modern.toml`) or a mod
-//! folder's `theme.toml`. Classic is no theme: every screen draws as before.
+//! Ours (ADR 0056): the looks of the remake's own screens. A theme is colours, the faders' frame style and the
+//! font's sizes: Modern, the design boards' tokens (`themes/modern.toml`), for the modern interface; Classic, the
+//! game's palette, for the classic screens the remake draws.
 
 use crate::font::Virtual;
 use crate::render::{Frame, TexId};
-use std::sync::RwLock;
 
-pub const CLASSIC: &str = "Classic";
-pub const MODERN: &str = "Modern";
 const MODERN_FILE: &str = include_str!("themes/modern.toml");
-/// A mod folder's theme file.
-pub const FILE: &str = "theme.toml";
 
 /// The look. Box colours and transparencies 0..255 (the faders'), text and quad colours 0..1.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -45,6 +40,7 @@ impl Theme {
     }
 
     /// A theme file over Modern's values.
+    #[cfg(test)]
     pub fn parse(text: &str) -> Result<Self, String> {
         Self::parse_over(&Self::modern(), text)
     }
@@ -132,50 +128,10 @@ const KEYS: [&str; 18] = [
     "accent", "hover", "track_on", "track_off", "knob", "font_title", "font_text",
 ];
 
-/// The chosen theme, else Classic's look (the Options screen's; the other screens' Classic draws with it too).
+/// Classic's look for the classic screens drawn by the remake (the Options screen's colours); the modern interface
+/// uses [`Theme::modern`], the design boards' tokens.
 pub fn look(d: &crate::options::Draw) -> Theme {
-    current().unwrap_or_else(|| Theme::classic(|i, m| d.col(i, m)))
-}
-
-/// The chosen theme (None = Classic), set from the settings (`UiTheme`).
-static CURRENT: RwLock<Option<Theme>> = RwLock::new(None);
-
-pub fn current() -> Option<Theme> {
-    *CURRENT.read().unwrap_or_else(|e| e.into_inner())
-}
-
-/// Chooses the theme by its name: Classic, Modern or a mod folder's; one that doesn't load is Classic (the error
-/// written to the log).
-pub fn set(name: &str) {
-    let t = match name {
-        "" | CLASSIC => None,
-        MODERN => Some(Theme::modern()),
-        _ => load(name).map_err(|e| eprintln!("ig2-client: theme {name}: {e}")).ok(),
-    };
-    *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = t;
-}
-
-fn load(name: &str) -> Result<Theme, String> {
-    let m = ig2_formats::vfs::Mod::available().into_iter().find(|m| m.name == name).ok_or("no such mod")?;
-    load_from(&m)
-}
-
-/// A mod's theme file, a folder's or a zip's (ADR 0068).
-fn load_from(m: &ig2_formats::vfs::Mod) -> Result<Theme, String> {
-    let text = String::from_utf8(m.read(FILE)?).map_err(|_| format!("{FILE}: not UTF-8 text"))?;
-    Theme::parse(&text)
-}
-
-/// The themes offered: Classic, Modern, then each mod (folder or zip) with a theme file that parses, in name order.
-pub fn offered() -> Vec<String> {
-    let mut v = vec![CLASSIC.to_owned(), MODERN.to_owned()];
-    let mods: Vec<String> = ig2_formats::vfs::Mod::available()
-        .into_iter()
-        .filter(|m| m.name != CLASSIC && m.name != MODERN && load_from(m).is_ok())
-        .map(|m| m.name)
-        .collect();
-    v.extend(mods);
-    v
+    Theme::classic(|i, m| d.col(i, m))
 }
 
 #[cfg(test)]

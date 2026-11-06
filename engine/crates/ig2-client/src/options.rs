@@ -964,7 +964,7 @@ impl OptionsScreen {
         }
         for r in &self.rows {
             match r.labels.get(r.value.max(0) as usize) {
-                Some(l) if r.ours && (r.key == crate::display::RESOLUTION || r.key == crate::display::UI_THEME) => o.set(&r.key, &String::from_utf8_lossy(l)),
+                Some(l) if r.ours && (r.key == crate::display::RESOLUTION) => o.set(&r.key, &String::from_utf8_lossy(l)),
                 _ => o.set(&r.key, &r.value.to_string()),
             }
         }
@@ -1469,8 +1469,10 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
         h.draw(&mut s, &mut frame, size, t as f64 * 10.0);
         if let Some(g) = gui.as_mut().filter(|_| s.modern.is_some()) {
             // The page: the script's pointer and buttons, one egui frame a t (each press and release its own).
-            let Some(font) = &h.hud.font else { return Err("no font".into()) };
-            let theme = crate::theme::look(&Draw { font, white: h.hud.white, glow: h.glow, v: Virtual::new(size), palette: &h.hud.palette, texts: &h.hud.texts, now_ms: 0.0 });
+            if h.hud.font.is_none() {
+                return Err("no font".into());
+            }
+            let theme = crate::theme::Theme::modern();
             let style = crate::gui::style(&theme);
             g.pointer(Some(Virtual::new(size).px(mouse[0], mouse[1])), k);
             let mut page = |g: &mut crate::gui::Gui, s: &mut OptionsScreen| {
@@ -1756,10 +1758,6 @@ mod tests {
         o.press([40.0, y(2)], &mut |_| {});
         o.store(&mut f);
         assert_eq!((f.get(crate::display::RESOLUTION), f.int(crate::display::MODE)), (Some("1920x1080"), Some(1)));
-        // The UI theme is stored by its name (ADR 0056).
-        o.rows.iter_mut().find(|r| r.key == crate::display::UI_THEME).unwrap().value = 1;
-        o.store(&mut f);
-        assert_eq!(f.get(crate::display::UI_THEME), Some("Modern"));
         // Every row on one of the sub-pages, each within the panel; the "Page" row on line 22 turns them over.
         let pages = remake_pages(&o.rows);
         assert_eq!(pages.len(), 3);

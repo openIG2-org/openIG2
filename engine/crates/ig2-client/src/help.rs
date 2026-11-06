@@ -887,7 +887,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
         if let Some(g) = &mut gui {
             g.pointer(Some(Virtual::new(size).px(mouse[0], mouse[1])), k);
-            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let theme = crate::theme::Theme::modern();
             let style = crate::gui::style(&theme);
             let fade = (s.frame / 100.0).clamp(0.0, 1.0);
             let run = |g: &mut crate::gui::Gui, s: &mut HelpScreen, page: &mut crate::help_modern::Page| {

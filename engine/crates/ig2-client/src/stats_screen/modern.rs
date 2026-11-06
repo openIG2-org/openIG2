@@ -323,7 +323,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     let script = o.script.as_deref().map(crate::script::Script::load).transpose()?;
     let (end, grabs) = script.as_ref().map_or((0, vec![0]), |sc| (sc.end(), sc.grabs.clone()));
     let mut mouse = o.mouse.unwrap_or([320.0, 240.0]);
-    let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+    let theme = crate::theme::Theme::modern();
     let style = crate::gui::style(&theme);
     for t in 0..=end {
         let mut buttons = Vec::new();

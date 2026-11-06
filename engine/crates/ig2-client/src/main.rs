@@ -183,8 +183,6 @@ pub struct Options {
     pub sharp_ui: bool,
     /// `--sharp-text`: the glyphs' edges one screen pixel wide (ADR 0046; else the settings file's `SharpText`).
     pub sharp_text: bool,
-    /// `--theme NAME`: the UI theme (ADR 0056; else the settings file's `UiTheme`).
-    pub theme: Option<String>,
     /// `--upscale 2|4`: the textures upscaled (ADR 0054; else the settings file's `TextureUpscale`); 1 = off.
     pub upscale: u8,
     /// `--ui-scale P`: the egui pages and HUD at P per cent, 50..=200 (ADR 0062; else the settings file's `UiScale`).
@@ -363,7 +361,6 @@ fn parse(args: &[String]) -> Result<Options, String> {
         letterbox: false,
         sharp_ui: false,
         sharp_text: false,
-        theme: None,
         upscale: 1,
         ui_scale: None,
         modern_lighting: false,
@@ -476,7 +473,6 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--smooth-glows" => o.smooth_glows = true,
             "--modern" | "--modern-hud" | "--modern-menu" | "--modern-colony" | "--modern-info" | "--modern-messages" | "--modern-research" | "--modern-design" | "--modern-diplomacy" | "--modern-spy" | "--modern-trade" => o.modern = true,
             "--sharp-text" => o.sharp_text = true,
-            "--theme" => o.theme = Some(val()?),
             "--upscale" => {
                 o.upscale = match val()?.trim() {
                     "2" => 2,
@@ -620,7 +616,6 @@ fn parse(args: &[String]) -> Result<Options, String> {
     kit::layout::set_letterbox(o.letterbox);
     render::set_sharp_ui(o.sharp_ui);
     render::set_sharp_text(o.sharp_text);
-    theme::set(o.theme.as_deref().unwrap_or(""));
     upscale::set_factor(o.upscale);
     gui::set_ui_scale(o.ui_scale.unwrap_or(100));
     if o.modern_lighting {

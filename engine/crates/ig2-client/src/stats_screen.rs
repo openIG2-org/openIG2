@@ -397,7 +397,7 @@ impl StatsScreen {
         let value = METRICS[self.metric].1;
         let max = m.samples.iter().flat_map(|s| m.empires.iter().map(move |e| value(&s.rows[e.empire as usize - 1]))).fold(0.0f64, f64::max);
         let t = crate::theme::look(d);
-        let dim = if crate::theme::current().is_some() { t.dim } else { d.col(1, 50.0) };
+        let dim = d.col(1, 50.0);
         let line = |f: &mut Frame, a: [f32; 2], b: [f32; 2], c: [f32; 4], w: f32| f.push(d.white, Blend::Alpha, Instance::line(d.v.px(a[0], a[1]), d.v.px(b[0], b[1]), w * d.v.k.max(1.0), c));
         let axis = [dim[0], dim[1], dim[2], 1.0];
         line(f, [gx, gy + gh], [gx + gw, gy + gh], axis, 1.0);

@@ -99,7 +99,6 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--sharp-text` | Sharp text on for this run, over the settings file |
 | `--upscale 2\|4` | Texture upscaling at 2× or 4× for this run, over the settings file |
 | `--modern-lighting` | Anti-aliasing, per-pixel lighting, soft shadows and bloom on for this run, over the settings file |
-| `--theme NAME` | UI theme for this run (Classic, Modern or a mod folder's), over the settings file |
 | `--battle-effects` | Enhanced battle effects for this run, over the settings file |
 
 ## Controls
@@ -198,7 +197,7 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 | Modern interface: info screen | the information screen is redrawn as small console plates in your empire colour: the empires met, the selected empire's planets and fleets as one scrolling list you can sort (order, name, size, alerts), the detail rows with Back, drop-down menus for a planet's settings, the money triangle, the spending limit (set by pressing or dragging on its bar) and the ten charts or the star log; same functions and keys. Classic = the original's screen (ADR 0072) |
 | Modern interface: main menu pages | besides the grouped menu, the new game's race choice (round portraits, the race's panel, Easy / Normal / Hard) and the end-of-game statistics (empires table, graph, scrolling match history) are redrawn as pages. Classic = the original's screens (ADR 0078) |
 | Modern interface: help | F1 opens the help as a page: topics, a search field (it takes your keys while focused), sub-topics, pictures, wheel scrolling (ADR 0078) |
-| Modern interface: cursors | with a modern UI theme the game's pointer is a new animated set drawn sharp at any size. Classic, or the Classic theme = the original's pointer (ADR 0073) |
+| Modern interface: cursors | on the Modern interface the game's pointer is a new animated set drawn sharp at any size; the Classic interface keeps the original's pointer (ADR 0073) |
 | UI scale (`UiScale`) | 100 % by default, 50–200 % in steps of 10, under Interface → Modern interface: the size of the remake's own pages (Options, multiplayer) and the modern starmap HUD; they grow with the window height, and 200 % is their size in earlier versions. On the Options page it is a slider: the new size shows when you let go, Back takes it back, Apply keeps it; no restart. The original screens always fill the window. `--ui-scale P` sets it for one run (ADR 0062) |
 | Smooth glows (`SmoothGlows`) | On by default (off = the original's look), under "Graphics": the starmap's star glows, clouds and stars, the main menu's galaxy and the space battle's shot flares are drawn without a visible pixel grid, one-pixel stars as round dots, and the sky's nebulae get a smooth enlarged copy (from the next start); Sharp UI does not apply to these (ADR 0064) |
 | Texture upscaling (`TextureUpscale`) | Graphics → Detail. Off / 2x / 4x, off by default: the textures are enlarged as they load, interface art with an edge-keeping filter (xBRZ) and the rest smoothly, so pictures and models look less blocky on big windows; every picture keeps its place and size (ADR 0054). The first visit to a screen takes longer (the starmap about 4 s at 4x); a change shows on the screens opened afterwards. A texture pack (Mods) wins over it |
@@ -214,7 +213,6 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 | Campaign story (`StoryFixes`) | Classic by default: a new campaign's story plays as in the original. Enhanced (ADR 0052): the original's story slips are fixed; so far the siege episode's five enemy fleets start at the planet they besiege instead of the galaxy's corner. The game keeps the choice it started with (saved with it) |
 | Voice volume (`VoiceVolume`) | Under "Sound": Same as sound (default, the original: speech follows the sound slider) or 0–100 %: the advisors', messages', start and aliens' speech at their own volume, the sound slider then sets the effects only (ADR 0058) |
 | Extra game speeds (`ExtraSpeeds`) | Off by default: in single player the fastest speed's key (3) or top-bar button pressed again while it runs makes the game go twice, then four times faster ("x2"/"x4" by the button); any other speed or a slow-down (an enemy near, a message) ends it, a space battle runs at its usual speed (ADR 0058). Multiplayer keeps the room's speeds |
-| UI theme (`UiTheme`) | Classic by default: the remake's own screens (main-menu Options, history, replays, lobby, event log) in their usual look; Modern or a mod's theme restyles them at once (ADR 0056, Mods → UI themes). The game's own screens never change |
 
 The window opens at 1600x900 until a size is saved.
 
@@ -227,8 +225,7 @@ the "mods" line lists every file each enabled mod replaces or adds and checks ea
 are loaded with the install's.
 
 ## Mods
-A mod changes the game with your own files: a sharper texture, another text, another sound, other rule values, a
-theme (ADR 0044, 0068). The remake still ships no game files; a mod is files you make or download.
+A mod changes the game with your own files: a sharper texture, another text, another sound, other rule values (ADR 0044, 0068). The remake still ships no game files; a mod is files you make or download.
 
 **Installing a mod** in three steps:
 1. Drop the mod's `.zip` (or its folder) into the `mods` folder beside the game's executable. Main menu → Mods →
@@ -526,34 +523,6 @@ replace is their data: the `.scn` maps (which stories start, their values), `dat
 In multiplayer every player needs the same mod files, `rules.toml`s and text patches: the room refuses a player with other mods
 ("Other mods enabled"; compare your Mods page with the host's), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
-
-### UI themes
-A theme restyles the remake's own screens (the main-menu Options, match history and statistics, replays, the
-multiplayer lobby, the event log); the game's own screens keep the original's look (ADR 0056). Pick one with the
-Interface setting "UI theme": Classic (default), Modern, or any mod folder that has a `theme.toml`, listed by the
-folder's name (the theme doesn't need `enabled.txt` and doesn't affect multiplayer).
-
-To make one, create `mods\<name>\theme.toml`. Every key is optional and starts from Modern's value; colours are
-`[red, green, blue]` from 0 to 255:
-
-```toml
-# mods/amber/theme.toml
-panel = [24, 14, 0]          # panel fill
-panel_edge = [140, 90, 20]   # panel edge
-panel_transparency = [0, 0]  # [fill, edge], 0 = opaque, 255 = invisible
-tab = [30, 20, 5]            # tabs; tab_selected for the open one
-tab_selected = [90, 60, 10]
-button = [50, 30, 5]         # buttons: button, button_edge, button_transparency
-text = [255, 220, 160]       # text; text_dim, text_off (disabled), accent (values), hover
-hover = [255, 255, 255]
-track_on = [200, 130, 30]    # switches and sliders: track_on, track_off, knob
-font_title = 4               # the game font's size for titles (0-4)
-font_text = 2                # and for everything else (0-2)
-```
-
-A key it doesn't know, a wrong value or a number out of range is an error that names the key: such a theme isn't
-listed, and a stored one falls back to Classic with the error in the log (`ig2-client: theme <name>: …`). The full
-list of keys and Modern's values is `engine/crates/ig2-client/src/themes/modern.toml`.
 
 ### Texture and model packs
 A pack is a mod whose `hires` folder holds better versions of the game's pictures and models (ADR 0054). Unlike a

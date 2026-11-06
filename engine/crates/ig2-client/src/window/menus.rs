@@ -501,7 +501,6 @@ impl App {
         crate::kit::layout::set_centred_exit(d.centred_exit);
         crate::render::set_sharp_ui(d.sharp_ui);
         crate::render::set_sharp_text(d.sharp_text);
-        crate::theme::set(self.settings.get(crate::display::UI_THEME).unwrap_or(""));
         crate::upscale::set_factor(d.upscale);
         crate::render3d::set_lighting(d.lighting);
         crate::battle_fx::set_enhanced(d.battle_effects);

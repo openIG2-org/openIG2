@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- The "UI theme" setting is gone: every modern screen always has the design boards' look (navy glass, white titles, blue plates) instead of the near-black, grey-titled look the default theme gave them; the classic screens keep the game's look, and `--theme` and mod `theme.toml` files are no longer used.
 - Modern top bar matches its design board: one even row of keys and LCDs, wider money and date readouts, line icons on the screen keys, and a yellow count of unread messages on the Messages key.
 - Settings page in seven tabs (Display, Graphics, Interface, Accessibility, Controls, Sound, Game); the Interface tab keeps the modern and the classic interface's own settings apart, and a setting that depends on another sits under it, greyed with a note while it can't apply (ADR 0083).
 - One Interface setting (Options, Interface): Modern or Classic for every screen at once, switching at once during a game and on the main menu; old per-screen choices carry over (ADR 0082).

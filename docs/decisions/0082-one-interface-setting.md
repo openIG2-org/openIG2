@@ -17,8 +17,8 @@ menu kept its kind until it was closed.
 1. **One row.** "Interface" (Options, Interface; `Interface` in our settings file): Classic (0, the original's
    screens) or Modern (1, the default) for every screen at once: starmap HUD and production, colony, research,
    info, messages, diplomacy, spy, trade, design, the battle HUD, the in-game menu and help, the main menu with its
-   new game and end-of-game pages, and the cursors. The UI theme (ADR 0056) and the UI scale (ADR 0062) stay their
-   own rows.
+   new game and end-of-game pages, and the cursors. The UI scale (ADR 0062) stays its own row; the UI theme (ADR 0056) was
+   withdrawn: the modern interface always uses the design boards' tokens.
 2. **Old settings files.** Without `Interface` the file's old per-screen keys (`ModernStarmapHud`,
    `ModernGameMenu`, `ModernColony`, `ModernInfo`, `ModernMessages`, `ModernCursors`, `ModernResearch`,
    `ModernMainMenu`, `ModernDesign`, `ModernDiplomacy`, `ModernSpy`, `ModernTrade`) decide: Modern if any of them

@@ -752,9 +752,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 gui.button(1, true);
                 gui.button(1, false);
             }
-            let theme = hud.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-                crate::theme::look(&crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: 0.0 })
-            });
+            let theme = crate::theme::Theme::modern();
             m.load_heads(&gui.ctx, &install);
             let mut acts = Vec::new();
             gui.run(o.size, &crate::gui::style(&theme), |ctx| acts = m.page(ctx, &hud.texts, &hud.palette, &theme, s.flow));
@@ -804,7 +802,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             if release.is_some() {
                 gui.button(0, false);
             }
-            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let theme = crate::theme::Theme::modern();
             let mut pick = None;
             gui.run(o.size, &crate::gui::style(&theme), |ctx| pick = crate::mainscr_modern::page(ctx, &hud.texts, p, s.history, s.can_continue, s.continue_line.as_ref(), s.gt.min(1.0)));
             match pick {
@@ -822,7 +820,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             if release.is_some() {
                 gui.button(0, false);
             }
-            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let theme = crate::theme::Theme::modern();
             let mut pick = None;
             gui.run(o.size, &crate::gui::style(&theme), |ctx| pick = crate::mainscr_modern::name_page(ctx, &hud.texts, &n, s.gt.min(1.0)));
             match pick {
@@ -842,7 +840,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             if release.is_some() {
                 gui.button(0, false);
             }
-            let theme = crate::theme::current().unwrap_or_else(crate::theme::Theme::modern);
+            let theme = crate::theme::Theme::modern();
             let heads = ng_heads.get_or_insert_with(|| crate::newgame_modern::load_heads(&gui.ctx, &install));
             let mut act = None;
             gui.run(o.size, &crate::gui::style(&theme), |ctx| act = crate::newgame_modern::page(ctx, &hud.texts, &mut ng, &s.blurbs, heads, s.gt.min(1.0)));
@@ -896,9 +894,7 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             if release.is_some() {
                 gui.button(0, false);
             }
-            let theme = hud.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-                crate::theme::look(&crate::options::Draw { font, white: hud.white, glow: hud.white, v: Virtual::new(size), palette: &hud.palette, texts: &hud.texts, now_ms: 0.0 })
-            });
+            let theme = crate::theme::Theme::modern();
             gui.run(o.size, &crate::gui::style(&theme), |ctx| {
                 let _ = os.modern_page(ctx, &hud.texts, &theme, &mut |id| println!("t {t}: sound {id:?}"));
             });

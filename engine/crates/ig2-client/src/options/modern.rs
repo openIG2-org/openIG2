@@ -197,7 +197,7 @@ fn rank(rows: &[Row], it: Item) -> u8 {
     let Item::Row(k) = it else { return 50 };
     match rows[k].key.as_str() {
         d::INTERFACE | d::TEXTURE_UPSCALE => 0,
-        d::UI_SCALE | d::LANGUAGE | d::UI_THEME | d::AUTOSAVE | d::WASD => 1,
+        d::UI_SCALE | d::LANGUAGE | d::AUTOSAVE | d::WASD => 1,
         d::SHARP_TEXT | d::STARMAP_MOUSE => 2,
         d::CLEAN_ENTRY => 3,
         d::SHARP_UI => 99,

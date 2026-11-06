@@ -21,9 +21,10 @@ with all their states, so that every screen built on it looks the same and fits 
    4). `Tokens::DEEP_SPACE` is the palette; `Tokens::from_theme` maps the UI theme onto the roles it has keys for
    (panel → glass, panel edge → bright rim, button edge → rim, button / tab / selected tab → the plate's shades,
    text / dim / off → the inks, accent → info, hover → focus) and derives deep and raised glass and the silver ink by
-   the palette's ratios, so a mod's theme recolours the kit; metal, rust, LCD and the empire colours stay the
-   design's. The built-in Modern theme (`themes/modern.toml`) is now the deep-space palette, exactly
-   (`from_theme(modern) == DEEP_SPACE`). `gui::style(theme)` sets the tokens for the frame (`ds::tokens()`).
+   the palette's ratios; metal, rust, LCD and the empire colours stay the design's. The built-in Modern theme
+   (`themes/modern.toml`) is the deep-space palette, exactly (`from_theme(modern) == DEEP_SPACE`), and since the UI
+   theme setting was withdrawn (ADR 0056) the modern interface always uses it. `gui::style(theme)` sets the tokens
+   for the frame (`ds::tokens()`).
 2. **Type** (`ds::Font`): the design's scale as constants with size, line box, weight, letter spacing (em, egui's
    `extra_letter_spacing`) and upper case: `TITLE_PLATE` 28/32 500 0.12 em, `HEADING` 20/26 600 0.08, `BODY` 17/26
    400 0.06, `LABEL` 13/18 600 0.14 upper, `DATA` 15/20 500 0.10, `READOUT` 24/28 Share Tech Mono 0.12 slanted,
@@ -62,7 +63,7 @@ with all their states, so that every screen built on it looks the same and fits 
    drag) as one set drawn from geometry (signed distances, anti-aliased, a dark outline and a soft shade, the
    design's colours), the animated ones (move, select, busy) in 20 frames over the original's 2-second cycle, 64
    pixels across, 32 points at 100 % UI scale. No picture files. They replace the game's pointer quad (drawn last,
-   where `MOUSE.BMP` was) when a modern UI theme is chosen and the new Remake option "Modern cursors"
+   where `MOUSE.BMP` was) in the modern interface when the new Remake option "Modern cursors"
    (`ModernCursors`, Interface, on by default) is on; Classic keeps `MOUSE.BMP`. An egui page's cursor icon becomes
    the overlay's pointer type (`Gui::pointer_kind`: the game's 0..7, 100 on for the extras, which Classic shows as the
    arrow or the original's clickable pointer).
@@ -102,7 +103,7 @@ with all their states, so that every screen built on it looks the same and fits 
 ## Consequences
 - The Modern theme's colours change on every screen that draws with it (the kit's faders on the remake's 640 × 480
   screens included); Classic and the original screens are unchanged, so capture comparisons and replay tests don't
-  move. A mod's `theme.toml` keeps working and now also recolours the kit.
+  move.
 - The client carries about 130 KB of fonts under the SIL OFL (allowed to be bundled with software; the licence files
   go with them).
 - Screen pages build on `ds` and run `Text` for every label; a board's measurements are points one for one at 100 %

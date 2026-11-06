@@ -131,7 +131,7 @@ more sizes would make them every frame (12 ms in the battle while the cache held
 
 Same machine and method as part 1, after the modern lighting, battle effects, texture upscaling, sharp text and UI,
 themes and the enhanced computer empires landed. "Off" is the settings file's defaults, "on" is
-`--modern-lighting --battle-effects --sharp-text --sharp-ui --upscale 4 --theme Modern`; a saved settings file with a
+`--modern-lighting --battle-effects --sharp-text --sharp-ui --upscale 4`; a saved settings file with a
 row on counts too (`LOCALAPPDATA` pointed at an empty folder for the "off" runs). The battle is the `fx8` capture's
 entry dump.
 

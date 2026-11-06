@@ -28,14 +28,10 @@ pub fn mini_virtual(u: [f32; 2]) -> [f32; 2] {
     [MINI[0] + u[0].clamp(0.0, 1.0) * MINI[2], MINI[1] + u[1].clamp(0.0, 1.0) * MINI[3]]
 }
 
-/// The UI theme (ADR 0056) as the HUD's egui style: its colours, the HUD's smaller type and tighter spacing, square
-/// tooltips.
-pub fn style(h: &crate::ui::Hud, size: [f32; 2]) -> egui::Style {
+/// The design boards' tokens as the HUD's egui style: the HUD's smaller type and tighter spacing, square tooltips.
+pub fn style(_h: &crate::ui::Hud, _size: [f32; 2]) -> egui::Style {
     use egui::{FontFamily::Proportional, TextStyle};
-    let theme = h.font.as_ref().map_or_else(crate::theme::Theme::modern, |font| {
-        crate::theme::look(&crate::options::Draw { font, white: h.white, glow: h.white, v: crate::font::Virtual::new(size), palette: &h.palette, texts: &h.texts, now_ms: 0.0 })
-    });
-    let mut s = crate::gui::style(&theme);
+    let mut s = crate::gui::style(&crate::theme::Theme::modern());
     s.text_styles = [
         (TextStyle::Heading, FontId::new(15.0, Proportional)),
         (TextStyle::Body, FontId::new(12.5, Proportional)),

@@ -83,8 +83,6 @@ pub const STORY_FIXES: &str = "StoryFixes";
 pub const TITLE_MUSIC: &str = "TitleMusicWithIntro";
 /// ADR 0054: the textures upscaled 2× or 4× at load (0 = off, the default; 1 = 2×, 2 = 4×).
 pub const TEXTURE_UPSCALE: &str = "TextureUpscale";
-/// The UI theme by name (ADR 0056): Classic, Modern or a mod folder's.
-pub const UI_THEME: &str = "UiTheme";
 
 /// ADR 0055: the meshes drawn 4× multisampled (off by default).
 pub const ANTI_ALIASING: &str = "AntiAliasing";
@@ -305,10 +303,6 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     let modes = ["Window", "Borderless", "Fullscreen"].map(|s| s.as_bytes().to_vec()).to_vec();
     let labels: Vec<Vec<u8>> = sizes.iter().map(|(w, h)| format!("{w}x{h}").into_bytes()).collect();
     let n = labels.len() as i32;
-    let themes = crate::theme::offered();
-    let theme = f.get(UI_THEME).and_then(|t| themes.iter().position(|x| x == t)).unwrap_or(0) as i32;
-    let n_themes = themes.len() as i32;
-    let themes: Vec<Vec<u8>> = themes.into_iter().map(String::into_bytes).collect();
     let voices: Vec<Vec<u8>> = std::iter::once(b"Same as sound".to_vec()).chain((0..=10).map(|n| format!("{}%", n * 10).into_bytes())).collect();
     let langs = ["Default", "English", "Magyar", "Deutsch", "Francais", "Espanol", "Italiano"].map(|s| s.as_bytes().to_vec()).to_vec();
     vec![
@@ -345,7 +339,6 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(30, Group::Graphics, "Soft shadows", SOFT_SHADOWS, d.lighting.soft_shadows as i32, Vec::new(), 1),
         row(31, Group::Graphics, "Bloom", BLOOM, d.lighting.bloom as i32, Vec::new(), 1),
         row(32, Group::Game, "Campaign story", STORY_FIXES, (f.int(STORY_FIXES) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
-        row(33, Group::Interface, "UI theme", UI_THEME, theme, themes, n_themes - 1),
         row(34, Group::Graphics, "Battle effects", BATTLE_EFFECTS, d.battle_effects as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(35, Group::Sound, "Voice volume", VOICE_VOLUME, voice_volume(f).map_or(0, |v| v / 10 + 1), voices, 11),
         row(36, Group::Game, "Extra game speeds", EXTRA_SPEEDS, (f.int(EXTRA_SPEEDS) == Some(1)) as i32, Vec::new(), 1),
@@ -429,14 +422,11 @@ mod tests {
         let mut f = File::default();
         f.set(RESOLUTION, "1280x720");
         f.set(ONE_LANGUAGE, "0");
+        // An older file's UI theme (gone: the modern interface always has the boards' look) is ignored.
+        f.set("UiTheme", "Classic");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 5, 2]);
-        // The theme row: Classic first, Modern by its stored name.
-        let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
-        assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));
-        f.set(UI_THEME, "Modern");
-        assert_eq!(rows(&f, &sizes, (1600, 900)).iter().find(|r| r.key == UI_THEME).unwrap().value, 1);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 5, 2]);
         assert_eq!((r[1].states, r[1].labels[2].as_slice()), (2, &b"1280x720"[..]));
         // Without a size in the file: the window's; a size not offered: the next smaller one.
         assert_eq!(rows(&File::default(), &sizes, (1600, 900))[1].value, 1);

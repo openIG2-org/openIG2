@@ -131,6 +131,7 @@ fn layout(p: Panel, history: bool) -> Vec<(Option<&'static str>, Option<Item>, [
 }
 
 /// The panel's box round its lines.
+#[cfg(test)]
 fn panel_box(p: Panel, history: bool) -> [f32; 4] {
     let last = layout(p, history).last().map_or(PANEL[1], |l| l.2[1] + l.2[3]);
     [PANEL[0], PANEL[1], PANEL[2], last + 6.0 - PANEL[1]]
@@ -141,28 +142,16 @@ pub fn item_at(p: Panel, at: [f32; 2], history: bool) -> Option<Item> {
     layout(p, history).into_iter().find(|&(_, i, r)| i.is_some() && crate::kit::inside_f(r, at)).and_then(|(_, i, _)| i)
 }
 
-/// The panel: in the chosen UI theme (ADR 0056), else as the Settings label (the button font, colour 1, colour 2
-/// under the pointer, faded in with the scene). Continue is dimmed without a save.
+/// The panel, as the Settings label (the button font, colour 1, colour 2 under the pointer, faded in with the
+/// scene). Continue is dimmed without a save.
 pub fn draw_panel(f: &mut Frame, d: &Draw, p: Panel, history: bool, can_continue: bool, at: [f32; 2], fade: f32) {
-    let theme = crate::theme::current();
-    if let Some(t) = &theme {
-        t.panel(f, d.white, &d.v, panel_box(p, history));
-    }
     for (head, item, r) in layout(p, history) {
-        let (text, c, size) = match (head, item, &theme) {
-            (Some(h), _, Some(t)) => (h, t.accent, t.small),
-            (Some(h), _, None) => (h, d.col(1, 60.0 * fade), 3),
-            (_, Some(i), t) => {
+        let (text, c, size) = match (head, item) {
+            (Some(h), _) => (h, d.col(1, 60.0 * fade), 3),
+            (_, Some(i)) => {
                 let on = i != Item::Continue || can_continue;
                 let hot = on && crate::kit::inside_f(r, at);
-                if let Some(t) = t {
-                    t.button(f, d.white, &d.v, r);
-                }
-                let c = match t {
-                    Some(t) => if !on { t.off } else if hot { t.hot } else { t.text },
-                    None => d.col(if hot { 2 } else { 1 }, if on { 100.0 } else { 40.0 } * fade),
-                };
-                (i.label(), c, t.map_or(3, |t| t.small))
+                (i.label(), d.col(if hot { 2 } else { 1 }, if on { 100.0 } else { 40.0 } * fade), 3)
             }
             _ => continue,
         };
@@ -173,14 +162,8 @@ pub fn draw_panel(f: &mut Frame, d: &Draw, p: Panel, history: bool, can_continue
 /// The Back label, drawn as the panel's entries.
 pub fn draw_back(f: &mut Frame, d: &Draw, at: [f32; 2], fade: f32) {
     let hot = crate::kit::inside_f(BACK, at);
-    let (c, size) = match crate::theme::current() {
-        Some(t) => {
-            t.button(f, d.white, &d.v, BACK);
-            (if hot { t.hot } else { t.text }, t.small)
-        }
-        None => (d.col(if hot { 2 } else { 1 }, 100.0 * fade), 3),
-    };
-    d.font.text(f, &d.v, &d.texts.ours("Back"), BACK[0] + BACK[2] / 2.0, BACK[1] + 4.0, 0, size, Align::Centre, c, None);
+    let c = d.col(if hot { 2 } else { 1 }, 100.0 * fade);
+    d.font.text(f, &d.v, &d.texts.ours("Back"), BACK[0] + BACK[2] / 2.0, BACK[1] + 4.0, 0, 3, Align::Centre, c, None);
 }
 
 /// Continue's saves: `dir`'s slots (`save1..=24` in ours or the original's format, the autosaves in 23 and 24 among

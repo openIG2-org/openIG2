@@ -332,9 +332,9 @@ pub fn set_modern(on: bool) {
     MODERN.store(on, Ordering::Relaxed);
 }
 
-/// The modern set replaces the game's pointer: the option is on and a theme is chosen (not Classic).
+/// The modern set replaces the game's pointer: the option is on.
 pub fn modern() -> bool {
-    MODERN.load(Ordering::Relaxed) && crate::theme::current().is_some()
+    MODERN.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
