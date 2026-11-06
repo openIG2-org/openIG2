@@ -88,7 +88,8 @@ pub struct View {
     pub exit: String,
     /// The exit is under the tutorial's lock.
     pub exit_locked: bool,
-    /// Tooltips (`GetString(2, 1, n)`): previous, next, repeat, into a fleet, minus, plus, design list, planet list,
+    /// Tooltips (`GetString(2, 1, n)`): previous, next, repeat, into a fleet, minus, plus, design list (not shown: the
+    /// slots and their "Design" plate have no "change product" tooltip), planet list,
     /// exit.
     pub tips: [String; 9],
     pub labels: Labels,
@@ -251,7 +252,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     }
     let head = s == 0 && slot.is_some();
     ds::rim(p, rect, ds::RADIUS_PLATE, if open { k.ink_silver } else if head { k.rim_bright } else { k.rim.lerp_to_gamma(k.rim_bright, hot) });
-    if ds::pressed(&ds::tip(resp, &v.tips[6])) {
+    if ds::pressed(&resp) {
         toggle_list(ui.ctx(), st, l, s);
     }
     let inner = rect.shrink2(vec2(0.0, 8.0));
@@ -274,7 +275,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(rect.right() - 10.0 - 110.0, rect.center().y - 17.0), pos2(rect.right() - 10.0, rect.center().y + 17.0))));
         let label = format!("+ {}", v.labels.design);
         let b = c.add(Plate::new(&label).width(110.0).height(34.0).font(Plate::FONT.sized(14.0).tracking(0.10)));
-        if ds::pressed(&ds::tip(b, &v.tips[6])) {
+        if ds::pressed(&b) {
             toggle_list(ui.ctx(), st, l, s);
         }
         let texts = Rect::from_min_max(pos2(text_l, inner.top()), pos2(rect.right() - 10.0 - 110.0 - 12.0, inner.bottom()));
