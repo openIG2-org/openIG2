@@ -48,7 +48,7 @@ jobs:
         run: |
           minor=$(cut -d. -f1,2 <<< "${{ steps.v.outputs.version }}")
           awk -v h="## $minor" 'index($0, h) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
-          printf '\nNeeds your own copy of Imperium Galactica II (GOG). Unzip into the game folder and run `ig2-client.exe`.\n' >> notes.md
+          printf '\nNeeds your own copy of Imperium Galactica II (GOG). Unzip into the game folder and run `openIG2.exe`.\n' >> notes.md
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:

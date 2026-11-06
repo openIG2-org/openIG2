@@ -20,7 +20,8 @@ import tarfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-BINS = ["ig2-client", "ig2-check"]
+# (package, the name the archive gives the binary)
+BINS = [("ig2-client", "openIG2"), ("ig2-check", "openIG2-check")]
 
 
 def run(cmd, env=None):
@@ -49,7 +50,7 @@ def main() -> int:
     env = dict(os.environ, OPENIG2_VERSION=version)
     manifest = ROOT / "engine" / "Cargo.toml"
     cmd = ["cargo", "build", "--release", "-j", "4", "--manifest-path", str(manifest)]
-    for b in BINS:
+    for b, _ in BINS:
         cmd += ["-p", b]
     run(cmd, env)
     target = Path(os.environ.get("CARGO_TARGET_DIR") or ROOT / "engine" / "target")
@@ -60,10 +61,10 @@ def main() -> int:
     if stage.exists():
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
-    for b in BINS:
+    for b, name_out in BINS:
         exe = target / "release" / b
         print(f"{b} needs: {', '.join(needed(exe))}")
-        shutil.copy2(exe, stage / b)
+        shutil.copy2(exe, stage / name_out)
     readme = (ROOT / "tools" / "release" / "README.txt").read_text().replace("{version}", version)
     (stage / "README.txt").write_text(readme)
     (stage / "VERSION.txt").write_text(version + "\n")

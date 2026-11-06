@@ -13,7 +13,7 @@ body:
     id: version
     attributes:
       label: openIG2 version
-      description: The window title shows it, or run `ig2-client --version`.
+      description: The window title shows it, or run `openIG2 --version`.
       placeholder: "0.7.2"
     validations:
       required: true
@@ -101,7 +101,7 @@ body:
     id: check
     attributes:
       label: ig2-check output
-      description: For start-up, loading or missing-content problems, run `ig2-check.exe --quick` and paste its output.
+      description: For start-up, loading or missing-content problems, run `openIG2-check.exe --quick` and paste its output.
       render: text
   - type: input
     id: system

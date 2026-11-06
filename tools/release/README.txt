@@ -13,9 +13,9 @@ Requirements
 
 Install and start
 1. Unzip this folder into the game's folder (the one with ig2.exe), or anywhere.
-2. Run ig2-client.exe (Windows) or ./ig2-client (Linux, macOS).
+2. Run openIG2.exe (Windows) or ./openIG2 (Linux, macOS).
    macOS: the binaries are not signed. Once, in a terminal in this folder:
-   xattr -dr com.apple.quarantine .   (or right-click ig2-client in Finder, Open, Open).
+   xattr -dr com.apple.quarantine .   (or right-click openIG2 in Finder, Open, Open).
    The game is Windows-only: copy your Windows install's folder to the Mac (or install it
    through CrossOver, Whisky or Heroic) and, if it isn't found, set IG2_INSTALL_DIR to it.
    Inside the game's folder it uses that install. Elsewhere it finds the game through GOG's registry entries and the usual GOG folders
@@ -33,7 +33,7 @@ Settings, saves
 - Save slots are in the same folder (save<n>.ig2s; the original's save<n>.sav load too).
 - ig2-client.log in the same folder (Windows): the game's messages and errors from its last start;
   attach it to a bug report.
-- ig2-check (if included) checks every file of your install and lists what fails.
+- openIG2-check checks every file of your install and lists what fails.
 
 Uninstall: delete this folder and, if you like, ig2-rework-options.dat and save*.ig2s.
 

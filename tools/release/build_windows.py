@@ -18,8 +18,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-# The binaries a player gets (`ig2-check` once it exists).
-BINS = [("ig2-client", "ig2-client"), ("ig2-check", "ig2-check")]
+# The binaries a player gets: (package, the name the archive gives the exe).
+BINS = [("ig2-client", "openIG2"), ("ig2-check", "openIG2-check")]
 # DLLs a stock Windows 10/11 has. Anything else (libstdc++-6, libgcc_s, libwinpthread) means a runtime would be
 # missing on the player's machine.
 SYSTEM_DLL = re.compile(r"^(api-ms-win-.*|advapi32|bcrypt|bcryptprimitives|d3d\w*|dxgi|dwmapi|gdi32|imm32|kernel32|"
@@ -71,12 +71,12 @@ def main() -> int:
         shutil.rmtree(stage)
     stage.mkdir(parents=True)
     bad = []
-    for _, binary in have:
-        exe = target / "release" / f"{binary}.exe"
+    for pkg, binary in have:
+        exe = target / "release" / f"{pkg}.exe"
         foreign = [d for d in imports(exe) if not SYSTEM_DLL.match(d)]
         if foreign:
             bad.append(f"{exe.name}: {', '.join(foreign)}")
-        shutil.copy2(exe, stage / exe.name)
+        shutil.copy2(exe, stage / f"{binary}.exe")
     if bad:
         print("non-system DLL imports (the player would lack them):\n  " + "\n  ".join(bad), file=sys.stderr)
         return 1

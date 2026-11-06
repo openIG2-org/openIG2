@@ -1,7 +1,7 @@
-//! `ig2-check`: loads every file of the user's Imperium Galactica II install through the engine's loaders and
-//! reports what fails (like openOMSI's `omsi-check`). Ships and writes no game data.
+//! `ig2-check` (shipped as `openIG2-check`): loads every file of the user's Imperium Galactica II install through the
+//! engine's loaders and reports what fails (like openOMSI's `omsi-check`). Ships and writes no game data.
 //!
-//! `ig2-check [INSTALL_DIR] [--quick] [--mod NAME]...`: the install from the argument, else found as the client finds
+//! `openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...`: the install from the argument, else found as the client finds
 //! it (`ig2_rules::install`). `--quick` skips decoding the music, sounds and videos (their containers are still read).
 //! The enabled mods (`--mod`, else `mods/enabled.txt`, ADR 0044) are loaded over the install, so their files are
 //! checked too, and listed with the install file each one replaces or the file it adds; each `rules.toml` and
@@ -404,7 +404,7 @@ fn main() {
             "--quick" => quick = true,
             "--mod" => given.get_or_insert_with(Vec::new).extend(args.next()),
             "--help" | "-h" => {
-                println!("ig2-check [INSTALL_DIR] [--quick] [--mod NAME]...: loads every file of your Imperium Galactica II install and mods");
+                println!("openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...: loads every file of your Imperium Galactica II install and mods");
                 return;
             }
             _ => root = Some(PathBuf::from(a)),
@@ -418,7 +418,7 @@ fn main() {
             match ig2_rules::install::find(remembered.as_deref()) {
                 Ok(c) => c.path,
                 Err(tried) => {
-                    eprintln!("ig2-check: no Imperium Galactica II install found; give its folder as the argument. Looked in:");
+                    eprintln!("openIG2-check: no Imperium Galactica II install found; give its folder as the argument. Looked in:");
                     for (c, v) in tried.iter().filter(|(_, v)| *v != ig2_rules::install::Verdict::Missing) {
                         eprintln!("  {} ({}): {}", c.path.display(), c.source.label(), v.describe());
                     }
@@ -427,10 +427,10 @@ fn main() {
             }
         }
     };
-    println!("ig2-check {}: {}", version(), root.display());
+    println!("openIG2-check {}: {}", version(), root.display());
     let verdict = ig2_rules::install::check(&root);
     if !matches!(verdict, ig2_rules::install::Verdict::Ok | ig2_rules::install::Verdict::WrongBuild(_)) {
-        eprintln!("ig2-check: {}: {}", root.display(), verdict.describe());
+        eprintln!("openIG2-check: {}: {}", root.display(), verdict.describe());
         std::process::exit(2);
     }
     let lang = ig2_formats::locale::exe_language(&root).0;
@@ -438,7 +438,7 @@ fn main() {
     let inst = match Install::open_with_mods(&root, lang, mods) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!("ig2-check: {e}");
+            eprintln!("openIG2-check: {e}");
             std::process::exit(2);
         }
     };

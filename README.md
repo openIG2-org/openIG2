@@ -44,11 +44,11 @@ tables are read from **your own copy** of the GOG release when the game starts.
 1. Own and install **Imperium Galactica II** from [GOG](https://www.gog.com/).
 2. Download the latest `openig2-<version>-windows-x64.zip` from
    [Releases](https://github.com/openIG2-org/openIG2/releases/latest).
-3. Unzip it **into the game's folder** (next to `ig2.exe`) and run `ig2-client.exe`.
+3. Unzip it **into the game's folder** (next to `ig2.exe`) and run `openIG2.exe`.
 
 That's it. The client also finds the game on its own (GOG registry, GOG Galaxy, the usual folders) if you unzip it
 elsewhere; when it can't, its window tells you where it looked and you can drop the game's folder onto it.
-`ig2-check.exe` checks your install and lists any file that fails to load. Settings, saves and keys:
+`openIG2-check.exe` checks your install and lists any file that fails to load. Settings, saves and keys:
 [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md). Other platforms: build from source (below).
 
 ## Goals

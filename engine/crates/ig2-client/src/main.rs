@@ -889,7 +889,7 @@ fn main() {
         Some("--mp-host") => mp_lobby::headless_host(),
         Some("--info") => parse(&args[1..]).and_then(|o| info(&o)),
         Some("--version") => {
-            println!("ig2-client {}", version());
+            println!("openIG2 {}", version());
             Ok(())
         }
         Some("--colony-check") => match &args[1..] {

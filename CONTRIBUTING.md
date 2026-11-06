@@ -1,7 +1,7 @@
 # Contributing to openIG2
 
 Thanks for helping. Bug reports and play reports are as valuable as code: say what you did, what you expected
-(ideally: what the original does) and what happened, with the version (`ig2-client --version`) and a save if you
+(ideally: what the original does) and what happened, with the version (`openIG2 --version`) and a save if you
 have one.
 
 ## Ground rules

@@ -2,7 +2,7 @@
 
 ## Installing
 You need the GOG or the Steam release of *Imperium Galactica II*; openIG2 ships no game data and reads your copy. The simplest
-setup: unzip the release into the game's folder and run `ig2-client.exe`. Nothing else is needed. At start the
+setup: unzip the release into the game's folder and run `openIG2.exe`. Nothing else is needed. At start the
 client looks, in this order, in:
 1. `IG2_INSTALL_DIR` (optional: an override that wins over everything);
 2. the folder remembered in our settings file (`ig2-rework-options.dat`, key `InstallDir`, next to the original's
@@ -31,7 +31,7 @@ remembered, and the game restarts. Esc quits.
 ## Running
 Download `openig2-<version>-windows-x64.zip` from the
 [releases](https://github.com/openIG2-org/openIG2/releases/latest), unzip it into the game's folder (or anywhere)
-and run `ig2-client.exe`. It opens no console window: its messages and errors (a crash's too) go to
+and run `openIG2.exe`. It opens no console window: its messages and errors (a crash's too) go to
 `ig2-client.log` beside the settings (`%LOCALAPPDATA%\GyroscopeGames\ig2`, or `IG2_OPTIONS_DIR`), emptied at
 each start; started from a terminal it prints there instead (`--version`, the mod list). Attach the log to a bug
 report. Or run from source (`docs/BUILDING.md`):
@@ -41,15 +41,15 @@ cargo run --release -p ig2-client
 ```
 On Linux (x86-64, glibc 2.35 or newer, Vulkan drivers, ALSA or PipeWire/PulseAudio, X11 or Wayland; the Steam
 Deck's desktop mode works the same) build from source, or take `openig2-<version>-linux-x64.tar.gz` from the
-releases once one carries it, unpack it anywhere and run `./ig2-client`. The game itself has to be installed
+releases once one carries it, unpack it anywhere and run `./openIG2`. The game itself has to be installed
 once: the GOG offline installer through Wine, Heroic or Lutris all leave the files where the search above finds
 them (or drop the folder with `ig2.exe` onto the not-found window). The credits line uses an outline font instead
 of Windows' Arial. Linux builds are new: please report anything that differs from the Windows build.
 
 On macOS (11 or newer, Apple Silicon; Metal) build from source, or take `openig2-<version>-macos-arm64.tar.gz`
 from the releases once one carries it. Its binaries are not signed: clear the download quarantine once with
-`xattr -dr com.apple.quarantine .` in the unpacked folder (or right-click `ig2-client` in Finder → Open), then run
-`./ig2-client`. The game is Windows-only, so copy the folder of a Windows install to the Mac (anywhere: point
+`xattr -dr com.apple.quarantine .` in the unpacked folder (or right-click `openIG2` in Finder → Open), then run
+`./openIG2`. The game is Windows-only, so copy the folder of a Windows install to the Mac (anywhere: point
 `IG2_INSTALL_DIR` at it or drop it onto the not-found window), or install it through CrossOver, Whisky or Heroic.
 macOS builds are new and tested by CI only: please report what goes wrong.
 The game starts at the title and main menu, like the original: campaign, scenario, skirmish, tutorial, load, and
@@ -222,7 +222,7 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 The window opens at 1600x900 until a size is saved.
 
 ## Checking your install
-`ig2-check [INSTALL_DIR] [--quick]` (in the release zip, or `cargo run --release -p ig2-check`) loads every asset,
+`openIG2-check [INSTALL_DIR] [--quick]` (in the release zip, or `cargo run --release -p ig2-check`) loads every asset,
 table and script of your install the way the game does and lists what fails; it finds the install like the client
 when no folder is given. `--quick` skips the sound and video decoding. Exit code 0 = all ok, 1 = failures, 2 = no
 install. A full run takes about a minute. `--mod NAME` (repeatable) checks those mods instead of `mods/enabled.txt`'s;
@@ -258,7 +258,7 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    game = "0.7"              # the openIG2 version it was made for
    ```
 3. Zip the folder (Windows: right click → Send to → Compressed folder; one top folder inside the zip is fine) and
-   share the zip. Check it first: `ig2-check --quick` lists the files your mod replaces or adds, and loads them.
+   share the zip. Check it first: `openIG2-check --quick` lists the files your mod replaces or adds, and loads them.
 
 Where mods are read: the `mods` folder beside the executable and the one beside the settings files
 (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or `IG2_OPTIONS_DIR\mods`); a mod in the first wins over one of the same
