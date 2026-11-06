@@ -350,12 +350,6 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     acts
 }
 
-/// The cast-metal plate (the navigation's: `radial-gradient(ellipse at 50% 0%, metal-light, metal 35 %, metal-dark)`
-/// with the relief).
-pub(crate) fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
-    ds::metal_plate(p, r, radius);
-}
-
 /// The top bar's area, the boards sharing the bar place themselves under it ([`bar_bottom`]).
 pub(crate) const BAR_ID: &str = "smh-left";
 

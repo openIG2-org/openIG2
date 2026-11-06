@@ -167,7 +167,6 @@ pub fn replaced(id: u32) -> bool {
 
 const RAIL_W: f32 = 96.0;
 const CARD_W: f32 = 380.0;
-const NAV_W: f32 = 300.0;
 const RAIL: Font = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.1, upper: true, lcd: false };
 const BIG_TITLE: Font = Font { size: 20.0, line: 26.0, weight: Weight::SemiBold, tracking: 0.1, upper: false, lcd: false };
 
@@ -368,53 +367,39 @@ fn hull_bar(p: &egui::Painter, bar: Rect, f: f32) {
 fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
     use ds::Icon;
     let k = ds::tokens();
-    let radar_h = (280.0 * 67.0 / 94.0f32).round();
+    let well = vec2(280.0, (280.0 * 67.0 / 94.0f32).round());
     let key = vec2(34.0, 28.0);
-    let h = 10.0 + radar_h + 8.0 + key.y + 4.0 + 10.0;
-    let r = Rect::from_min_size(pos2(screen.right() - ds::EDGE - NAV_W, screen.bottom() - ds::EDGE - h), vec2(NAV_W, h));
-    let p = ui.painter().clone();
-    crate::starmap_modern::metal_plate(&p, r, 18);
+    let size = well + vec2(20.0, 20.0 + 8.0 + 32.0);
+    let r = Rect::from_min_size(pos2(screen.right() - ds::EDGE - size.x, screen.bottom() - ds::EDGE - size.y), size);
     st.panels.push(r);
-    let well = Rect::from_min_size(r.min + vec2(10.0, 10.0), vec2(280.0, radar_h));
-    ds::shadow(&p, well, 10, 0, 0, 1, k.metal_shadow);
-    p.rect_filled(well, 10, Color32::BLACK);
-    ds::vgrad(&p, well, 10, &[(0.0, Color32::from_black_alpha(255)), (6.0 / well.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
-    let clip = p.with_clip_rect(well.shrink(2.0));
-    for j in 1..6 {
-        let (x, y) = (well.left() + well.width() * j as f32 / 6.0, well.top() + well.height() * j as f32 / 6.0);
-        clip.vline(x, well.y_range(), Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
-        clip.hline(well.x_range(), y, Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
-    }
-    let at = |u: [f32; 2]| pos2(well.left() + u[0] * well.width(), well.top() + u[1] * well.height());
-    // The view's outline: the edges whose both corners meet the grid plane (`RadarFrissit`'s four lines).
-    for (a, c) in [(0, 1), (0, 2), (2, 3), (1, 3)] {
-        if let (Some(a), Some(c)) = (v.radar.view[a], v.radar.view[c]) {
-            clip.line_segment([at(a), at(c)], Stroke::new(1.2f32, k.focus));
+    let mut keys = Vec::new();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(r));
+    let well = ds::radar(&mut child, well, false, ds::key_group_w(6, key.x), |ui, well| {
+        let clip = ui.painter().with_clip_rect(well.shrink(2.0));
+        let at = |u: [f32; 2]| pos2(well.left() + u[0] * well.width(), well.top() + u[1] * well.height());
+        // The view's outline: the edges whose both corners meet the grid plane (`RadarFrissit`'s four lines).
+        for (a, c) in [(0, 1), (0, 2), (2, 3), (1, 3)] {
+            if let (Some(a), Some(c)) = (v.radar.view[a], v.radar.view[c]) {
+                clip.line_segment([at(a), at(c)], Stroke::new(1.2f32, k.focus));
+            }
         }
-    }
-    for &(u, own) in &v.radar.dots {
-        let c = if own { k.own } else { k.enemy };
-        clip.circle_filled(at(u), 3.0, c.gamma_multiply(0.35));
-        clip.circle_filled(at(u), 1.6, c);
-    }
-    ds::rim(&p, well, 10, Color32::from_white_alpha(10));
+        for &(u, own) in &v.radar.dots {
+            let c = if own { k.own } else { k.enemy };
+            clip.circle_filled(at(u), 3.0, c.gamma_multiply(0.35));
+            clip.circle_filled(at(u), 1.6, c);
+        }
+    }, |ui| {
+        ds::key_group(ui, |ui| {
+            for (icon, id) in [(Icon::TopView, 0x46), (Icon::RotateLeft, 0x47), (Icon::RotateRight, 0x48), (Icon::SideView, 0x49), (Icon::ZoomIn, 0x4a), (Icon::TiltUp, 0x4b)] {
+                let kr = Rect::from_min_size(ui.cursor().min, key);
+                let hot = pointer(ui).is_some_and(|q| kr.contains(q));
+                ds::forced(hot, hot && ds::any_down(ui.ctx()), || ui.add(ds::IconKey::icon(icon).size(key)));
+                keys.push((kr, id));
+            }
+        });
+    });
     st.spots.push((well, 0x1f, Some(Map::Radar)));
-    let icons = [(Icon::TopView, 0x46), (Icon::RotateLeft, 0x47), (Icon::RotateRight, 0x48), (Icon::SideView, 0x49), (Icon::ZoomIn, 0x4a), (Icon::TiltUp, 0x4b)];
-    let total = 6.0 * key.x + 5.0 * 2.0 + 2.0 * 4.0;
-    let mut x = r.center().x - total / 2.0;
-    let y = well.bottom() + 8.0;
-    let group = Rect::from_min_size(pos2(x, y), vec2(total, key.y + 4.0));
-    p.rect_filled(group, ds::RADIUS_PLATE, k.metal_shadow);
-    x += 4.0;
-    for (n, (icon, id)) in icons.into_iter().enumerate() {
-        let kr = Rect::from_min_size(pos2(x, y + 2.0), key);
-        let hot = pointer(ui).is_some_and(|q| kr.contains(q));
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(kr));
-        ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add(ds::IconKey::icon(icon).size(key)));
-        st.spots.push((kr, id, None));
-        let _ = n;
-        x += key.x + 2.0;
-    }
+    st.spots.extend(keys.into_iter().map(|(kr, id)| (kr, id, None)));
     r
 }
 
