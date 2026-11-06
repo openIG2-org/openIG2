@@ -816,7 +816,7 @@ fn minimap(ui: &mut egui::Ui, r: Rect, mini: &Mini, v: &View, acts: &mut Vec<Act
         p.add(Shape::convex_polygon(outline.clone(), k.focus.gamma_multiply(0.06), Stroke::NONE));
         p.add(Shape::closed_line(outline, Stroke::new(1.2f32, k.focus)));
     }
-    let resp = ds::tip_key(resp, &v.tips[7], "").on_hover_cursor(egui::CursorIcon::Crosshair);
+    let resp = resp.on_hover_cursor(egui::CursorIcon::Crosshair);
     let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
     if let (true, Some(q)) = (resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
         acts.push(Act::Minimap(mini_virtual([(q.x - r.left()) / r.width(), (q.y - r.top()) / r.height()]), first));

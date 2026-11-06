@@ -152,7 +152,6 @@ pub struct Radar {
     pub buildings: Vec<([f32; 2], Color32)>,
     pub units: Vec<([f32; 2], bool)>,
     pub view: Option<[[f32; 2]; 4]>,
-    pub tip: String,
     /// The zoom keys' and the starmap key's tooltips.
     pub keys: [String; 3],
     /// The terrain's picture (`radar_picture`) lies under the screen: drawn by [`radar_under`].
@@ -930,7 +929,6 @@ fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>
             p.add(Shape::convex_polygon(pts.clone(), k.lcd_ink.gamma_multiply(0.06), Stroke::NONE));
             p.add(Shape::closed_line(pts, Stroke::new(1.5f32, if r.picture { k.ink } else { k.lcd_ink })));
         }
-        let resp = if r.tip.is_empty() { resp } else { resp.on_hover_text(&r.tip) };
         if live && resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }

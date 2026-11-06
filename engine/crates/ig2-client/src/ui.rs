@@ -1401,7 +1401,6 @@ impl Hud {
             buildings: hs.buildings.iter().map(|&(gx, gy, c)| ([gx / 200.0, gy / 200.0], col(c))).collect(),
             units: hs.units.iter().map(|&(gx, gy, own)| ([gx / 200.0, gy / 200.0], own)).collect(),
             view: hs.view.map(|q| q.map(|c| unit(c[0], c[1]))),
-            tip: dec(&self.texts.get(3, 1, 4)),
             keys: Default::default(),
             picture: false,
         };

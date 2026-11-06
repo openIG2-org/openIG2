@@ -75,7 +75,6 @@ pub struct View {
     pub retreat: Option<[String; 3]>,
     /// `spacewarelfade`: the HUD fades in with the opening zoom.
     pub fade: f32,
-    pub radar_tip: String,
 }
 
 /// Where the HUD put the original's controls this frame (points), the wells and the pictures' sources.
@@ -502,7 +501,6 @@ fn tooltip(ctx: &egui::Context, v: &View, st: &State) {
     let Some(p) = ctx.input(|i| i.pointer.hover_pos()) else { return };
     let Some((_, id, _)) = st.spots.iter().find(|s| s.0.contains(p)) else { return };
     let text = match *id {
-        0x1f => v.radar_tip.as_str(),
         0x21..=0x2a => v.rail[(*id - 0x21) as usize].as_ref().map_or("", |k| k.name.as_str()),
         0x46..=0x4b => v.keys[(*id - 0x46) as usize].as_str(),
         _ => "",
@@ -664,7 +662,6 @@ impl crate::ui::Hud {
             keys: std::array::from_fn(|i| t2(6 + i as u16)),
             retreat: ui.retreat_window.then(|| [dec(&s(1)), dec(&self.texts.get(3, 4, 2)), dec(&self.texts.get(3, 4, 3))]),
             fade: ui.fade,
-            radar_tip: t2(1),
         }
     }
 }
