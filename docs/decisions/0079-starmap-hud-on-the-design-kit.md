@@ -22,8 +22,9 @@ because the original's hot-spot code hit-tests it there.
    messages key while messages wait. Every part sits on one 32-point row on the bar's middle line (keys and LCDs 32
    high, the message line and research button 30), the money LCD at least 7 characters wide. The
    colony, info and research screens keep using this bar (`starmap_modern::bar`).
-2. **Selection card** (`.ig-panel.deep` with `.ig-card`, 380 wide, 24 from the bottom-left corner): a shaded globe in
-   the owner's colour (a fleet's mark for a fleet) between the richness and habitability ratios, the name, the
+2. **Selection card** (`.ig-panel.deep` with `.ig-card`, 380 wide, 24 from the bottom-left corner, the board's solid
+   navy glass): a shaded globe in the owner's colour (a fleet's mark for a fleet) centred on the text column with the
+   richness (hammer) and habitability (people) ratios, the name, the
    original's lines upper case in their colours, then the plates (the colony or split, the details) and the tanks and
    production keys. The card is still the info box: left and right click are the original's.
 3. **Navigation plate** (cast metal, 300 wide, 24 from the bottom-right corner): the radar sunk into it at 280 wide in

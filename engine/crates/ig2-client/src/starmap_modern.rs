@@ -925,21 +925,14 @@ fn planet(ui: &egui::Ui, r: Rect, colour: Color32, src: Option<[f32; 4]>, is_pla
     wells.push((src, Rect::from_center_size(r.center(), r.size() / GLOBE_FILL), ui.opacity()));
 }
 
-/// A side ratio of the card (`.ratio`: an icon and the value, muted): the richness (a crystal) or the habitability
-/// (a figure); the label as its tooltip.
+/// A side ratio of the card (`.ratio`: an icon and the value, muted): the richness (a hammer) or the habitability
+/// (people); the label as its tooltip.
 fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
     let k = ds::tokens();
-    let (r, resp) = ui.allocate_exact_size(vec2(CARD_SIDE, 16.0), Sense::hover());
+    let (r, resp) = ui.allocate_exact_size(vec2(CARD_SIDE, 14.0), Sense::hover());
     let w = Text::new(value, RATIO).layout(ui.ctx(), CARD_SIDE).width + 15.0;
     let i = Rect::from_center_size(pos2(r.center().x - w / 2.0 + 6.0, r.center().y), vec2(12.0, 12.0));
-    let (p, s, c) = (ui.painter(), Stroke::new(1.3f32, k.ink_muted), i.center());
-    if habitability {
-        p.circle_stroke(pos2(c.x, c.y - 3.0), 2.6, s);
-        p.add(Shape::line(arc(pos2(c.x, c.y + 6.0), 5.0, 5.0, std::f32::consts::PI, std::f32::consts::TAU), s));
-    } else {
-        p.add(Shape::closed_line(vec![pos2(c.x, c.y - 6.0), pos2(c.x + 5.0, c.y - 1.5), pos2(c.x, c.y + 6.0), pos2(c.x - 5.0, c.y - 1.5)], s));
-        p.line_segment([pos2(c.x - 5.0, c.y - 1.5), pos2(c.x + 5.0, c.y - 1.5)], s);
-    }
+    (if habitability { ds::Icon::Users } else { ds::Icon::Hammer }).paint(ui.painter(), i, k.ink_muted);
     Text::new(value, RATIO).color(k.ink_muted).paint_only(ui, Rect::from_min_max(pos2(i.right() + 3.0, r.top()), r.max));
     resp.on_hover_text(label);
 }
@@ -957,6 +950,10 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             ui.spacing_mut().item_spacing = vec2(16.0, 2.0);
             ui.vertical(|ui| {
                 ui.set_width(CARD_SIDE);
+                // Centred on the text column (`.ig-card`'s `align-items: center`): its name, lines, gap and plates
+                // against the two ratios round the globe.
+                let lines = info.lines.len().min(6) + info.redirect as usize;
+                ui.add_space(((28.0 + 2.0 + lines as f32 * 22.0 + 8.0 + 32.0 - (14.0 + 2.0 + 84.0 + 2.0 + 14.0)) / 2.0).max(0.0));
                 if let Some((l, val)) = info.stats.first() {
                     ratio(ui, l, val, false);
                 }
@@ -981,7 +978,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
                 if info.redirect {
                     Text::new(&v.labels.redirect, Font::LABEL).color(k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.45 })).show(ui, vec2(main_w, 20.0));
                 }
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 ui.allocate_exact_size(vec2(main_w, 32.0), Sense::hover()).0
             })
             .inner
@@ -1002,18 +999,21 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
         // most.
         ui.scope_builder(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            // One type size for both plates (`.ig-plate`, 14 points, the plate's 16 aside), smaller together when
+            // One type size for both plates (`.ig-plate`, 14 points, 12 aside), smaller together when
             // the labels and the keys don't fit; a label still too long is shrunk or cut by the plate.
             let keys = info.tanks as usize + info.product as usize;
+            // The board's plate: 12 aside, the label's last letter spacing after it (CSS), and the 3 points the
+            // browser's label measures wider than ours.
+            const PAD: f32 = 2.0 * 12.0 + 14.0 * 0.16 + 3.0;
             let labels: Vec<&str> = info.right.iter().map(|s| s.as_str()).chain([info.left.as_str()]).collect();
-            let room = main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (labels.len() as f32 - 1.0) - 2.0 * ds::SPACE[2] * labels.len() as f32;
+            let room = main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (labels.len() as f32 - 1.0) - PAD * labels.len() as f32;
             let ctx = ui.ctx().clone();
             let text_w = |s: &str, f: Font| Text::new(s, f).layout(&ctx, f32::INFINITY).width;
-            let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0).tracking(0.12))).sum();
-            let font = Plate::FONT.sized((14.0 * room / natural.max(1.0)).clamp(11.0, 14.0)).tracking(0.12);
-            let share = (room / labels.len() as f32).floor() + 2.0 * ds::SPACE[2];
+            let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0))).sum();
+            let font = Plate::FONT.sized((14.0 * room / natural.max(1.0)).clamp(11.0, 14.0));
+            let share = (room / labels.len() as f32).floor() + PAD;
             let fits = labels.iter().map(|s| text_w(s, font)).sum::<f32>() <= room + 0.5;
-            let pw = |s: &str| (text_w(s, font) + 2.0 * ds::SPACE[2]).min(if fits { f32::INFINITY } else { share });
+            let pw = |s: &str| (text_w(s, font) + PAD).min(if fits { f32::INFINITY } else { share });
             if let Some(r) = &info.right {
                 let pw = pw(r);
                 let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
@@ -1035,7 +1035,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             }
         });
     });
-    ds::behind(ui, at, |p| ds::paint_panel(p, frame.response.rect, ds::PanelKind::Deep, 0.88));
+    ds::behind(ui, at, |p| ds::paint_panel(p, frame.response.rect, ds::PanelKind::Deep, 1.0));
 }
 
 /// The camera's keys under the radar: rotate, zoom and tilt held (the left button's way, the right button the other
