@@ -126,9 +126,14 @@ impl App {
                     }
                     continue;
                 }
-                Act::Row(k) => mm::row_at(k),
-                Act::Newer => mm::NEWER_AT,
-                Act::Older => mm::OLDER_AT,
+                Act::Row(i) => {
+                    let arrows = ig2_sim::game::inbox_arrows_allowed(&self.world.game.state);
+                    let n = self.world.ui.inbox.len();
+                    match self.hud.as_mut().and_then(|h| h.messages.reach(i, n, arrows)) {
+                        Some(k) => mm::row_at(k),
+                        None => continue,
+                    }
+                }
                 Act::Hurry => mm::TEXT_AT,
                 Act::Leave => mm::LEAVE_AT,
             };

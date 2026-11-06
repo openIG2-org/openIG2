@@ -1,7 +1,8 @@
 //! Ours (ADR 0076): the modern messages screen on the egui layer (ADR 0062), the "Modern messages screen" option,
 //! drawn with the design kit (ADR 0073, `gui::ds`) after the messages board. The same functions as the original's
-//! (re/screens/messages.md §3–§5): the inbox's four rows from `AktUzenetPointer` with the newer and older arrows
-//! (hot-spots 1, 2, 3), the talking head's clip, the open message typed out with its colours (a press in it hurries
+//! (re/screens/messages.md §3–§5): the whole inbox as one list from the top, oldest first and the newest at the
+//! bottom, scrolling (a row's press moves the original's four rows to it as its arrows would: hot-spots 1, 2, 3),
+//! the talking head's clip, the open message typed out with its colours (a press in it hurries
 //! the typer, as a press in the original's text box), its answers (hot-spot 4, the keys `a`..`d`) and the way out
 //! (7..=9). The window fills a [`View`] from the classic screen's state, runs [`show`] once a frame and hands the
 //! [`Act`]s to the classic `MessagesScreen` code at the virtual point the original's player would have pressed.
@@ -15,11 +16,8 @@ use crate::starmap_modern::{self as sm};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Act {
     Bar(sm::Act),
-    /// The inbox row `k` (`AktUzenet0to3`: 0 the bottom row … 3 the top) pressed.
+    /// The inbox entry `i` pressed (`MessagesScreen::reach` finds its row).
     Row(usize),
-    /// The arrows: newer (hot-spot 1) and older (2).
-    Newer,
-    Older,
     /// Answer `k` (0..=3) picked.
     Answer(usize),
     /// A press in the text: type the rest at once.
@@ -28,11 +26,11 @@ pub enum Act {
     Leave,
 }
 
-/// One inbox row: its `AktUzenet0to3`, the sender, the date, the two subject lines, unread (`kept` clear and not
-/// opened here) and open now.
+/// One inbox row: its inbox entry, the sender, the date, the two subject lines, unread (`kept` clear and not opened
+/// here) and open now.
 #[derive(Debug, Clone, Default)]
 pub struct Row {
-    pub k: usize,
+    pub i: usize,
     pub sender: String,
     pub date: String,
     pub subject: [String; 2],
@@ -56,8 +54,6 @@ pub struct Open {
 pub struct Labels {
     pub title: String,
     pub count: String,
-    pub newer: String,
-    pub older: String,
     pub unread: String,
     pub sender: String,
     pub date: String,
@@ -69,10 +65,8 @@ pub struct Labels {
 #[derive(Debug, Clone, Default)]
 pub struct View {
     pub bar: sm::View,
+    /// The whole inbox, oldest first.
     pub rows: Vec<Row>,
-    /// The arrows can move the list (`inbox_arrows_allowed`) and more lie that way.
-    pub newer: bool,
-    pub older: bool,
     pub open: Option<Open>,
     /// The way out is live (no answer pending and the text typed: `Messages_MouseInit2`'s 7..=9).
     pub leave: bool,
@@ -92,6 +86,7 @@ const INBOX_W: f32 = 540.0;
 const HEAD: egui::Vec2 = egui::Vec2::new(720.0, 405.0);
 const GAP: f32 = 40.0;
 const ROW_H: f32 = 96.0;
+const ROW_GAP: f32 = 6.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
@@ -148,58 +143,48 @@ fn well(ui: &Ui, r: Rect) {
     ds::relief(p, r.expand(6.0), ds::RADIUS_PANEL + 4);
 }
 
-/// The inbox: the title, the new and total counts, the newer and older arrows, the four rows (the original's, newest
-/// on top), the colour hint.
+/// The inbox: the title, the new and total counts, every message from the top (oldest first, the newest at the
+/// bottom, scrolling with the newest kept in view), the colour hint.
 fn inbox_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let rect = Rect::from_min_size(ui.max_rect().min, size);
     ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
     let inner = rect.shrink(16.0);
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), 40.0));
-    let arrows = 2.0 * 40.0 + 8.0;
     let count_w = 130.0;
-    Text::new(&v.labels.title, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, head.with_max_x(head.right() - arrows - count_w - 16.0));
-    Text::new(&v.labels.count, Font::LABEL).right().shrink(10.0).color(k.ink_muted).paint(ui, Rect::from_min_size(pos2(head.right() - arrows - count_w - 8.0, head.top()), vec2(count_w, 40.0)));
-    for (i, (live, up, tip, act)) in [(v.newer, true, &v.labels.newer, Act::Newer), (v.older, false, &v.labels.older, Act::Older)].into_iter().enumerate() {
-        let r = Rect::from_min_size(pos2(head.right() - arrows + i as f32 * 48.0, head.top()), vec2(40.0, 40.0));
-        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r));
-        c.add_enabled_ui(live, |ui| {
-            let draw = move |p: &egui::Painter, r: Rect, c: Color32| {
-                let m = r.center();
-                let d = r.width() * 0.22 * if up { -1.0 } else { 1.0 };
-                p.line(vec![m + vec2(-r.width() * 0.25, -d * 0.5), m + vec2(0.0, d * 0.5), m + vec2(r.width() * 0.25, -d * 0.5)], egui::Stroke::new(2.0f32, c));
-            };
-            if ds::either(&ds::tip(ds::round_button(ui, ds::Glyph::Custom(&draw), true, false), tip)) {
-                acts.push(act);
-            }
-        });
-    }
+    Text::new(&v.labels.title, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, head.with_max_x(head.right() - count_w - 8.0));
+    Text::new(&v.labels.count, Font::LABEL).right().shrink(10.0).color(k.ink_muted).paint(ui, head.with_min_x(head.right() - count_w));
     let list = Rect::from_min_max(pos2(inner.left(), head.bottom() + 12.0), pos2(inner.right(), inner.bottom() - 30.0));
-    for r in &v.rows {
-        // Row k = 3 from the top (`Messages_Main`'s quarters of `UBAYSzsz`).
-        let at = Rect::from_min_size(pos2(list.left(), list.top() + (3 - r.k.min(3)) as f32 * (ROW_H + 6.0)), vec2(list.width(), ROW_H));
-        if at.bottom() > list.bottom() {
-            continue;
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(egui::Layout::top_down(egui::Align::Min)));
+    egui::ScrollArea::vertical().id_salt("mmh-rows").auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {
+        ui.spacing_mut().item_spacing.y = ROW_GAP;
+        for r in &v.rows {
+            inbox_row(ui, r, acts);
         }
-        let resp = ui.interact(at, ui.id().with(("mmh-row", r.k)), Sense::click());
-        let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-        ds::row_back(ui, at, hot, r.open);
-        let inner = at.shrink2(vec2(12.0, 10.0));
-        let line = |n: f32, h: f32| Rect::from_min_size(pos2(inner.left(), inner.top() + n), vec2(inner.width(), h));
-        let top = line(0.0, 24.0);
-        let date_w = 110.0;
-        Text::new(&r.sender, Font::HEADING.sized(18.0).weight(Weight::Medium)).shrink(13.0).color(if r.unread { k.lcd_ink } else { k.ink_silver }).paint(ui, top.with_max_x(top.right() - date_w - 8.0));
-        Text::new(&r.date, Font::DATA).right().baseline(ds::fit::baseline(top, Font::HEADING.sized(18.0))).color(k.info).paint(ui, top.with_min_x(top.right() - date_w));
-        Text::new(&r.subject[0], Font::BODY.sized(15.0)).shrink(12.0).color(if r.unread { k.ink } else { k.ink_silver }).paint(ui, line(28.0, 20.0));
-        Text::new(&r.subject[1], Font::DATA).shrink(11.0).color(if r.unread { k.ink_silver } else { k.ink_muted }).paint(ui, line(50.0, 20.0));
-        if ds::either(&resp.on_hover_cursor(egui::CursorIcon::PointingHand)) {
-            acts.push(Act::Row(r.k));
-        }
-    }
+    });
     let foot = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 18.0), inner.right_bottom());
     let dot = Rect::from_center_size(pos2(foot.left() + 5.0, foot.center().y), vec2(8.0, 8.0));
     ui.painter().circle_filled(dot.center(), 4.0, k.lcd_ink);
     Text::new(&v.labels.unread, Font::LABEL.upper(false)).shrink(10.0).color(k.ink_muted).paint(ui, foot.with_min_x(foot.left() + 16.0));
+}
+
+/// One inbox row, the next one down the list.
+fn inbox_row(ui: &mut Ui, r: &Row, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let (at, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
+    ds::row_back(ui, at, hot, r.open);
+    let inner = at.shrink2(vec2(12.0, 10.0));
+    let line = |n: f32, h: f32| Rect::from_min_size(pos2(inner.left(), inner.top() + n), vec2(inner.width(), h));
+    let top = line(0.0, 24.0);
+    let date_w = 110.0;
+    Text::new(&r.sender, Font::HEADING.sized(18.0).weight(Weight::Medium)).shrink(13.0).color(if r.unread { k.lcd_ink } else { k.ink_silver }).paint(ui, top.with_max_x(top.right() - date_w - 8.0));
+    Text::new(&r.date, Font::DATA).right().baseline(ds::fit::baseline(top, Font::HEADING.sized(18.0))).color(k.info).paint(ui, top.with_min_x(top.right() - date_w));
+    Text::new(&r.subject[0], Font::BODY.sized(15.0)).shrink(12.0).color(if r.unread { k.ink } else { k.ink_silver }).paint(ui, line(28.0, 20.0));
+    Text::new(&r.subject[1], Font::DATA).shrink(11.0).color(if r.unread { k.ink_silver } else { k.ink_muted }).paint(ui, line(50.0, 20.0));
+    if ds::either(&resp.on_hover_cursor(egui::CursorIcon::PointingHand)) {
+        acts.push(Act::Row(r.i));
+    }
 }
 
 /// The open message's card: the subject, the sender and the date as table lines, the answers once they show.
@@ -278,9 +263,8 @@ fn date(t: i32) -> String {
     format!("{}.{:02}.{:02}.", t / 18000, t / 1500 % 12 + 1, t / 50 % 30 + 1)
 }
 
-/// What the modern messages screen shows this frame, from the classic screen's state; `arrows`: no automatic message
-/// waits (`inbox_arrows_allowed`).
-pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules, s: &crate::ui::UiSnap, gates: Option<&[bool; 20]>, time: f32, arrows: bool) -> View {
+/// What the modern messages screen shows this frame, from the classic screen's state.
+pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules, s: &crate::ui::UiSnap, gates: Option<&[bool; 20]>, time: f32) -> View {
     let lang = h.texts.lang;
     let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
     let col = |i: i32| crate::gui::ink(h.palette.get(i.max(0) as usize).copied().unwrap_or([1.0; 3]));
@@ -291,19 +275,18 @@ pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_ru
     let alias = |i: usize, t: &str| dec(&crate::messages_screen::alias_conv(&h.texts.encode(t), s.inbox_params.get(i).map_or(&[][..], |p| &p[..])));
     let open_index = m.open.as_ref().map(|d| d.index);
     let rows = if m.list_up() {
-        crate::ui::inbox_rows(n, m.first)
-            .into_iter()
-            .filter_map(|(i, slot)| {
-                let &(_, kept, t) = s.inbox.get(i)?;
+        (0..n)
+            .map(|i| {
+                let (_, kept, t) = s.inbox[i];
                 let k = kind(i);
-                Some(Row {
-                    k: 3 - slot,
+                Row {
+                    i,
                     sender: k.map(|k| alias(i, &k.sender)).unwrap_or_default(),
                     date: date(t),
                     subject: [0, 1].map(|j| k.map(|k| alias(i, &k.subject[j])).unwrap_or_default()),
                     unread: kept & 1 == 0 && !m.read.contains(&i),
                     open: open_index == Some(i),
-                })
+                }
             })
             .collect()
     } else {
@@ -326,15 +309,11 @@ pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_ru
     View {
         bar: h.bar_view(state, rules, s, s.human as u8, gates, time, 10),
         rows,
-        newer: arrows && m.first + 4 < n && spot(NEWER_AT, 1),
-        older: arrows && m.first > 0 && spot(OLDER_AT, 2),
         open,
         leave: spot(LEAVE_AT, 7),
         labels: Labels {
             title: ours("Messages"),
             count: format!("{unread} {} · {n}", ours("new")),
-            newer: dec(&crate::messages_screen::MessagesScreen::tip_text(1, &h.texts)),
-            older: dec(&crate::messages_screen::MessagesScreen::tip_text(2, &h.texts)),
             unread: ours("Yellow: unread"),
             sender: ours("Sender"),
             date: ours("Date"),
@@ -344,10 +323,8 @@ pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_ru
     }
 }
 
-/// The virtual points the acts press (`Messages_MouseInit`'s hot-spots, `messages_screen::SPOTS`): the arrows 1 and
-/// 2, the way out 7, the text 6, the inbox row `k`'s quarter of spot 3.
-pub const NEWER_AT: [f32; 2] = [166.0, 198.0];
-pub const OLDER_AT: [f32; 2] = [166.0, 409.0];
+/// The virtual points the acts press (`Messages_MouseInit`'s hot-spots, `messages_screen::SPOTS`): the way out 7,
+/// the text 6, the inbox row `k`'s quarter of spot 3.
 pub const LEAVE_AT: [f32; 2] = [20.0, 20.0];
 pub const TEXT_AT: [f32; 2] = [300.0, 80.0];
 pub fn row_at(k: usize) -> [f32; 2] {
@@ -359,9 +336,13 @@ mod tests {
     use super::*;
 
     fn view(name: &str) -> View {
-        let rows = (0..4).map(|k| Row { k, sender: name.into(), date: "2327.10.23.".into(), subject: [name.into(), name.into()], unread: k == 3, open: k == 2 }).collect();
+        with_rows(name, 4)
+    }
+
+    fn with_rows(name: &str, n: usize) -> View {
+        let rows = (0..n).map(|i| Row { i, sender: name.into(), date: "2327.10.23.".into(), subject: [name.into(), name.into()], unread: i == 3, open: i == 2 }).collect();
         let open = Open { subject: name.into(), sender: name.into(), date: name.into(), body: vec![(name.repeat(40), Color32::WHITE)], typing: true, answers: vec![(0, name.into(), false), (2, name.into(), true)] };
-        View { rows, newer: true, older: true, open: Some(open), leave: true, labels: Labels { title: name.into(), exit: name.into(), full_text: name.into(), ..Default::default() }, ..Default::default() }
+        View { rows, open: Some(open), leave: true, labels: Labels { title: name.into(), exit: name.into(), full_text: name.into(), ..Default::default() }, ..Default::default() }
     }
 
     fn run(v: &View, click: Option<egui::Pos2>) -> (Vec<Rect>, Vec<Act>) {
@@ -383,7 +364,7 @@ mod tests {
         (rects, acts)
     }
 
-    /// Long texts never move a panel; the top row is `AktUzenet0to3` 3, the answers and the text answer a press.
+    /// Long texts never move a panel; the top row is the oldest message, the answers and the text answer a press.
     #[test]
     fn panels_and_presses() {
         let (short, _) = run(&view("Tra"), None);
@@ -393,7 +374,7 @@ mod tests {
         let (_, a) = run(&view("Tra"), Some(short[4].center()));
         assert!(a.contains(&Act::Leave), "{a:?}");
         let (_, a) = run(&view("Tra"), Some(pos2(inbox.left() + 100.0, inbox.top() + 16.0 + 40.0 + 12.0 + 40.0)));
-        assert!(a.contains(&Act::Row(3)), "{a:?}");
+        assert!(a.contains(&Act::Row(0)), "{a:?}");
         let (_, a) = run(&view("Tra"), Some(short[3].center()));
         assert!(a.contains(&Act::Hurry), "{a:?}");
         let card = short[2];
@@ -402,5 +383,24 @@ mod tests {
         // A disabled answer is still asked for (the sim's `ValaszKivalasztva` keeps it pending).
         let (_, a) = run(&view("Tra"), Some(pos2(card.center().x, card.bottom() - 20.0 - 26.0)));
         assert!(a.contains(&Act::Answer(2)), "{a:?}");
+    }
+
+    /// The list starts at the panel's top, oldest first, one row under the other; a long list scrolls with the
+    /// newest at the panel's bottom.
+    #[test]
+    fn rows_from_the_top_newest_at_the_bottom() {
+        let (rects, _) = run(&with_rows("Tra", 2), None);
+        let inbox = rects[0];
+        let list_top = inbox.top() + 16.0 + 40.0 + 12.0;
+        for (i, y) in [(0, list_top + 4.0), (1, list_top + ROW_H + ROW_GAP + 4.0)] {
+            let (_, a) = run(&with_rows("Tra", 2), Some(pos2(inbox.left() + 100.0, y)));
+            assert_eq!(a, [Act::Row(i)]);
+        }
+        // Nothing under the two rows.
+        let (_, a) = run(&with_rows("Tra", 2), Some(pos2(inbox.left() + 100.0, list_top + 2.0 * (ROW_H + ROW_GAP) + 20.0)));
+        assert!(a.is_empty(), "{a:?}");
+        let list_bottom = inbox.bottom() - 16.0 - 30.0;
+        let (_, a) = run(&with_rows("Tra", 30), Some(pos2(inbox.left() + 100.0, list_bottom - 4.0)));
+        assert_eq!(a, [Act::Row(29)]);
     }
 }

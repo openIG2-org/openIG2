@@ -2286,7 +2286,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
             return Ok(());
         }
         if modern_messages {
-            let mut v = crate::messages_modern::view(&hud, &world.game.state, &l.tables, &world.ui, None, t, true);
+            let mut v = crate::messages_modern::view(&hud, &world.game.state, &l.tables, &world.ui, None, t);
             v.bar.bind_keys(&crate::bindings::Bindings::default());
             let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
             let style = crate::starmap_modern::style(&hud, size);

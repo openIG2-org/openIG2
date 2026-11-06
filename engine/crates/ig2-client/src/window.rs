@@ -1464,8 +1464,7 @@ impl App {
             h.modern_messages = messages_modern && screen == crate::ui::Screen::Messages;
             if h.modern_messages {
                 let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
-                let arrows = ig2_sim::game::inbox_arrows_allowed(&self.world.game.state);
-                let mut m = crate::messages_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, gates, t, arrows);
+                let mut m = crate::messages_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, gates, t);
                 m.bar.bind_keys(&self.bindings);
                 mmv = Some(m);
             }

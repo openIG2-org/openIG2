@@ -20,16 +20,16 @@ card beside it, the text wrapped in a wide panel under them, the "full text" and
    off = the original's screen. Snapshots and capture comparisons draw the original's unless `--modern-messages`
    is given, so every capture and replay test stays byte-identical.
 2. **Layout** (anchored to the sides; 4:3, 16:9, 21:9 and a larger UI scale keep working): under the bar, left, the
-   inbox panel (540 wide): its title, the new and total counts, the newer and older arrows as round keys (hot-spots
-   1 and 2, live only when the original's would move the list), the original's four rows from `AktUzenetPointer`
-   (the sender in LCD yellow while unread, silver once read, the date, the two subject lines; the open one
+   inbox panel (540 wide): its title, the new and total counts, every message as a row from the top, oldest first and the newest at the bottom
+   (scrolling, the newest kept in view; no arrows) (the sender in LCD yellow while unread, silver once read, the date, the two subject lines; the open one
    selected), the colour hint; right of it the head's well (720 × 405, 16:9) where the window draws the talking
    head's clip and its interlace, and the message's card (subject, sender, date; the answers as plates with their
    key `A`..`D`, a disabled one dimmed); under them the text panel: the message typed so far as wrapped body text
    (19/32) in the original's colours, the newest lines kept in view, the typer's caret blinking at its end; at the
    foot "Full text" (types the rest at once) and Exit.
 3. **Same functions**: each act is the original's press at its hot-spot's virtual point (`screen_press_at`): a row
-   the quarter of spot 3 that holds it, the arrows spots 1 and 2 (their debounce and the sim's `Scroll` orders), the
+   moves the four-row window to its message (`MessagesScreen::reach`, one `Scroll` order) and
+   presses the quarter of spot 3 that holds it, the
    text a press in the text box (`hurry`), Exit spot 7 (live only when the original's 7..=9 are: no answer pending
    and the text typed); an answer is its key (`a`..`d`, as `MessagesScreen::key`). The keyboard is untouched.
 4. **Input**: egui takes the pointer on the whole screen while the page is up; the classic hot-spots get no hover

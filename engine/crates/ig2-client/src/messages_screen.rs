@@ -886,6 +886,29 @@ impl MessagesScreen {
         texts.get(10, 1, id.min(7) as u16)
     }
 
+    /// Ours (ADR 0076): the modern list's press on inbox entry `i`: the row (`AktUzenet0to3`) it has in the four-row
+    /// window, the window first moved to it as far as the arrows would have taken it (one `Scroll` order); `None`
+    /// while the arrows can't move it (`arrows` false) or the screen closes.
+    pub fn reach(&mut self, i: usize, n: usize, arrows: bool) -> Option<usize> {
+        if self.closing || i >= n {
+            return None;
+        }
+        if (self.first..self.first + 4).contains(&i) {
+            return Some(i - self.first);
+        }
+        if !arrows {
+            return None;
+        }
+        let first = if i < self.first { i } else { i - 3 };
+        self.waiting.get_or_insert(self.first as i32);
+        // The selected row moves with the list, as under the arrows.
+        let row = self.row + self.first as i32 - first as i32;
+        self.row = if self.row != -1 && (0..4).contains(&row) { row } else { -1 };
+        self.first = first;
+        self.orders.push(MessageOrder::Scroll { pointer: first as i32, row: self.row });
+        Some(i - first)
+    }
+
     /// A left press (`Messages_Main`) on inbox of `n` messages; `arrows`: no automatic message waits
     /// ([`ig2_sim::game::inbox_arrows_allowed`]).
     pub fn press(&mut self, at: [f32; 2], n: usize, arrows: bool) -> Press {
@@ -1282,11 +1305,31 @@ pub fn alias_conv(text: &[u8], params: &[Vec<u8>]) -> Vec<u8> {
 
 #[cfg(test)]
 mod alias_tests {
+    use super::*;
+
     #[test]
     fn alias_conv_fills_parameters() {
         let params = vec![b"Zorg".to_vec(), b"#=#".to_vec()];
         assert_eq!(super::alias_conv(b"Admiral #0# ", &params), b"Admiral Zorg ");
         assert_eq!(super::alias_conv(b"#1#", &params), b"(~verror~s)");
         assert_eq!(super::alias_conv(b"#4# x #", &params), b" x #");
+    }
+
+    /// The modern list's press: an entry in the window is its row; one outside moves the window to it in one order,
+    /// the selected row with it; without the arrows it isn't reached.
+    #[test]
+    fn reach_moves_the_window_to_the_entry() {
+        let mut s = MessagesScreen { first: 2, row: 1, ..Default::default() };
+        assert_eq!(s.reach(4, 10, true), Some(2));
+        assert!(s.orders.is_empty());
+        assert_eq!(s.reach(8, 10, false), None);
+        assert_eq!(s.reach(8, 10, true), Some(3));
+        assert_eq!((s.first, s.row), (5, -1));
+        assert_eq!(s.reach(1, 10, true), Some(0));
+        assert_eq!(s.orders, [MessageOrder::Scroll { pointer: 5, row: -1 }, MessageOrder::Scroll { pointer: 1, row: -1 }]);
+        let mut s = MessagesScreen { first: 2, row: 0, ..Default::default() };
+        assert_eq!(s.reach(1, 10, true), Some(0));
+        assert_eq!(s.row, 1);
+        assert_eq!(s.reach(10, 10, true), None);
     }
 }

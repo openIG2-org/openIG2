@@ -232,8 +232,10 @@ moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads
 the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
 messages.
 Modern page: with "Modern messages screen" on (default) the screen is the design board's egui layout (ADR 0076,
-`messages_modern.rs`): the same rows, arrows, text, answers and way out through the hot-spots' code at their virtual
-points; the clip is drawn into the head's well; `--snapshot --modern-messages`.
+`messages_modern.rs`): every message listed from the top of its panel, oldest first and the newest at the bottom, scrolling when longer
+(the newest kept in view; no arrows). A press on a row moves the four-row window to that message as the arrows would
+(`MessagesScreen::reach`) and opens it through spot 3; while an automatic message waits only the rows inside the window
+open. Text, answers and way out go through the hot-spots' code at their virtual points; the clip is drawn into the head's well; `--snapshot --modern-messages`.
 
 ## 9. The event log (ours, enhanced; ADR 0040, row 454)
 Not in the original. With `EventLog` on (the default) the client records every scrolling line `Game::messages_for`
