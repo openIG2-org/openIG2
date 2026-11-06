@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern colony screen: a more compact building chooser (narrower, a smaller picture, tighter tabs and list rows), so more of the colony stays in view (issue #86).
 - Modern colony screen: the building groups' tabs are as wide as their names, so every name (KERESKEDELMI, COMMERCIAL) shows whole and all in the same size (issue #85).
 - Colony screen: the mouse wheel zooms within the zoom keys' range and glides to a stop at the nearest and farthest view instead of jumping back (issue #88).
 - Modern main menu: its pages (sub-menus, new game, settings, load, statistics, replays, mods, multiplayer) slide and fade in and out one after the other, as the modern in-game screens do (issue #91).

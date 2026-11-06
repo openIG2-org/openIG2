@@ -240,12 +240,17 @@ pub struct State {
 }
 
 /// The boards' measures in points.
-const BUILD_W: f32 = 430.0;
+/// The build menu: its width, the inset, the header (the picture 112 × 120), the tabs' row with its gaps.
+const BUILD_W: f32 = 380.0;
+const INSET: f32 = 12.0;
+const HEAD_H: f32 = INSET + 120.0 + INSET;
+const TAB_H: f32 = 30.0;
+const TABS_H: f32 = 2.0 + TAB_H + 8.0;
 const CARD_W: f32 = 440.0;
 const WAR_CARD_W: f32 = 400.0;
 const RADAR_W: f32 = 300.0;
 const ROUND: f32 = 60.0;
-const ROW_H: f32 = 34.0;
+const ROW_H: f32 = 28.0;
 const INFO_W: f32 = 760.0;
 /// The war strip's middle column (the retreat and its label).
 const RETREAT_W: f32 = 150.0;
@@ -418,19 +423,19 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
     let at = ui.painter().add(Shape::Noop);
     ui.set_width(BUILD_W);
     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-    // The header: the picture and the current kind (`grid 150px 1fr`, 16 inside).
-    let head = ui.allocate_ui(vec2(BUILD_W, 208.0), |ui| {
-        let (rect, _) = ui.allocate_exact_size(vec2(BUILD_W, 208.0), Sense::hover());
+    // The header: the picture and the current kind.
+    let head = ui.allocate_ui(vec2(BUILD_W, HEAD_H), |ui| {
+        let (rect, _) = ui.allocate_exact_size(vec2(BUILD_W, HEAD_H), Sense::hover());
         ds::vgrad(ui.painter(), Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom())), egui::CornerRadius { nw: 8, ne: 8, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
-        let mut pic = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(16.0, 16.0), vec2(150.0, 176.0))));
-        let w = well(&mut pic, vec2(150.0, 176.0), Pic::Building, st);
+        let mut pic = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(rect.min + vec2(INSET, INSET), vec2(112.0, 120.0))));
+        let w = well(&mut pic, vec2(112.0, 120.0), Pic::Building, st);
         let hot = ds::hover_t(ui.ctx(), w.id, w.hovered() && !b.pending);
         if b.cursor || hot > 0.0 {
             // The build cursor's mark in the well's corner: lit while it is up.
-            let m = Rect::from_min_size(w.rect.right_top() + vec2(-30.0, 6.0), vec2(24.0, 24.0));
+            let m = Rect::from_min_size(w.rect.right_top() + vec2(-26.0, 6.0), vec2(20.0, 20.0));
             let c = if b.cursor { k.lcd_ink } else { k.ink_silver.gamma_multiply(hot) };
             for (sx, sy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
-                let p = |x: f32, y: f32| m.center() + vec2(sx * x, sy * y) * 9.0;
+                let p = |x: f32, y: f32| m.center() + vec2(sx * x, sy * y) * 7.5;
                 ui.painter().add(Shape::line(vec![p(1.0, 0.35), p(1.0, 1.0), p(0.35, 1.0)], Stroke::new(2.0f32, c)));
             }
             ui.painter().circle_filled(m.center(), 2.5, c);
@@ -444,21 +449,21 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
         if !b.pending && ds::either(&w) {
             acts.push(Act::Pick(-1));
         }
-        let col = Rect::from_min_max(rect.min + vec2(16.0 + 150.0 + 16.0, 16.0), rect.max - vec2(16.0, 16.0));
+        let col = Rect::from_min_max(rect.min + vec2(INSET + 112.0 + 14.0, INSET), rect.max - vec2(INSET, INSET));
         let (name, price, energy, workers) = b.current.clone().unwrap_or_default();
-        let title = Font::HEADING.sized(24.0).tracking(0.08);
-        Text::new(&name, title).color(k.ink).shrink(16.0).paint(ui, Rect::from_min_size(col.min, vec2(col.width(), 28.0)));
-        let data = Font::DATA.sized(17.0);
+        let title = Font::HEADING.sized(20.0).tracking(0.08);
+        Text::new(&name, title).color(k.ink).shrink(14.0).paint(ui, Rect::from_min_size(col.min, vec2(col.width(), 24.0)));
+        let data = Font::DATA.sized(15.0);
         for (j, (i, s)) in [(ds::Icon::Coins, price), (ds::Icon::Bolt, energy.to_string()), (ds::Icon::User, workers.to_string())].into_iter().enumerate() {
-            let y = col.top() + 38.0 + 26.0 * j as f32;
-            let line = Rect::from_min_size(pos2(col.left(), y), vec2(col.width(), 20.0));
-            i.paint(ui.painter(), Rect::from_min_size(line.min + vec2(0.0, 2.0), vec2(16.0, 16.0)), k.info);
-            Text::new(&s, data).color(k.info).paint(ui, line.with_min_x(line.left() + 24.0));
+            let y = col.top() + 27.0 + 19.0 * j as f32;
+            let line = Rect::from_min_size(pos2(col.left(), y), vec2(col.width(), 18.0));
+            i.paint(ui.painter(), Rect::from_min_size(line.min + vec2(0.0, 2.0), vec2(14.0, 14.0)), k.info);
+            Text::new(&s, data).color(k.info).paint(ui, line.with_min_x(line.left() + 22.0));
         }
-        let plate = Rect::from_min_max(pos2(col.left(), col.bottom() - 40.0), col.max);
-        let f = ds::Plate::FONT.sized(15.0).tracking(0.14);
+        let plate = Rect::from_min_max(pos2(col.left(), col.bottom() - 32.0), col.max);
+        let f = ds::Plate::FONT.sized(14.0).tracking(0.14);
         let label = if b.build_tip.is_empty() { "Build" } else { b.build_tip.as_str() };
-        let r = ui.put(plate, ds::Plate::new(label).primary(b.cursor).font(f).height(40.0).width(plate.width()));
+        let r = ui.put(plate, ds::Plate::new(label).primary(b.cursor).font(f).height(32.0).width(plate.width()));
         if b.cursor {
             // The armed plate breathes (the original's "BUILD" sparkles).
             let t = ui.input(|i| i.time) as f32;
@@ -473,31 +478,31 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
     // The groups (4 plates, the current group pressed).
     let current = b.entries.iter().find(|e| e.current).map(|e| e.column);
     let tab = st.tab.or(current).unwrap_or(0).min(b.headers.len().saturating_sub(1));
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     // Each tab as wide as its label, the row's rest shared evenly, every label whole in one size.
-    let (row, _) = ui.allocate_exact_size(vec2(BUILD_W, 36.0), Sense::hover());
-    let (f, widths) = tab_widths(ui.ctx(), &b.headers, BUILD_W - 32.0);
-    let mut x = row.left() + 16.0;
+    let (row, _) = ui.allocate_exact_size(vec2(BUILD_W, TAB_H), Sense::hover());
+    let (f, widths) = tab_widths(ui.ctx(), &b.headers, BUILD_W - 2.0 * INSET);
+    let mut x = row.left() + INSET;
     for (i, (h, w)) in b.headers.iter().zip(widths).enumerate() {
-        let slot = Rect::from_min_size(pos2(x, row.top()), vec2(w, 36.0));
+        let slot = Rect::from_min_size(pos2(x, row.top()), vec2(w, TAB_H));
         x += w + TAB_GAP;
-        if ui.put(slot, ds::Plate::new(h).primary(i == tab).font(f).height(36.0).width(w).pad(TAB_PAD)).clicked() {
+        if ui.put(slot, ds::Plate::new(h).primary(i == tab).font(f).height(TAB_H).width(w).pad(TAB_PAD)).clicked() {
             st.tab = Some(i);
         }
     }
-    ui.add_space(12.0);
+    ui.add_space(8.0);
     // The group's entries in a recessed well (name, count, price).
     let rows = b.entries.iter().filter(|e| e.column == tab).count();
-    let list_h = (rows.max(1) as f32 * ROW_H).min((room - 208.0 - 52.0 - 28.0).max(3.0 * ROW_H));
+    let list_h = (rows.max(1) as f32 * ROW_H).min((room - HEAD_H - TABS_H - 8.0 - INSET).max(3.0 * ROW_H));
     ui.horizontal(|ui| {
-        ui.add_space(16.0);
-        let (outer, _) = ui.allocate_exact_size(vec2(BUILD_W - 32.0, list_h + 12.0), Sense::hover());
+        ui.add_space(INSET);
+        let (outer, _) = ui.allocate_exact_size(vec2(BUILD_W - 2.0 * INSET, list_h + 8.0), Sense::hover());
         ui.painter().rect_filled(outer, ds::RADIUS_PLATE, k.glass_deep);
         ds::rim(ui.painter(), outer, ds::RADIUS_PLATE, k.rim);
-        let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(outer.shrink(6.0)).layout(egui::Layout::top_down(egui::Align::Min)));
+        let mut inner = ui.new_child(egui::UiBuilder::new().max_rect(outer.shrink(4.0)).layout(egui::Layout::top_down(egui::Align::Min)));
         egui::ScrollArea::vertical().id_salt("cmh-build-list").max_height(list_h).auto_shrink([false, true]).show(&mut inner, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            let f = Font::BODY.sized(16.0);
+            let f = Font::BODY.sized(15.0);
             for e in b.entries.iter().filter(|e| e.column == tab) {
                 let ok = e.ok && !b.pending;
                 let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), if ok { Sense::click() } else { Sense::hover() });
@@ -506,11 +511,11 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
                 let row = r.shrink2(vec2(8.0, 0.0));
                 let base = ds::fit::baseline(r, f);
                 let ink = if ok { k.ink } else { k.ink_muted };
-                let (rest, price) = row.split_left_right_at_x(row.right() - 80.0);
-                let (name, count) = rest.split_left_right_at_x(rest.right() - 36.0);
-                Text::new(&e.price, Font::DATA.sized(16.0)).right().color(if ok { k.info } else { k.ink_muted }).baseline(base).paint(ui, price);
+                let (rest, price) = row.split_left_right_at_x(row.right() - 72.0);
+                let (name, count) = rest.split_left_right_at_x(rest.right() - 32.0);
+                Text::new(&e.price, Font::DATA.sized(15.0)).right().color(if ok { k.info } else { k.ink_muted }).baseline(base).paint(ui, price);
                 if e.count > 0 {
-                    Text::new(&e.count.to_string(), Font::DATA.sized(16.0)).right().color(if ok { k.own } else { k.ink_muted }).baseline(base).paint(ui, count.with_max_x(count.right() - 8.0));
+                    Text::new(&e.count.to_string(), Font::DATA.sized(15.0)).right().color(if ok { k.own } else { k.ink_muted }).baseline(base).paint(ui, count.with_max_x(count.right() - 8.0));
                 }
                 let cut = Text::new(&e.name, f).color(ink).baseline(base).paint(ui, name.with_max_x(name.right() - 8.0)).cut;
                 let resp = if cut { resp.on_hover_text(&e.name) } else { resp };
@@ -521,7 +526,7 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
             }
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(INSET);
     let rect = ui.min_rect();
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
 }
@@ -1087,7 +1092,7 @@ mod tests {
     #[test]
     fn build_entry_picks() {
         // The header (208), the tabs (4 + 36 + 12), the well's 6: the second entry's row.
-        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 208.0 + 52.0 + 6.0 + ROW_H * 1.5);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, HEAD_H + TABS_H + 4.0 + ROW_H * 1.5);
         assert_eq!(click(&view(), 0, at), vec![Act::Pick(0x52)]);
     }
 
@@ -1098,7 +1103,7 @@ mod tests {
         if let Some(b) = &mut v.build {
             b.entries[1].ok = false;
         }
-        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 208.0 + 52.0 + 6.0 + ROW_H * 1.5);
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, HEAD_H + TABS_H + 4.0 + ROW_H * 1.5);
         assert_eq!(click(&v, 0, at), vec![]);
     }
 
@@ -1111,9 +1116,9 @@ mod tests {
         g.run(SIZE, &style, |ctx| {
             for set in sets {
                 let labels = set.map(String::from);
-                let (f, w) = tab_widths(ctx, &labels, BUILD_W - 32.0);
+                let (f, w) = tab_widths(ctx, &labels, BUILD_W - 2.0 * INSET);
                 assert!(f.size >= 11.0, "{set:?} at {}", f.size);
-                assert!((w.iter().sum::<f32>() + 3.0 * TAB_GAP - (BUILD_W - 32.0)).abs() < 0.01, "{set:?}: {w:?}");
+                assert!((w.iter().sum::<f32>() + 3.0 * TAB_GAP - (BUILD_W - 2.0 * INSET)).abs() < 0.01, "{set:?}: {w:?}");
                 for (s, w) in labels.iter().zip(&w) {
                     assert!(Text::new(s, f).layout(ctx, f32::INFINITY).width + 2.0 * TAB_PAD <= w + 0.01, "{s} in {w}");
                 }
