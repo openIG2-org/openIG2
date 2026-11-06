@@ -539,16 +539,12 @@ fn tank_row(ui: &egui::Ui, r: Rect, c: &Card, src: [f32; 4], st: &mut State) {
     let k = ds::tokens();
     let p = ui.painter();
     let hot = ds::hover_t(ui.ctx(), ui.id().with(("fmh-row", r.min.y as i32)), hover(ui, r));
-    if c.selected {
-        ds::hgrad(p, r, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
-        ds::rim(p, r, ds::RADIUS_PLATE, k.ink_silver);
-    } else {
+    // The board's rows: the unselected on deep glass with a rim, then the kit's row look.
+    if !c.selected {
         p.rect_filled(r, ds::RADIUS_PLATE, k.glass_deep);
-        if hot > 0.0 {
-            ds::hgrad(p, r, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha((20.0 * hot) as u8)), (1.0, Color32::TRANSPARENT)]);
-        }
-        ds::rim(p, r, ds::RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hot));
+        ds::rim(p, r, ds::RADIUS_PLATE, k.rim);
     }
+    ds::row_back(ui, r, hot, c.selected);
     // `grid-template-columns: 220px 1fr 56px`, gap 16, padding 10 × 14.
     let inner = r.shrink2(vec2(14.0, 10.0));
     let well = Rect::from_min_size(inner.min, vec2(216.0, inner.height()));
