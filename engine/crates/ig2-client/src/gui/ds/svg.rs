@@ -25,7 +25,7 @@ pub fn paint(p: &Painter, rect: Rect, svg: &str, c: Color32) {
 }
 
 /// The icon in white on a `size` pixel canvas: its outline (with the stroke) centred, its longer side 22 of the 24
-/// units (Lucide's live area and its stroke), whatever room the drawing leaves in its grid; the stroke 2 units.
+/// units (Lucide's live area and its stroke) but at most a tenth over its own size; the stroke 2 units.
 fn render(svg: &str, size: [usize; 2]) -> egui::ColorImage {
     use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke as Pen, Transform};
     let lines = lines(svg);
@@ -36,7 +36,8 @@ fn render(svg: &str, size: [usize; 2]) -> egui::ColorImage {
     }
     let (w, h) = ((hi[0] - lo[0]).max(0.0) + 2.0, (hi[1] - lo[1]).max(0.0) + 2.0);
     let unit = size[0].min(size[1]) as f32 / 24.0;
-    let s = unit * 22.0 / w.max(h);
+    // Never more than a tenth over Lucide's own size: a small glyph (a chevron, minus) keeps its weight.
+    let s = unit * (22.0 / w.max(h)).min(1.1);
     let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
     let at = |q: [f32; 2]| (size[0] as f32 / 2.0 + (q[0] - mid[0]) * s, size[1] as f32 / 2.0 + (q[1] - mid[1]) * s);
     let Some(mut pixmap) = Pixmap::new(size[0] as u32, size[1] as u32) else { return egui::ColorImage::new(size, vec![Color32::TRANSPARENT; size[0] * size[1]]) };
@@ -320,8 +321,8 @@ mod tests {
         let mid = a[1].0[a[1].0.len() - 10];
         assert!(mid[0] > 15.0 && mid[1] < 3.2, "{mid:?}");
         // Every icon file reads.
-        for svg in super::super::widgets::ICON_FILES {
-            assert!(!lines(svg).is_empty());
+        for i in super::super::widgets::Icon::ALL {
+            assert!(!lines(i.file()).is_empty(), "{i:?}");
         }
     }
 }

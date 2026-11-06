@@ -415,246 +415,81 @@ pub enum Icon {
 }
 
 impl Icon {
-    /// The icon in `rect` in `c`.
+    /// Every icon (the tests read each file).
+    #[cfg(test)]
+    pub(crate) const ALL: [Icon; 58] = [Icon::ChevronLeft, Icon::ChevronRight, Icon::ChevronDown, Icon::ChevronUp, Icon::Pause, Icon::Play, Icon::Fast, Icon::Fastest, Icon::Close, Icon::Check, Icon::Plus, Icon::Minus, Icon::Menu, Icon::Speaker, Icon::SpeakerOff, Icon::Swap, Icon::Coins, Icon::Bolt, Icon::User, Icon::Info, Icon::Power, Icon::Wrench, Icon::Trash, Icon::Undo, Icon::ZoomIn, Icon::ZoomOut, Icon::Target, Icon::Map, Icon::Building, Icon::Flask, Icon::Users, Icon::Eye, Icon::Trade, Icon::Activity, Icon::Help, Icon::Mail, Icon::Hammer, Icon::Factory, Icon::Colony, Icon::RotateLeft, Icon::RotateRight, Icon::TiltUp, Icon::TiltDown, Icon::TopView, Icon::SideView, Icon::Tanks, Icon::Split, Icon::Rop(3), Icon::Rop(5), Icon::Rop(6), Icon::Rop(7), Icon::Rop(8), Icon::Rop(9), Icon::Rop(0xe), Icon::Rop(0x10), Icon::Rop(0x11), Icon::Rop(0x12), Icon::Rop(0)];
+
+    /// The icon in `rect` in `c`: its file stroked by [`super::svg`].
     pub fn paint(self, p: &egui::Painter, rect: Rect, c: Color32) {
-        if let Some(svg) = self.file() {
-            return super::svg::paint(p, rect, svg, c);
-        }
-        let s = rect.width().min(rect.height()) / 24.0;
-        let at = |x: f32, y: f32| rect.center() + Vec2::new(x - 12.0, y - 12.0) * s;
-        let st = Stroke::new(2.0 * s.max(0.75), c);
-        let poly = |pts: &[(f32, f32)]| p.add(egui::Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
-        let closed = |pts: &[(f32, f32)]| p.add(egui::Shape::closed_line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
-        let circle = |x: f32, y: f32, r: f32| p.circle_stroke(at(x, y), r * s, st);
-        // An arc about (x, y) from `a` to `b` degrees (y down: 90 is below).
-        let arc = |x: f32, y: f32, r: f32, a: f32, b: f32| -> Vec<(f32, f32)> {
-            (0..=24).map(|j| (a + (b - a) * j as f32 / 24.0).to_radians()).map(|t| (x + r * t.cos(), y + r * t.sin())).collect()
-        };
-        let chev = |dx: f32| poly(&[(9.0 + dx, 18.0), (15.0 + dx, 12.0), (9.0 + dx, 6.0)]);
-        let dot = |cx: f32, cy: f32| _ = p.circle_filled(at(cx, cy), st.width * 0.6, c);
+        super::svg::paint(p, rect, self.file(), c);
+    }
+
+    /// The icon's file (`gui/icons/`: Lucide's, ISC, its notice beside them, and ours in its style).
+    pub(crate) fn file(self) -> &'static str {
         match self {
-            Icon::Coins => {
-                circle(8.0, 8.0, 6.0);
-                poly(&arc(16.0, 16.0, 6.0, -69.6, 160.5));
-                poly(&[(7.0, 6.0), (8.0, 6.0), (8.0, 10.0)]);
-                poly(&[(16.71, 13.88), (17.41, 14.59), (14.59, 17.41)]);
-            }
-            Icon::Bolt => _ = closed(&[(13.0, 2.0), (3.0, 14.0), (12.0, 14.0), (11.0, 22.0), (21.0, 10.0), (12.0, 10.0)]),
-            Icon::User => {
-                circle(12.0, 7.0, 4.0);
-                let mut v = vec![(19.0, 21.0)];
-                v.extend(arc(15.0, 19.0, 4.0, 0.0, -90.0));
-                v.extend(arc(9.0, 19.0, 4.0, -90.0, -180.0));
-                v.push((5.0, 21.0));
-                poly(&v);
-            }
-            Icon::Power => {
-                poly(&[(12.0, 2.0), (12.0, 12.0)]);
-                poly(&arc(12.0, 12.0, 9.0, -40.0, 220.0));
-            }
-            Icon::Undo => {
-                poly(&[(9.0, 14.0), (4.0, 9.0), (9.0, 4.0)]);
-                let mut v = vec![(4.0, 9.0)];
-                v.extend(arc(14.5, 14.5, 5.5, -90.0, 90.0));
-                v.push((11.0, 20.0));
-                poly(&v);
-            }
-            Icon::ChevronLeft => _ = poly(&[(15.0, 18.0), (9.0, 12.0), (15.0, 6.0)]),
-            Icon::ChevronRight | Icon::Play => _ = chev(0.0),
-            Icon::ChevronDown => _ = poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)]),
-            Icon::ChevronUp => _ = poly(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)]),
-            Icon::Fast => {
-                poly(&[(6.0, 17.0), (11.0, 12.0), (6.0, 7.0)]);
-                poly(&[(13.0, 17.0), (18.0, 12.0), (13.0, 7.0)]);
-            }
-            Icon::Fastest => {
-                for x in [3.0, 10.0, 17.0] {
-                    poly(&[(x, 17.0), (x + 5.0, 12.0), (x, 7.0)]);
-                }
-            }
-            Icon::Pause => {
-                for x in [6.0, 14.0] {
-                    p.rect_stroke(Rect::from_min_max(at(x, 4.0), at(x + 4.0, 20.0)), s, st, egui::StrokeKind::Middle);
-                }
-            }
-            Icon::Close => {
-                poly(&[(18.0, 6.0), (6.0, 18.0)]);
-                poly(&[(6.0, 6.0), (18.0, 18.0)]);
-            }
-            Icon::Check => _ = poly(&[(20.0, 6.0), (9.0, 17.0), (4.0, 12.0)]),
-            Icon::Plus => {
-                poly(&[(5.0, 12.0), (19.0, 12.0)]);
-                poly(&[(12.0, 5.0), (12.0, 19.0)]);
-            }
-            Icon::Minus => _ = poly(&[(5.0, 12.0), (19.0, 12.0)]),
-            Icon::Menu => {
-                for y in [6.0, 12.0, 18.0] {
-                    poly(&[(4.0, y), (20.0, y)]);
-                }
-            }
-            Icon::Swap => {
-                poly(&[(3.0, 8.0), (20.0, 8.0)]);
-                poly(&[(16.0, 4.0), (20.0, 8.0), (16.0, 12.0)]);
-                poly(&[(21.0, 16.0), (4.0, 16.0)]);
-                poly(&[(8.0, 12.0), (4.0, 16.0), (8.0, 20.0)]);
-            }
-            Icon::Map => {
-                poly(&[(15.0, 5.8), (20.5, 3.2), (21.0, 4.6), (21.0, 17.4), (20.4, 18.3), (15.0, 21.0), (9.0, 18.0), (3.5, 20.8), (3.0, 19.4), (3.0, 6.6), (3.6, 5.7), (9.0, 3.0), (15.0, 5.8)]);
-                poly(&[(15.0, 5.8), (15.0, 20.8)]);
-                poly(&[(9.0, 3.2), (9.0, 18.2)]);
-            }
-            Icon::Building => {
-                let mut body = vec![(6.0, 22.0)];
-                body.extend(arc(8.0, 4.0, 2.0, 180.0, 270.0));
-                body.extend(arc(16.0, 4.0, 2.0, 270.0, 360.0));
-                body.extend([(18.0, 22.0), (6.0, 22.0)]);
-                poly(&body);
-                let mut l = vec![(6.0, 12.0)];
-                l.extend(arc(4.0, 14.0, 2.0, 270.0, 180.0));
-                l.extend(arc(4.0, 20.0, 2.0, 180.0, 90.0));
-                l.push((6.0, 22.0));
-                poly(&l);
-                let mut r = vec![(18.0, 9.0)];
-                r.extend(arc(20.0, 11.0, 2.0, 270.0, 360.0));
-                r.extend(arc(20.0, 20.0, 2.0, 0.0, 90.0));
-                r.push((18.0, 22.0));
-                poly(&r);
-                for y in [6.0, 10.0, 14.0, 18.0] {
-                    poly(&[(10.0, y), (14.0, y)]);
-                }
-            }
-            Icon::Flask => {
-                poly(&[(14.0, 2.0), (14.0, 8.0), (14.25, 8.96), (19.76, 19.04), (19.8, 20.6), (18.9, 21.8), (18.0, 22.0), (6.0, 22.0), (5.1, 21.8), (4.2, 20.6), (4.25, 19.04), (9.76, 8.96), (10.0, 8.0), (10.0, 2.0)]);
-                poly(&[(6.45, 15.0), (17.55, 15.0)]);
-                poly(&[(8.5, 2.0), (15.5, 2.0)]);
-            }
-            Icon::Users => {
-                let mut a = vec![(16.0, 21.0)];
-                a.extend(arc(12.0, 19.0, 4.0, 0.0, -90.0));
-                a.extend(arc(6.0, 19.0, 4.0, -90.0, -180.0));
-                a.push((2.0, 21.0));
-                poly(&a);
-                circle(9.0, 7.0, 4.0);
-                poly(&[(22.0, 21.0), (22.0, 19.0), (21.6, 17.3), (20.5, 16.0), (19.0, 15.13)]);
-                poly(&arc(15.0, 7.0, 4.0, -76.0, 76.0));
-            }
-            Icon::Eye => {
-                // The almond: two arcs of radius 10.75 through the corners (2, 12) and (22, 12).
-                let mut e = arc(12.0, 15.94, 10.75, 201.5, 338.5);
-                e.extend(arc(12.0, 8.06, 10.75, 21.5, 158.5));
-                e.push(e[0]);
-                poly(&e);
-                circle(12.0, 12.0, 3.0);
-            }
-            Icon::Trade => {
-                poly(&[(8.0, 3.0), (4.0, 7.0), (8.0, 11.0)]);
-                poly(&[(4.0, 7.0), (20.0, 7.0)]);
-                poly(&[(16.0, 21.0), (20.0, 17.0), (16.0, 13.0)]);
-                poly(&[(20.0, 17.0), (4.0, 17.0)]);
-            }
-            Icon::Hammer => {
-                let mut h = vec![(15.0, 12.0), (6.63, 20.37)];
-                h.extend(arc(5.13, 18.87, 2.12, 45.0, 225.0));
-                h.push((12.0, 9.0));
-                poly(&h);
-                poly(&[(18.0, 15.0), (22.0, 11.0)]);
-                poly(&[(21.5, 11.5), (19.59, 9.59), (19.15, 8.9), (19.0, 8.17), (19.0, 7.0), (16.74, 4.74), (14.9, 3.4), (12.54, 2.98), (9.0, 2.96), (9.92, 3.78), (11.4, 5.8), (12.0, 8.4), (12.0, 10.0), (14.0, 12.0), (15.17, 12.0), (15.9, 12.15), (16.59, 12.59), (18.5, 14.5)]);
-            }
-            Icon::Activity => _ = poly(&[(22.0, 12.0), (18.0, 12.0), (15.0, 21.0), (9.0, 3.0), (6.0, 12.0), (2.0, 12.0)]),
-            Icon::Help => {
-                circle(12.0, 12.0, 10.0);
-                let mut q = arc(11.92, 9.98, 3.0, 199.0, 360.4);
-                q.extend([(14.6, 11.4), (13.5, 12.4), (11.92, 13.0)]);
-                poly(&q);
-                dot(12.0, 17.0);
-            }
-            Icon::Mail => {
-                p.rect_stroke(Rect::from_min_max(at(2.0, 4.0), at(22.0, 20.0)), 2.0 * s, st, egui::StrokeKind::Middle);
-                poly(&[(22.0, 7.0), (13.03, 12.7), (12.0, 13.0), (10.97, 12.7), (2.0, 7.0)]);
-            }
-            Icon::Speaker | Icon::SpeakerOff => {
-                poly(&[(11.0, 5.0), (6.0, 9.0), (2.0, 9.0), (2.0, 15.0), (6.0, 15.0), (11.0, 19.0), (11.0, 5.0)]);
-                if self == Icon::Speaker {
-                    poly(&[(15.5, 8.5), (17.0, 10.5), (17.0, 13.5), (15.5, 15.5)]);
-                    poly(&[(19.0, 5.0), (22.0, 9.0), (22.0, 15.0), (19.0, 19.0)]);
-                } else {
-                    poly(&[(16.0, 9.0), (22.0, 15.0)]);
-                    poly(&[(22.0, 9.0), (16.0, 15.0)]);
-                }
-            }
-            // The icon files (`file`).
-            _ => {}
+            Icon::ChevronLeft => include_str!("../icons/chevron-left.svg"),
+            Icon::ChevronRight => include_str!("../icons/chevron-right.svg"),
+            Icon::ChevronDown => include_str!("../icons/chevron-down.svg"),
+            Icon::ChevronUp => include_str!("../icons/chevron-up.svg"),
+            Icon::Pause => include_str!("../icons/pause.svg"),
+            Icon::Play => include_str!("../icons/chevron-right.svg"),
+            Icon::Fast => include_str!("../icons/chevrons-right.svg"),
+            Icon::Fastest => include_str!("../icons/chevrons-right-3.svg"),
+            Icon::Close => include_str!("../icons/x.svg"),
+            Icon::Check => include_str!("../icons/check.svg"),
+            Icon::Plus => include_str!("../icons/plus.svg"),
+            Icon::Minus => include_str!("../icons/minus.svg"),
+            Icon::Menu => include_str!("../icons/menu.svg"),
+            Icon::Speaker => include_str!("../icons/volume-2.svg"),
+            Icon::SpeakerOff => include_str!("../icons/volume-x.svg"),
+            Icon::Swap => include_str!("../icons/arrow-left-right.svg"),
+            Icon::Coins => include_str!("../icons/coins.svg"),
+            Icon::Bolt => include_str!("../icons/zap.svg"),
+            Icon::User => include_str!("../icons/user.svg"),
+            Icon::Info => include_str!("../icons/info.svg"),
+            Icon::Power => include_str!("../icons/power.svg"),
+            Icon::Wrench => include_str!("../icons/wrench.svg"),
+            Icon::Trash => include_str!("../icons/trash-2.svg"),
+            Icon::Undo => include_str!("../icons/undo-2.svg"),
+            Icon::ZoomIn => include_str!("../icons/zoom-in.svg"),
+            Icon::ZoomOut => include_str!("../icons/zoom-out.svg"),
+            Icon::Target => include_str!("../icons/target.svg"),
+            Icon::Map => include_str!("../icons/map.svg"),
+            Icon::Building => include_str!("../icons/building-2.svg"),
+            Icon::Flask => include_str!("../icons/flask-conical.svg"),
+            Icon::Users => include_str!("../icons/users.svg"),
+            Icon::Eye => include_str!("../icons/eye.svg"),
+            Icon::Trade => include_str!("../icons/arrow-left-right.svg"),
+            Icon::Activity => include_str!("../icons/activity.svg"),
+            Icon::Help => include_str!("../icons/circle-help.svg"),
+            Icon::Mail => include_str!("../icons/mail.svg"),
+            Icon::Hammer => include_str!("../icons/hammer.svg"),
+            Icon::Factory => include_str!("../icons/factory.svg"),
+            Icon::Colony => include_str!("../icons/colony.svg"),
+            Icon::RotateLeft => include_str!("../icons/rotate-ccw.svg"),
+            Icon::RotateRight => include_str!("../icons/rotate-cw.svg"),
+            Icon::TiltUp => include_str!("../icons/chevrons-up.svg"),
+            Icon::TiltDown => include_str!("../icons/chevrons-down.svg"),
+            Icon::TopView => include_str!("../icons/circle-dot.svg"),
+            Icon::SideView => include_str!("../icons/side-view.svg"),
+            Icon::Tanks => include_str!("../icons/tank.svg"),
+            Icon::Split => include_str!("../icons/split.svg"),
+            Icon::Rop(n) => match n {
+                3 => include_str!("../icons/route.svg"),
+                5 => include_str!("../icons/satellite.svg"),
+                6 => include_str!("../icons/satellite-dish.svg"),
+                7 => include_str!("../icons/globe.svg"),
+                8 => include_str!("../icons/flag.svg"),
+                9 => include_str!("../icons/tank.svg"),
+                0xe => include_str!("../icons/merge.svg"),
+                0x10 => include_str!("../icons/tornado.svg"),
+                0x11 => include_str!("../icons/bug.svg"),
+                0x12 => include_str!("../icons/bomb.svg"),
+                _ => include_str!("../icons/info.svg"),
+            },
         }
     }
 }
-
-impl Icon {
-    /// The icon's file (`gui/icons/`: Lucide's, ISC, and ours in its style) for the icons drawn from one.
-    fn file(self) -> Option<&'static str> {
-        let f = |n: usize| Some(ICON_FILES[n]);
-        match self {
-            Icon::Factory => f(0),
-            Icon::Info => f(1),
-            Icon::Wrench => f(2),
-            Icon::Trash => f(3),
-            Icon::Tanks => f(4),
-            Icon::Colony => f(5),
-            Icon::Split => f(6),
-            Icon::RotateLeft => f(7),
-            Icon::RotateRight => f(8),
-            Icon::TiltUp => f(9),
-            Icon::TiltDown => f(10),
-            Icon::TopView => f(11),
-            Icon::SideView => f(12),
-            Icon::ZoomIn => f(22),
-            Icon::ZoomOut => f(23),
-            Icon::Target => f(24),
-            Icon::Rop(n) => f(match n {
-                3 => 13,
-                5 => 14,
-                6 => 15,
-                7 => 16,
-                8 => 17,
-                9 => 4,
-                0xe => 18,
-                0x10 => 19,
-                0x11 => 20,
-                0x12 => 21,
-                _ => 1,
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// The kit's icon files, in [`Icon::file`]'s order.
-pub(crate) const ICON_FILES: [&str; 25] = [
-    include_str!("../icons/factory.svg"),
-    include_str!("../icons/info.svg"),
-    include_str!("../icons/wrench.svg"),
-    include_str!("../icons/trash-2.svg"),
-    include_str!("../icons/tank.svg"),
-    include_str!("../icons/colony.svg"),
-    include_str!("../icons/split.svg"),
-    include_str!("../icons/rotate-ccw.svg"),
-    include_str!("../icons/rotate-cw.svg"),
-    include_str!("../icons/chevrons-up.svg"),
-    include_str!("../icons/chevrons-down.svg"),
-    include_str!("../icons/circle-dot.svg"),
-    include_str!("../icons/side-view.svg"),
-    include_str!("../icons/route.svg"),
-    include_str!("../icons/satellite.svg"),
-    include_str!("../icons/satellite-dish.svg"),
-    include_str!("../icons/globe.svg"),
-    include_str!("../icons/flag.svg"),
-    include_str!("../icons/merge.svg"),
-    include_str!("../icons/tornado.svg"),
-    include_str!("../icons/bug.svg"),
-    include_str!("../icons/bomb.svg"),
-    include_str!("../icons/zoom-in.svg"),
-    include_str!("../icons/zoom-out.svg"),
-    include_str!("../icons/target.svg"),
-];
 
 /// What an [`IconKey`] shows: one of the kit's icons or the page's own drawing (`(painter, rect, colour)`).
 pub enum Glyph<'a> {
