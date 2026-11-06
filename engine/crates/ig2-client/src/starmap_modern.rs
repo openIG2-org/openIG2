@@ -248,7 +248,6 @@ const FLAG_SRC: [f32; 4] = [GLOBE_SRC[0] + 5.5, GLOBE_SRC[1], GLOBE_SRC[2], GLOB
 /// The HUD's colours this frame.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Ink {
-    pub text: Color32,
     /// The player's colour, lifted toward the text so it reads on the dark plates.
     pub accent: Color32,
     pub fill: Color32,
@@ -263,7 +262,7 @@ impl Ink {
         let accent = lerp(base, text, 0.3);
         let [r, g, b, _] = v.window_fill.to_array();
         let fill = Color32::from_rgba_unmultiplied((r as f32 * 0.7) as u8, (g as f32 * 0.7) as u8, (b as f32 * 0.75) as u8, 214);
-        Self { text, accent, fill, edge: accent.gamma_multiply(0.38) }
+        Self { accent, fill, edge: accent.gamma_multiply(0.38) }
     }
 }
 
@@ -517,25 +516,6 @@ pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
     }
 }
 
-/// A tooltip: the name and, when bound, its key in a small key cap.
-pub(crate) fn tip(resp: egui::Response, name: &str, key: &str, ink: &Ink) -> egui::Response {
-    if name.is_empty() {
-        return resp;
-    }
-    resp.on_hover_ui(|ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(name).color(ink.text));
-            if !key.is_empty() {
-                ui.add_space(6.0);
-                let g = ui.painter().layout_no_wrap(key.to_string(), FontId::proportional(11.0), ink.accent);
-                let (r, _) = ui.allocate_exact_size(g.size() + vec2(8.0, 2.0), Sense::hover());
-                ui.painter().rect_stroke(r, 2.0, Stroke::new(1.0f32, ink.edge), egui::StrokeKind::Inside);
-                ui.painter().galley(r.center() - g.size() / 2.0, g, ink.accent);
-            }
-        });
-    })
-}
-
 /// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).
 const BAR_H: f32 = 44.0;
 const BAR_PAD: Vec2 = vec2(12.0, 4.0);
@@ -582,7 +562,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     st.mark = None;
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
-        let card = egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, st)).response.rect;
+        let card = egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &mut acts, st)).response.rect;
         // Production as its own round button right of the card (as the colony's repair and demolish).
         if info.product {
             egui::Area::new(egui::Id::new("smh-actions")).pivot(Align2::LEFT_BOTTOM).fixed_pos(pos2(card.right() + 24.0, card.bottom())).fade_in(false).show(ctx, |ui| {
@@ -599,7 +579,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
             let well = vec2(NAV_W, NAV_H);
             let mut cam = Vec::new();
-            ds::radar(ui, well, false, ds::key_group_w(8, CAM_KEY.x), |ui, r| minimap(ui, r, mini, v, &ink, &mut acts), |ui| camera_buttons(ui, v, &ink, &mut cam));
+            ds::radar(ui, well, false, ds::key_group_w(8, CAM_KEY.x), |ui, r| minimap(ui, r, mini, v, &mut acts), |ui| camera_buttons(ui, v, &mut cam));
             acts.extend(cam);
         });
     } else {
@@ -669,12 +649,12 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
             // Pause and the speeds: one key block, the running one lit.
             ds::key_group(ui, |ui| {
                 let r = ui.add(IconKey::icon(ds::Icon::Pause).on(v.paused));
-                if ds::either(&hand(tip(r, &v.labels.pause, &v.keys.pause, &ink))) {
+                if ds::either(&hand(ds::tip_key(r, &v.labels.pause, &v.keys.pause))) {
                     acts.push(Act::Pause);
                 }
                 for (n, i) in [(1, ds::Icon::Play), (2, ds::Icon::Fast), (3, ds::Icon::Fastest)] {
                     let r = ui.add(IconKey::icon(i).on(!v.paused && v.speed + 1 == n));
-                    if ds::either(&hand(tip(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n - 1], &ink))) {
+                    if ds::either(&hand(ds::tip_key(r, &format!("{} {n}", v.labels.speed), &v.keys.speed[n - 1]))) {
                         acts.push(Act::Speed(n as i32));
                     }
                 }
@@ -691,8 +671,8 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
             let free = ui.available_width() - keys - BAR_GAP;
             // A narrow bar (4:3 at a large UI scale) gives the ticker's room up first, then the research's.
             let research_w = if free >= 2.0 * 170.0 { (free * 0.4).clamp(170.0, RESEARCH_W) } else { free.clamp(0.0, 170.0) };
-            ticker(ui, v, &ink, vec2((free - research_w).max(0.0), LINE_H), acts);
-            status = research_status(ui, v, st, &ink, research_w);
+            ticker(ui, v, vec2((free - research_w).max(0.0), LINE_H), acts);
+            status = research_status(ui, v, st, research_w);
             for list in [main, side].into_iter().filter(|l| !l.is_empty()) {
                 ds::key_group(ui, |ui| {
                     for s in list {
@@ -701,7 +681,7 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
                         if n == 10 && v.unread > 0 {
                             unread_badge(ui, r.rect, v.unread);
                         }
-                        if hand(tip(r, &s.name, &s.key, &ink)).clicked() && !s.current {
+                        if hand(ds::tip_key(r, &s.name, &s.key)).clicked() && !s.current {
                             acts.push(Act::Screen(n));
                             st.research_open = false;
                         }
@@ -764,7 +744,7 @@ fn readout(ui: &mut egui::Ui, text: &str, colour: Color32, min_chars: usize) {
 
 /// The research button (black, a metal rim; the flask, the project's name, its progress and per cent, or the idle
 /// text); a click opens the quick-research menu.
-fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width: f32) -> Rect {
+fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, width: f32) -> Rect {
     let k = ds::tokens();
     let r = &v.research;
     let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
@@ -788,7 +768,7 @@ fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width
     // Over the progress fill.
     ds::Icon::Flask.paint(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(16.0, 16.0)), if on { k.ink_silver } else { k.ink_muted });
     ds::rim(p, rect, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
-    if hand(tip(resp, &label, "", ink)).clicked() {
+    if hand(ds::tip_key(resp, &label, "")).clicked() {
         st.research_open = !st.research_open;
     }
     rect
@@ -813,7 +793,7 @@ fn progress_field(ui: &egui::Ui, rect: Rect, text: Rect, frac: f32, name: &str, 
 /// The message ticker (black, a metal rim): the original's scrolling message (or the chat entry, the error, the
 /// waiting text pulsing in LCD ink), else "Pause" while paused, else the latest of the history, dim. Left button: the
 /// messages screen; right button held: the history.
-fn ticker(ui: &mut egui::Ui, v: &View, ink: &Ink, size: Vec2, acts: &mut Vec<Act>) {
+fn ticker(ui: &mut egui::Ui, v: &View, size: Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let (r, resp) = ui.allocate_exact_size(vec2(size.x, ROW_H), Sense::click());
     let r = Rect::from_center_size(r.center(), size);
@@ -831,7 +811,7 @@ fn ticker(ui: &mut egui::Ui, v: &View, ink: &Ink, size: Vec2, acts: &mut Vec<Act
     let upper = text == v.labels.pause && v.paused;
     Text::new(text, TICKER.upper(upper)).color(colour).paint_only(ui, r.shrink2(vec2(ds::SPACE[1], 0.0)));
     let name = v.screens.iter().find(|s| s.n == 10);
-    let resp = hand(tip(resp, name.map_or("", |s| s.name.as_str()), name.map_or("", |s| s.key.as_str()), ink));
+    let resp = hand(ds::tip_key(resp, name.map_or("", |s| s.name.as_str()), name.map_or("", |s| s.key.as_str())));
     let right_held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     if right_held != v.history_open {
         acts.push(Act::History(right_held));
@@ -947,7 +927,7 @@ fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
 
 /// The selection card (`.ig-panel.deep` with `.ig-card`): the globe between its ratios, the name, the original's
 /// lines, the buttons as plates (the colony or split, the details) and keys (tanks, production).
-fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>, st: &mut State) {
+fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: &mut State) {
     let k = ds::tokens();
     let at = ui.painter().add(Shape::Noop);
     let frame = egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 }).show(ui, |ui| {
@@ -1025,7 +1005,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             if let Some(r) = &info.right {
                 let pw = pw(r);
                 let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
-                if hand(tip(ui.add_sized(vec2(pw, 32.0), Plate::new(r).height(32.0).width(pw).font(font)), r, key, ink)).clicked() {
+                if hand(ds::tip_key(ui.add_sized(vec2(pw, 32.0), Plate::new(r).height(32.0).width(pw).font(font)), r, key)).clicked() {
                     acts.push(Act::Info(true));
                 }
             }
@@ -1035,7 +1015,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             }
             if info.tanks {
                 let draw = |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, Icon::Tanks, c);
-                if hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[8], "", ink)).clicked() {
+                if hand(ds::tip_key(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[8], "")).clicked() {
                     acts.push(Act::Panel(10));
                 }
             }
@@ -1046,14 +1026,14 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
 
 /// The camera's keys under the radar, one row of plates: rotate, zoom and tilt held (the left button's way, the
 /// right button the other way as on the console), the top and side views clicked.
-fn camera_buttons(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
+fn camera_buttons(ui: &mut egui::Ui, v: &View, acts: &mut Vec<Act>) {
     let mut held = None;
     let none = String::new();
     ds::key_group(ui, |ui| {
         let held_keys = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
         for (i, spot, left, key) in held_keys {
             let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-            let r = hand(tip(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], key, ink));
+            let r = hand(ds::tip_key(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], key));
             if r.is_pointer_button_down_on() && r.contains_pointer() {
                 let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
                 held = Some((spot, left != right));
@@ -1061,7 +1041,7 @@ fn camera_buttons(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
         }
         for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
             let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-            if ds::either(&hand(tip(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
+            if ds::either(&hand(ds::tip_key(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], ""))) {
                 acts.push(Act::View(spot));
             }
         }
@@ -1080,7 +1060,7 @@ fn cam_glyph(i: Icon, draw: &dyn Fn(&egui::Painter, Rect, Color32)) -> ds::Glyph
 
 /// The radar's well `r` ([`ds::radar`]): the planets and fleets, the view's outline; press or drag moves the camera
 /// there (the target pointer).
-fn minimap(ui: &mut egui::Ui, r: Rect, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
+fn minimap(ui: &mut egui::Ui, r: Rect, mini: &Mini, v: &View, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let resp = ui.interact(r, ui.id().with("smh-radar-well"), Sense::click_and_drag());
     let p = ui.painter().with_clip_rect(r.shrink(2.0));
@@ -1101,7 +1081,7 @@ fn minimap(ui: &mut egui::Ui, r: Rect, mini: &Mini, v: &View, ink: &Ink, acts: &
         p.add(Shape::convex_polygon(outline.clone(), k.focus.gamma_multiply(0.06), Stroke::NONE));
         p.add(Shape::closed_line(outline, Stroke::new(1.2f32, k.focus)));
     }
-    let resp = tip(resp, &v.tips[7], "", ink).on_hover_cursor(egui::CursorIcon::Crosshair);
+    let resp = ds::tip_key(resp, &v.tips[7], "").on_hover_cursor(egui::CursorIcon::Crosshair);
     let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
     if let (true, Some(q)) = (resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
         acts.push(Act::Minimap(mini_virtual([(q.x - r.left()) / r.width(), (q.y - r.top()) / r.height()]), first));

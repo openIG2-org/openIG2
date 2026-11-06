@@ -1255,6 +1255,27 @@ pub fn tip(resp: Response, text: &str) -> Response {
     })
 }
 
+/// [`tip`] with the control's key in a small key cap after the text (a screen's key, a speed's).
+pub fn tip_key(resp: Response, text: &str, key: &str) -> Response {
+    if text.is_empty() || key.is_empty() {
+        return tip(resp, text);
+    }
+    resp.on_hover_ui(|ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE[1];
+            let k = tokens();
+            let fit = Text::new(text, Font::DATA.weight(Weight::Regular).tracking(0.05)).layout(ui.ctx(), 320.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width, fit.galley.size().y), Sense::hover());
+            ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
+            let f = Font::LABEL.upper(false);
+            let w = Text::new(key, f).layout(ui.ctx(), f32::INFINITY).width + 2.0 * SPACE[0];
+            let (cap, _) = ui.allocate_exact_size(Vec2::new(w, f.line), Sense::hover());
+            ui.painter().rect_stroke(cap, RADIUS_PLATE, Stroke::new(1.0f32, k.rim_bright), egui::StrokeKind::Inside);
+            Text::new(key, f).center().color(k.info).paint_only(ui, cap);
+        });
+    })
+}
+
 /// A tooltip at a point (a game hot-spot's text where no egui widget is under the pointer): a deep panel beside `at`,
 /// kept on the screen, up to three lines of 320 points.
 pub fn tip_at(ctx: &egui::Context, id: &str, at: egui::Pos2, text: &str) {
