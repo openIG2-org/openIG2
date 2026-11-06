@@ -17,7 +17,7 @@ because the original's hot-spot code hit-tests it there.
    date as LCD readouts (fixed widths, so the bar doesn't move as the digits change; money below zero in the enemy
    colour), the message ticker taking the room between (the original's scrolling message, the waiting text pulsing in
    LCD ink, "Pause" in LCD ink while paused and nothing scrolls, else the latest history line dim), the research button
-   (300 wide: flask, project, progress bar, per cent in the LCD face, or the idle text) and the screens as metal keys
+   (300 wide: flask, the field itself filling faintly from the left as the progress bar, the project's name cut with "…" and the per cent right-aligned in the LCD face, or the idle text) and the screens as metal keys
    in two blocks (the screens; help, messages and options), a lit dot on the messages key while a message waits. The
    colony, info and research screens keep using this bar (`starmap_modern::bar`).
 2. **Selection card** (`.ig-panel.deep` with `.ig-card`, 380 wide, 24 from the bottom-left corner): a shaded globe in

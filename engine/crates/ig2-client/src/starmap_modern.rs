@@ -732,38 +732,42 @@ fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered()).max(st.research_open as u8 as f32);
     let p = ui.painter();
     p.rect_filled(rect, ds::RADIUS_PLATE, Color32::BLACK);
-    ds::rim(p, rect, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
     let inner = rect.shrink2(vec2(10.0, 0.0));
     let on = r.current.is_some() || r.researchable;
-    icon(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(17.0, 17.0)), Icon::Screen(4), if on { k.ink_silver } else { k.ink_muted });
     let text = Rect::from_min_max(pos2(inner.left() + 26.0, rect.top()), inner.max);
+    let mut label = std::borrow::Cow::Borrowed(v.labels.research.as_str());
     match &r.current {
         Some((_, name, pct, _)) => {
-            let f = Font::READOUT.sized(14.0);
-            let num = format!("{pct}%");
-            let pw = Text::new("100%", f).layout(ui.ctx(), f32::INFINITY).width;
-            let (rest, pct_r) = text.split_left_right_at_x(text.right() - pw);
-            Text::new(&num, f).color(k.lcd_ink).right().paint(ui, pct_r);
-            // The name as wide as it needs up to 60 % of the room, the progress in the rest (`flex: 1`).
-            let room = rest.width() - 10.0;
-            let nw = Text::new(name, BUTTON_TEXT).layout(ui.ctx(), f32::INFINITY).width.min(room * 0.6);
-            Text::new(name, BUTTON_TEXT).color(k.ink_silver).paint(ui, Rect::from_min_size(rest.min, vec2(nw, rest.height())));
-            let track = Rect::from_min_max(pos2(rest.left() + nw + 10.0, rect.center().y - 3.0), pos2(rest.right() - 8.0, rect.center().y + 3.0));
-            if track.width() > 8.0 {
-                let f = ui.ctx().animate_value_with_time(resp.id.with("pct"), *pct as f32 / 100.0, ds::anim(ds::GLIDE_TIME)).clamp(0.0, 1.0);
-                p.rect_filled(track, 3, k.glass_deep);
-                if f > 0.0 {
-                    p.rect_filled(track.with_max_x(track.left() + (track.width() * f).max(6.0)), 3, k.lcd_ink);
-                }
-                ds::rim(p, track, 3, k.rim);
+            let f = ui.ctx().animate_value_with_time(resp.id.with("pct"), *pct as f32 / 100.0, ds::anim(ds::GLIDE_TIME));
+            if progress_field(ui, rect, text, f, name, BUTTON_TEXT, &format!("{pct}%"), Font::READOUT.sized(14.0)) {
+                label = format!("{}: {name}", v.labels.research).into();
             }
         }
         None => _ = Text::new(&v.labels.idle, BUTTON_TEXT).color(if on { k.ink_silver } else { k.ink_muted }).paint(ui, text),
     }
-    if hand(tip(resp, &v.labels.research, "", ink)).clicked() {
+    // Over the progress fill.
+    icon(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(17.0, 17.0)), Icon::Screen(4), if on { k.ink_silver } else { k.ink_muted });
+    ds::rim(p, rect, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
+    if hand(tip(resp, &label, "", ink)).clicked() {
         st.research_open = !st.research_open;
     }
     rect
+}
+
+/// A field as its own progress bar: a faint LCD fill from the left of `rect` by `frac`, the name in `text` left of the
+/// per cent (cut with "…"), the per cent right-aligned. Whether the name was cut (the caller's tooltip then names it).
+#[allow(clippy::too_many_arguments)]
+fn progress_field(ui: &egui::Ui, rect: Rect, text: Rect, frac: f32, name: &str, font: Font, pct: &str, pct_font: Font) -> bool {
+    let k = ds::tokens();
+    let frac = frac.clamp(0.0, 1.0);
+    if frac > 0.0 {
+        let fill = rect.shrink(1.0);
+        ui.painter().rect_filled(fill.with_max_x(fill.left() + fill.width() * frac), ds::RADIUS_PLATE, k.lcd_ink.gamma_multiply(0.2));
+    }
+    let pw = Text::new("100%", pct_font).layout(ui.ctx(), f32::INFINITY).width;
+    let (rest, pct_r) = text.split_left_right_at_x(text.right() - pw);
+    Text::new(pct, pct_font).color(k.lcd_ink).right().paint_only(ui, pct_r);
+    Text::new(name, font).color(k.ink_silver).paint_only(ui, rest.with_max_x(rest.right() - 10.0)).cut
 }
 
 /// The message ticker (black, a metal rim): the original's scrolling message (or the chat entry, the error, the
@@ -842,18 +846,23 @@ fn research_menu(ui: &mut egui::Ui, v: &View, st: &mut State, _ink: &Ink, acts: 
     });
     if let Some((t, name, pct, left)) = &r.current {
         ds::separator(ui, 6.0);
+        // As wide as the columns (not the room left: the menu's Area sizes itself from its last frame).
+        let w = cols as f32 * COL + (cols - 1) as f32 * 12.0;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
-            let w = (ui.available_width() - 240.0).max(120.0);
-            Text::new(&format!("{}: {name}", r.footer[0]), Font::DATA).color(k.ink).show(ui, vec2(w, 32.0));
-            ds::bar(ui, 90.0, 6.0, *pct as f32 / 100.0, k.lcd_ink);
-            Text::new(&format!("{pct}%"), Font::READOUT.sized(15.0)).color(k.lcd_ink).show(ui, vec2(44.0, 32.0));
+            let (field, resp) = ui.allocate_exact_size(vec2(w - 90.0, 32.0), Sense::hover());
+            ui.painter().rect_filled(field, ds::RADIUS_PLATE, Color32::BLACK);
+            let line = format!("{}: {name}", r.footer[0]);
+            if progress_field(ui, field, field.shrink2(vec2(10.0, 0.0)), *pct as f32 / 100.0, &line, Font::DATA, &format!("{pct}%"), Font::READOUT.sized(15.0)) {
+                resp.on_hover_text(&line);
+            }
+            ds::rim(ui.painter(), field, ds::RADIUS_PLATE, k.rim);
             if hand(ui.add(Plate::new(&r.footer[1]).height(32.0).width(80.0).font(Plate::FONT.sized(14.0)))).clicked() {
                 acts.push(Act::Stop(*t));
                 st.research_open = false;
             }
         });
-        Text::new(&format!("{}: {}", r.footer[2], money(*left as f64)), Font::LABEL.upper(false)).color(k.ink_muted).show(ui, vec2(ui.available_width(), 20.0));
+        Text::new(&format!("{}: {}", r.footer[2], money(*left as f64)), Font::LABEL.upper(false)).color(k.ink_muted).show(ui, vec2(w, 20.0));
     }
 }
 

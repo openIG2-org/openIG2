@@ -181,6 +181,8 @@ pub fn style(t: &Theme) -> egui::Style {
     (sp.slider_width, sp.combo_width, sp.window_margin) = (190.0, 200.0, Margin::same(20));
     sp.scroll.bar_width = 8.0;
     s.interaction.selectable_labels = false;
+    // Tooltips at once, also while the pointer moves (the keys' names and keys).
+    (s.interaction.tooltip_delay, s.interaction.show_tooltips_only_when_still) = (0.0, false);
     let v = &mut s.visuals;
     v.dark_mode = true;
     v.override_text_color = None;
