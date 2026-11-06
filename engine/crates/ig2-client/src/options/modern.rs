@@ -776,10 +776,15 @@ fn kind(r: &Row, texts: &UiTexts) -> Kind {
 fn line_height(o: &OptionsScreen, texts: &UiTexts, it: Item) -> f32 {
     match it {
         Item::Bind(_) => 40.0,
+        // The sound board's volume rows (the track, the readout and the mute key).
+        Item::Slider(0 | 1) => VOLUME_H,
         Item::Row(k) if matches!(kind(&o.rows[k], texts), Kind::Segments { wide: true }) => 80.0,
         _ => 50.0,
     }
 }
+
+/// The sound board's volume row height.
+const VOLUME_H: f32 = 58.0;
 
 /// The board's panel (1640 × 920 at 1920 × 1080), its rail and the cards' gaps.
 const PAGE: [f32; 2] = [1640.0, 920.0];
@@ -916,7 +921,9 @@ impl Modern {
         crate::gui::board(ctx, "options", egui::Vec2::from(PAGE), dim, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
             let w = ui.available_width();
-            Text::new(&tr("OPTIONS"), Font::PAGE_TITLE).color(k.ink_silver).show(ui, egui::vec2(w, 36.0));
+            // The board's title a point above its line's middle.
+            let (title, _) = ui.allocate_exact_size(egui::vec2(w, 36.0), egui::Sense::hover());
+            Text::new(&tr("OPTIONS"), Font::PAGE_TITLE).color(k.ink_silver).paint(ui, title.translate(egui::vec2(0.0, -1.0)));
             ui.add_space(24.0);
             let footer = 20.0 + 44.0;
             let body = ui.available_height() - 24.0 - footer;
@@ -940,7 +947,8 @@ impl Modern {
                 ui.add_space(32.0);
                 // The cards in columns, each card to the shortest column (the boards: three; Sound two).
                 let all = cards(&o.rows, &items);
-                let n = if self.tab == Tab::Sound { 2 } else { 3 }.min(all.len().max(1));
+                // The boards' grid: three columns (Sound two) however many cards, so equal cards are equally wide.
+                let n = if self.tab == Tab::Sound { 2 } else { 3 };
                 let width = ui.available_width();
                 let col_w = (width - GAP * (n as f32 - 1.0)) / n as f32;
                 let mut cols: Vec<(f32, Vec<usize>)> = vec![(0.0, Vec::new()); n];
@@ -1084,6 +1092,10 @@ impl Modern {
                 }
                 click |= self.control(o, &mut child, texts, it, sound);
                 resp
+            }
+            Item::Slider(0 | 1) => {
+                let f = Font { size: 16.0, line: 20.0, weight: ds::Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+                ds::option_row_in(ui, VOLUME_H, f, &name, focused, live, |ui| click |= self.control(o, ui, texts, it, sound)).0
             }
             _ => ds::option_row(ui, &name, focused, live, |ui| click |= self.control(o, ui, texts, it, sound)).0,
         };
