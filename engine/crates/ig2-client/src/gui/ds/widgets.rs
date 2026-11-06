@@ -102,7 +102,7 @@ pub fn entering<R>(t: f32, page: impl FnOnce() -> R) -> R {
 }
 
 /// The offset of a panel at `rect` on `screen` that is `t` of the way in.
-fn entrance_offset(rect: Rect, screen: Rect, t: f32) -> Vec2 {
+pub(crate) fn entrance_offset(rect: Rect, screen: Rect, t: f32) -> Vec2 {
     if t >= 1.0 {
         return Vec2::ZERO;
     }

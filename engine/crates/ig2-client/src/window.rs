@@ -219,7 +219,13 @@ struct Front {
     ng_heads: Option<[Option<egui::TextureHandle>; 3]>,
     /// The modern statistics page's race heads.
     stats_heads: Option<Vec<Option<egui::TextureHandle>>>,
+    /// Ours (ADR 0084): the egui page up, its opening or closing, and what waits for it to be out.
+    page: Option<(front::Page, crate::gui::Transition)>,
+    then: Option<AfterPage>,
 }
+
+/// What waits for a front page to be out (ADR 0084).
+type AfterPage = Box<dyn FnOnce(&mut App)>;
 
 impl Front {
     /// `MainScr_Belep`, `MultiplayerNev` from the settings file (`SaveGlobalRegistrySettings`' value; "Player" without one).
@@ -236,7 +242,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, mods: None, opening: false, ng: Default::default(), ng_heads: None, stats_heads: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, mods: None, opening: false, ng: Default::default(), ng_heads: None, stats_heads: None, page: None, then: None }
     }
 }
 

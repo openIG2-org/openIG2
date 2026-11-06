@@ -19,6 +19,9 @@ impl App {
             if let Some(mp) = &mut fr.mp {
                 outs.extend(mp.tick(&mut fr.net));
             }
+            if let Some((_, t)) = &mut fr.page {
+                t.tick();
+            }
             due += 1;
         }
         for o in outs {
@@ -26,6 +29,10 @@ impl App {
         }
         for a in acts {
             self.front_act(a);
+        }
+        // Ours (ADR 0084): the page is out: what it was left for.
+        if let Some(then) = self.front.as_mut().filter(|f| f.page.as_ref().is_some_and(|(_, t)| t.closed())).and_then(|f| f.then.take()) {
+            then(self);
         }
         let (Some(fr), Some(g)) = (&mut self.front, &mut self.gpu) else { return };
         for _ in 0..due {
@@ -70,11 +77,13 @@ impl App {
         let mut ng_act = None;
         let mut name_pick = None;
         let mut replay_act = None;
+        let mut stats_close = false;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
             let theme = theme(h);
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| {
+            let t = page_in(&mut fr.page, Page::Options, o.s.leaving());
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| {
                 // Load only: no save to hand back.
                 let _ = o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id));
             });
@@ -82,52 +91,58 @@ impl App {
         } else if let (Some(mods), Some(h)) = (fr.mods.as_mut(), &self.hud) {
             // Ours (ADR 0068): the mod manager.
             let theme = theme(h);
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| mods_acts = mods.show(ctx, &theme));
+            let t = page_in(&mut fr.page, Page::Mods, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| mods_acts = mods.show(ctx, &theme));
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(st), true, Some(h)) = (fr.stats.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern end-of-game page over the scene.
             let theme = theme(h);
             let heads = fr.stats_heads.get_or_insert_with(|| crate::stats_screen::modern::load_heads(&g.gui.ctx, &self.install));
-            let mut close = false;
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| close = st.modern(ctx, &h.texts, &h.palette, heads, 1.0));
-            if close {
-                fr.stats = None;
-                self.audio.play(crate::audio::CLICK);
-            }
+            let t = page_in(&mut fr.page, Page::Stats, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| stats_close = st.modern(ctx, &h.texts, &h.palette, heads, 1.0));
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(rl), true, Some(h)) = (fr.replays.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern replays page over the scene.
             let theme = theme(h);
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
+            let t = page_in(&mut fr.page, Page::Replays, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(n), true, Some(h)) = (fr.s.name.as_ref(), fr.s.name_page_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern name prompt over the scene.
             let theme = theme(h);
             let gt = fr.s.gt.min(1.0);
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| name_pick = crate::mainscr_modern::name_page(ctx, &h.texts, n, gt));
+            let t = page_in(&mut fr.page, Page::Name, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| name_pick = crate::mainscr_modern::name_page(ctx, &h.texts, n, gt));
             top = Some(pointer_over(&ov, h, size));
         } else if let (true, Some(h)) = (fr.s.new_game_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern new game page over the scene.
             let theme = theme(h);
             let heads = fr.ng_heads.get_or_insert_with(|| crate::newgame_modern::load_heads(&g.gui.ctx, &self.install));
             let (st, blurbs, gt) = (&mut fr.ng, &fr.s.blurbs, fr.s.gt.min(1.0));
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| ng_act = crate::newgame_modern::page(ctx, &h.texts, st, blurbs, heads, gt));
+            let t = page_in(&mut fr.page, Page::NewGame, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| ng_act = crate::newgame_modern::page(ctx, &h.texts, st, blurbs, heads, gt));
             top = Some(pointer_over(&ov, h, size));
         } else if let (true, Some(p), Some(h)) = (fr.s.modern && fr.mp.is_none(), fr.s.panel(), &self.hud) {
             // Ours (ADR 0078): the modern main menu over the scene.
             let theme = theme(h);
             let (history, can, line, gt) = (fr.s.history, fr.s.can_continue, fr.s.continue_line.clone(), fr.s.gt.min(1.0));
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt));
+            let t = page_in(&mut fr.page, Page::Main(p), false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt));
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(mp), Some(h)) = (fr.mp.as_mut(), &self.hud) {
             let theme = theme(h);
             mp.load_heads(&g.gui.ctx, &self.install);
             let mut acts = Vec::new();
-            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| acts = mp.page(ctx, &h.texts, &h.palette, &theme, fr.s.flow));
+            let t = page_in(&mut fr.page, Page::Mp, false);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| acts = mp.page(ctx, &h.texts, &h.palette, &theme, fr.s.flow));
             mp_outs = mp.apply(acts, &mut fr.net);
             top = Some(pointer_over(&ov, h, size));
         } else if let Some(h) = &self.hud {
             ov.draw(&mut frame, h, size);
+        }
+        // No page up: the next one opens (one on its way out runs its course first).
+        if top.is_none() && fr.then.is_none() {
+            fr.page = None;
         }
         if let Err(e) = g.present(frame, top, now as f32 / 1000.0) {
             self.surface_failed(e);
@@ -139,12 +154,22 @@ impl App {
         for a in mods_acts {
             self.mods_act(a);
         }
+        if stats_close {
+            self.audio.play(crate::audio::CLICK);
+            self.after_page(|app| {
+                if let Some(f) = &mut app.front {
+                    f.stats = None;
+                }
+            });
+        }
         match replay_act {
             Some(crate::replay_viewer::ListAct::Close) => {
-                if let Some(f) = &mut self.front {
-                    f.replays = None;
-                }
                 self.audio.play(crate::audio::CLICK);
+                self.after_page(|app| {
+                    if let Some(f) = &mut app.front {
+                        f.replays = None;
+                    }
+                });
             }
             Some(crate::replay_viewer::ListAct::Open(path)) => {
                 self.audio.play(crate::audio::CLICK);
@@ -154,44 +179,71 @@ impl App {
         }
         if let Some(p) = name_pick {
             self.audio.play(crate::audio::CLICK);
-            let Some(f) = &mut self.front else { return };
-            match p {
-                crate::mainscr_modern::NamePick::Accept => {
-                    if let Some(a) = f.s.name_key(crate::options::EntryKey::Enter) {
-                        self.front_act(a);
+            self.after_page(move |app| {
+                let Some(f) = &mut app.front else { return };
+                match p {
+                    crate::mainscr_modern::NamePick::Accept => {
+                        if let Some(a) = f.s.name_key(crate::options::EntryKey::Enter) {
+                            app.front_act(a);
+                        }
                     }
+                    crate::mainscr_modern::NamePick::Back => f.s.escape(),
                 }
-                crate::mainscr_modern::NamePick::Back => f.s.escape(),
-            }
+            });
         }
         if let Some(a) = ng_act {
             use crate::newgame_modern::Act;
             self.audio.play(crate::audio::CLICK);
-            let Some(f) = &mut self.front else { return };
-            match a {
-                Act::Back => f.s.close_race(),
-                Act::Picked => {}
-                Act::Start { race, level } => f.s.start_campaign(race, level),
-                Act::Scenarios => {
-                    f.s.close_race();
-                    if let Some(a) = f.s.act_item(crate::menu_flow::Item::Scenarios) {
-                        self.front_act(a);
+            if a != Act::Picked {
+                self.after_page(move |app| {
+                    let Some(f) = &mut app.front else { return };
+                    match a {
+                        Act::Back => f.s.close_race(),
+                        Act::Picked => {}
+                        Act::Start { race, level } => f.s.start_campaign(race, level),
+                        Act::Scenarios => {
+                            f.s.close_race();
+                            if let Some(a) = f.s.act_item(crate::menu_flow::Item::Scenarios) {
+                                app.front_act(a);
+                            }
+                        }
                     }
-                }
+                });
             }
         }
+        // The click at once, the pick once the panel is out.
         match main_pick {
             Some(crate::mainscr_modern::Pick::Item(i)) => {
-                if let Some(a) = self.front.as_mut().and_then(|f| f.s.act_item(i)) {
-                    self.front_act(a);
-                }
+                self.audio.play(crate::audio::CLICK);
+                self.after_page(move |app| {
+                    if let Some(a) = app.front.as_mut().and_then(|f| f.s.act_item(i)).filter(|&a| a != crate::mainscr::Act::Click) {
+                        app.front_act(a);
+                    }
+                });
             }
             Some(crate::mainscr_modern::Pick::Back) => {
-                if let Some(f) = &mut self.front {
-                    f.s.escape();
-                }
+                self.audio.play(crate::audio::CLICK);
+                self.after_page(|app| {
+                    if let Some(f) = &mut app.front {
+                        f.s.escape();
+                    }
+                });
             }
             None => {}
+        }
+    }
+
+    /// Ours (ADR 0084): `then` once the page up has closed (at once without one); a page already on its way out takes
+    /// no other act.
+    pub(super) fn after_page(&mut self, then: impl FnOnce(&mut App) + 'static) {
+        let Some(f) = &mut self.front else { return };
+        match &mut f.page {
+            Some((_, t)) if t.closing() => {}
+            Some((_, t)) => {
+                t.close();
+                f.then = Some(Box::new(then));
+            }
+            None => then(self),
         }
     }
 
@@ -200,7 +252,11 @@ impl App {
         use crate::mods_page::Act;
         let Some(f) = &mut self.front else { return };
         match a {
-            Act::Back => f.mods = None,
+            Act::Back => self.after_page(|app| {
+                if let Some(f) = &mut app.front {
+                    f.mods = None;
+                }
+            }),
             Act::Restart => match crate::mods_page::restart() {
                 Ok(()) => f.quit = true,
                 Err(e) => eprintln!("ig2-client: restart: {e}"),
@@ -319,12 +375,12 @@ impl App {
                 }
                 self.audio.play(crate::audio::CLICK);
             }
-            Out::Close => {
-                if let Some(f) = &mut self.front {
+            Out::Close => self.after_page(|app| {
+                if let Some(f) = &mut app.front {
                     f.mp = None;
                     f.s.close_mp();
                 }
-            }
+            }),
             Out::Start(b) => {
                 let rules = self.rules;
                 let ticks = crate::new_game::wall_ticks();
@@ -442,7 +498,11 @@ impl App {
             match k.as_ref() {
                 Key::Named(NamedKey::Escape | NamedKey::Enter) => {
                     if st.back().is_some() {
-                        f.stats = None;
+                        self.after_page(|app| {
+                            if let Some(f) = &mut app.front {
+                                f.stats = None;
+                            }
+                        });
                     }
                 }
                 Key::Named(NamedKey::ArrowLeft) => st.step_metric(false),
@@ -453,7 +513,11 @@ impl App {
         }
         if f.replays.is_some() {
             if matches!(k.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter)) {
-                f.replays = None;
+                self.after_page(|app| {
+                    if let Some(f) = &mut app.front {
+                        f.replays = None;
+                    }
+                });
             }
             return;
         }
@@ -515,7 +579,16 @@ impl App {
             return;
         }
         if matches!(k.as_ref(), Key::Named(NamedKey::Escape)) {
-            f.s.escape();
+            // Ours (ADR 0084): a modern page's step back once it is out (the main set has none).
+            if matches!(f.page, Some((Page::Name | Page::NewGame, _))) || matches!(f.page, Some((Page::Main(p), _)) if p != crate::menu_flow::Panel::Main) {
+                self.after_page(|app| {
+                    if let Some(f) = &mut app.front {
+                        f.s.escape();
+                    }
+                });
+            } else {
+                f.s.escape();
+            }
             return;
         }
         if f.s.name.is_none() && f.s.high_score.is_none() {
@@ -551,9 +624,80 @@ impl App {
     }
 }
 
+/// Ours (ADR 0084): which egui page the front shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Page {
+    Options,
+    Mods,
+    Stats,
+    Replays,
+    Name,
+    NewGame,
+    Main(crate::menu_flow::Panel),
+    Mp,
+}
+
+/// The transition of page `p`: its opening when it has just come up (or comes up again once out); closing while
+/// `leaving` (the Settings page's own leave, held until it is out: `App::options_tick`).
+fn page_in(slot: &mut Option<(Page, crate::gui::Transition)>, p: Page, leaving: bool) -> crate::gui::Transition {
+    match slot {
+        Some((q, t)) if *q == p && (!t.closed() || leaving) => {
+            if leaving {
+                t.close();
+            }
+            *t
+        }
+        _ => {
+            let mut t = crate::gui::Transition::opening();
+            if leaving {
+                t.close();
+            }
+            *slot = Some((p, t));
+            t
+        }
+    }
+}
+
+/// A page's run `t` of the way in: its areas slide in from their sides and it fades (ADR 0084, as the in-game
+/// screens' panels); closing, it takes no input.
+fn run_page(gui: &mut crate::gui::Gui, t: crate::gui::Transition, size: (u32, u32), style: &egui::Style, mut page: impl FnMut(&egui::Context)) {
+    if t.closing() {
+        gui.mute();
+    }
+    gui.alpha = t.panels();
+    gui.run(size, style, |ctx| {
+        page(ctx);
+        crate::gui::transition::slide_areas(ctx, t.panels());
+    });
+    gui.alpha = 1.0;
+}
+
 /// The pointer and its tooltip in a frame of their own, drawn over the egui page.
 fn pointer_over(ov: &super::pointer::Overlay, h: &crate::ui::Hud, size: [f32; 2]) -> crate::render::Frame {
     let mut f = crate::render::Frame::new([0.0; 4]);
     ov.draw(&mut f, h, size);
     f
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A new page opens, the same one keeps its transition; leaving closes it and holds it closed until it goes; out
+    /// and up again, it opens again.
+    #[test]
+    fn pages_open_and_close() {
+        let mut slot = None;
+        let tick = |slot: &mut Option<(Page, crate::gui::Transition)>| (0..40).for_each(|_| slot.as_mut().unwrap().1.tick());
+        assert_eq!(page_in(&mut slot, Page::Mods, false).panels(), 0.0);
+        tick(&mut slot);
+        assert_eq!(page_in(&mut slot, Page::Mods, false).panels(), 1.0);
+        assert_eq!(page_in(&mut slot, Page::Options, false).panels(), 0.0);
+        tick(&mut slot);
+        assert!(page_in(&mut slot, Page::Options, true).closing());
+        tick(&mut slot);
+        assert!(page_in(&mut slot, Page::Options, true).closed());
+        let t = page_in(&mut slot, Page::Options, false);
+        assert!(!t.closing() && t.panels() == 0.0);
+    }
 }

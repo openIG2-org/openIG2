@@ -39,6 +39,8 @@ pub struct Gui {
     pub hand: bool,
     /// The page's pointer (egui's cursor icon, ADR 0073 §5).
     pub cursor: egui::CursorIcon,
+    /// The next runs' page drawn this opaque (ADR 0084: a front page's transition).
+    pub alpha: f32,
 }
 
 impl Gui {
@@ -49,7 +51,7 @@ impl Gui {
         let mut f = egui::FontDefinitions::default();
         ds::add_fonts(&mut f);
         ctx.set_fonts(f);
-        Self { ctx, renderer: None, format, events: Vec::new(), at: None, start: web_time::Instant::now(), painted: None, hand: false, cursor: egui::CursorIcon::Default }
+        Self { ctx, renderer: None, format, events: Vec::new(), at: None, start: web_time::Instant::now(), painted: None, hand: false, cursor: egui::CursorIcon::Default, alpha: 1.0 }
     }
 
     /// The design's faces (ADR 0073: Oxanium, Share Tech Mono, in the client) in front of the remaster's sans
@@ -97,6 +99,11 @@ impl Gui {
         self.events.push(egui::Event::PointerButton { pos, button: *button, pressed: down, modifiers: Default::default() });
     }
 
+    /// The input so far dropped: the page takes none (it is on its way out).
+    pub fn mute(&mut self) {
+        self.events.clear();
+    }
+
     /// The wheel turned `lines` lines (positive: up).
     pub fn wheel(&mut self, lines: f32) {
         self.events.push(egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Line, delta: egui::vec2(0.0, lines), modifiers: Default::default() });
@@ -114,10 +121,19 @@ impl Gui {
         };
         input.viewports.entry(egui::ViewportId::ROOT).or_default().native_pixels_per_point = Some(ppp);
         self.ctx.set_style(style.clone());
+        // A page's slide (`transition::slide_areas`) holds for the run that sets it.
+        self.ctx.memory_mut(|m| m.to_global.clear());
         let out = self.ctx.run(input, page);
         self.cursor = out.platform_output.cursor_icon;
         self.hand = self.cursor == egui::CursorIcon::PointingHand;
-        let prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
+        let mut prims = self.ctx.tessellate(out.shapes, out.pixels_per_point);
+        if self.alpha < 1.0 {
+            for p in &mut prims {
+                if let egui::epaint::Primitive::Mesh(m) = &mut p.primitive {
+                    m.vertices.iter_mut().for_each(|v| v.color = v.color.gamma_multiply(self.alpha.max(0.0)));
+                }
+            }
+        }
         let mut textures = out.textures_delta;
         // A frame not painted (no surface texture) still uploads its textures with the next one.
         if let Some((_, old, _)) = self.painted.take() {

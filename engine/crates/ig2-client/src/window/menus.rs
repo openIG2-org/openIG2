@@ -85,7 +85,9 @@ impl App {
             let snap = o.s.clone();
             self.store_settings_from(&snap);
         }
-        let act = self.options.as_mut().and_then(|o| o.s.done());
+        // Ours (ADR 0084): over the main menu the Settings page leaves once its closing has run out.
+        let hold = self.front.as_ref().is_some_and(|f| matches!(&f.page, Some((super::front::Page::Options, t)) if !t.closed()));
+        let act = if hold { None } else { self.options.as_mut().and_then(|o| o.s.done()) };
         if let Some(a) = act {
             self.options_act(a);
         }

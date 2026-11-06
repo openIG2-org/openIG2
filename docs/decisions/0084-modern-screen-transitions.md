@@ -31,6 +31,11 @@ frame's opening and the hull sliding in. The modern look wants its own short tra
 5. **Trade**: the frame and wire sphere stay hidden as before; the hull turns in its well.
 6. **Interface = Classic** is unchanged: every screen plays the original's animations, and snapshots, captures and
    replay tests draw the original's (the transitions only run in the live window).
+7. **The main menu's pages** (the menu and its sub-menus, new game, the name prompt, Settings and Load, the end-of-game
+   statistics, replays, mods, multiplayer) open and close with the same `Transition`, page after page: a pick waits for its
+   page to close (`App::after_page`, the click heard at once), then the next page opens. Their own areas slide as the
+   placed panels do (`transition::slide_areas`) and the whole page fades (`Gui::alpha`); while closing a page takes
+   no input. The menu itself goes on under them (ADR 0078): back from a page only the page's transition plays.
 
 ## Consequences
 - The modern screens open and close in about a third of a second instead of the original's one to three.

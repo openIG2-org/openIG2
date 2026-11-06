@@ -81,6 +81,21 @@ impl Transition {
     }
 }
 
+/// A page's every area `t` (0..1, eased) of the way in, each from the side of the screen it stands on, as the
+/// [`super::ds::place`]d panels of [`super::ds::entering`] (for pages placed with their own areas: the main menu's).
+/// Call it after the page, inside its run; [`super::Gui::alpha`] fades it.
+pub fn slide_areas(ctx: &egui::Context, t: f32) {
+    if t >= 1.0 {
+        return;
+    }
+    let screen = ctx.screen_rect();
+    let layers: Vec<(egui::LayerId, egui::Rect)> = ctx.memory(|m| m.layer_ids().filter_map(|l| m.area_rect(l.id).map(|r| (l, r))).collect());
+    for (l, r) in layers {
+        let d = super::ds::entrance_offset(r, screen, t);
+        ctx.set_transform_layer(l, egui::emath::TSTransform::from_translation(d));
+    }
+}
+
 /// Smoothstep.
 fn ease(x: f32) -> f32 {
     x * x * (3.0 - 2.0 * x)

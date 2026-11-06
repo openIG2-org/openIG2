@@ -616,7 +616,6 @@ impl OptionsScreen {
         }
     }
 
-    #[cfg(test)]
     pub fn leaving(&self) -> bool {
         self.leaving.is_some()
     }
@@ -875,7 +874,8 @@ impl OptionsScreen {
     /// Ours (ADR 0062): a frame of the main menu's modern screen, the egui page (its draw and pointer input).
     pub fn modern_page(&mut self, ctx: &egui::Context, texts: &crate::ui::UiTexts, theme: &crate::theme::Theme, sound: &mut dyn FnMut(crate::audio::SoundId)) -> Option<Act> {
         let mut m = self.modern.take()?;
-        if self.leaving.is_none() {
+        // Over the main menu (Settings, Load) it stays up through its closing (ADR 0084).
+        if self.leaving.is_none() || self.load_only {
             m.show(self, ctx, texts, theme, sound);
         }
         let act = m.out.take();
