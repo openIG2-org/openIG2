@@ -474,14 +474,14 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
     let current = b.entries.iter().find(|e| e.current).map(|e| e.column);
     let tab = st.tab.or(current).unwrap_or(0).min(b.headers.len().saturating_sub(1));
     ui.add_space(4.0);
-    // Equal slots: a long label shrinks and is cut in its own (`Plate` would widen into the next).
+    // Each tab as wide as its label, the row's rest shared evenly, every label whole in one size.
     let (row, _) = ui.allocate_exact_size(vec2(BUILD_W, 36.0), Sense::hover());
-    let n = b.headers.len().max(1) as f32;
-    let w = (BUILD_W - 32.0 - 6.0 * (n - 1.0)) / n;
-    let f = ds::Plate::FONT.sized(12.0).tracking(0.10);
-    for (i, h) in b.headers.iter().enumerate() {
-        let slot = Rect::from_min_size(row.min + vec2(16.0 + i as f32 * (w + 6.0), 0.0), vec2(w, 36.0));
-        if ui.put(slot, ds::Plate::new(h).primary(i == tab).font(f).height(36.0).width(w)).clicked() {
+    let (f, widths) = tab_widths(ui.ctx(), &b.headers, BUILD_W - 32.0);
+    let mut x = row.left() + 16.0;
+    for (i, (h, w)) in b.headers.iter().zip(widths).enumerate() {
+        let slot = Rect::from_min_size(pos2(x, row.top()), vec2(w, 36.0));
+        x += w + TAB_GAP;
+        if ui.put(slot, ds::Plate::new(h).primary(i == tab).font(f).height(36.0).width(w).pad(TAB_PAD)).clicked() {
             st.tab = Some(i);
         }
     }
@@ -524,6 +524,31 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
     ui.add_space(16.0);
     let rect = ui.min_rect();
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.88));
+}
+
+/// The group tabs' gap and the room beside a label.
+const TAB_GAP: f32 = 6.0;
+const TAB_PAD: f32 = 8.0;
+
+/// The group tabs' type and widths across `room`: each its label and [`TAB_PAD`] aside, what is left shared evenly;
+/// one size for all, half a point smaller while the labels don't fit (the longest languages' sets: EN, IT), 9 at least.
+fn tab_widths(ctx: &egui::Context, labels: &[String], room: f32) -> (Font, Vec<f32>) {
+    let room = room - TAB_GAP * labels.len().saturating_sub(1) as f32;
+    let mut size = 12.0;
+    loop {
+        let f = ds::Plate::FONT.sized(size).tracking(0.10);
+        let w: Vec<f32> = labels.iter().map(|s| Text::new(s, f).layout(ctx, f32::INFINITY).width.ceil() + 2.0 * TAB_PAD).collect();
+        let total: f32 = w.iter().sum();
+        if total <= room {
+            let extra = (room - total) / labels.len().max(1) as f32;
+            return (f, w.into_iter().map(|w| w + extra).collect());
+        }
+        if size <= 9.0 {
+            // A mod's labels still too long: shared by length, the plates cut them.
+            return (f, w.into_iter().map(|w| w * room / total).collect());
+        }
+        size -= 0.5;
+    }
 }
 
 /// The short info: the picture well, the title with the details and on/off keys, the lines or data rows; above it
@@ -1075,6 +1100,25 @@ mod tests {
         }
         let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, 208.0 + 52.0 + 6.0 + ROW_H * 1.5);
         assert_eq!(click(&v, 0, at), vec![]);
+    }
+
+    /// Every language's group labels show whole, in one size, across the menu.
+    #[test]
+    fn group_tabs_fit_every_language() {
+        let sets = [["CIVIL", "GYÁRAK", "KATONAI", "KERESKEDELMI"], ["CIVILIAN", "INDUSTRIAL", "MILITARY", "COMMERCIAL"], ["CIVILI", "INDUSTRIALI", "MILITARI", "COMMERCIALI"], ["ZIVIL", "INDUSTRIE", "MILITÄR", "HANDEL"]];
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        g.run(SIZE, &style, |ctx| {
+            for set in sets {
+                let labels = set.map(String::from);
+                let (f, w) = tab_widths(ctx, &labels, BUILD_W - 32.0);
+                assert!(f.size >= 11.0, "{set:?} at {}", f.size);
+                assert!((w.iter().sum::<f32>() + 3.0 * TAB_GAP - (BUILD_W - 32.0)).abs() < 0.01, "{set:?}: {w:?}");
+                for (s, w) in labels.iter().zip(&w) {
+                    assert!(Text::new(s, f).layout(ctx, f32::INFINITY).width + 2.0 * TAB_PAD <= w + 0.01, "{s} in {w}");
+                }
+            }
+        });
     }
 
     /// Long or translated texts never resize the panels: they are shrunk and cut inside them.
