@@ -186,6 +186,22 @@ pub fn page(ctx: &egui::Context, cursors: &[(Cursor, Vec<egui::TextureHandle>)])
                 badge(ui, "Figyelem", Tone::Warn, true, 120.0);
             });
             ui.add_space(SPACE[1]);
+            ui.horizontal(|ui| {
+                tag(ui, "Kész", tokens().own);
+                tag(ui, "Jelszó", tokens().ink_silver);
+                tag(ui, "Nem kompatibilis", tokens().enemy);
+                text_field(ui, "K7QF-29MX", Some(4), "", Vec2::new(150.0, 36.0));
+                text_field(ui, "", None, "nincs jelszó", Vec2::new(150.0, 36.0));
+            });
+            caption(ui, "Table");
+            let (head, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), egui::Sense::hover());
+            let cols = |r: Rect| columns(r.shrink2(Vec2::new(SPACE[1], 0.0)), &[0.0, 140.0, 100.0], 16.0);
+            table_head(ui, &cols(head), &["Játék", "Dátum", "Játékosok"], &[false, false, true]);
+            let row = ui.add(ListRow::new("Alice galaxisa").selected(true).height(40.0));
+            let c = cols(row.rect);
+            Text::new("2357.03.11", Font::READOUT.sized(17.0)).upright().color(tokens().info).paint(ui, c[1]);
+            Text::new("3/8", Font::READOUT.sized(19.0)).upright().right().paint(ui, c[2]);
+            ui.add_space(SPACE[1]);
             title_plate(ui, "Kolónia: Magellán", 420.0);
             caption(ui, "Confirm (frame panel behind)");
             confirm(ui.ctx(), "g-confirm", false, "", "", "", "");

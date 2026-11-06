@@ -999,6 +999,87 @@ impl Widget for ListRow<'_> {
     }
 }
 
+/// A table's column heads (`th`: 400 16 / 0.1 em upper case, muted).
+pub const TABLE_HEAD: Font = Font { size: 16.0, line: 20.0, weight: Weight::Regular, tracking: 0.1, upper: true, lcd: false };
+
+/// A table's cells across `r`, `gap` apart: `widths` in points, a 0 shares what the others leave.
+pub fn columns(r: Rect, widths: &[f32], gap: f32) -> Vec<Rect> {
+    let fixed = widths.iter().sum::<f32>() + gap * widths.len().saturating_sub(1) as f32;
+    let share = (r.width() - fixed).max(0.0) / widths.iter().filter(|&&w| w == 0.0).count().max(1) as f32;
+    let mut x = r.left();
+    widths
+        .iter()
+        .map(|&w| {
+            let w = if w == 0.0 { share } else { w };
+            let c = Rect::from_x_y_ranges(x..=x + w, r.y_range());
+            x += w + gap;
+            c
+        })
+        .collect()
+}
+
+/// A table's head row: `labels` in the cells `cols` ([`columns`]) on one baseline, a column of `right` at its right.
+pub fn table_head(ui: &Ui, cols: &[Rect], labels: &[&str], right: &[bool]) {
+    let k = tokens();
+    for (i, (c, s)) in cols.iter().zip(labels).enumerate() {
+        let t = Text::new(s, TABLE_HEAD).color(k.ink_muted).baseline(baseline(*c, TABLE_HEAD)).shrink(11.0);
+        if right.get(i).copied().unwrap_or(false) { t.right() } else { t }.paint(ui, *c);
+    }
+}
+
+/// A small square tag (`.badge`: raised glass, a rim, 600 12 / 0.12 em upper case, 26 high) in `c`: a row's state
+/// ("Ready", "Password"), a title's mark ("Host").
+pub fn tag(ui: &mut Ui, text: &str, c: Color32) -> Response {
+    const FONT: Font = Font { size: 12.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.12, upper: true, lcd: false };
+    let k = tokens();
+    let fit = Text::new(text, FONT).layout(ui.ctx(), 220.0);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(fit.width + 20.0, 26.0), Sense::hover());
+    ui.painter().rect_filled(rect, RADIUS_PLATE, k.glass_raised);
+    rim(ui.painter(), rect, RADIUS_PLATE, k.rim);
+    Text::new(text, FONT).color(c).center().paint(ui, rect.shrink2(Vec2::new(6.0, 0.0)));
+    resp
+}
+
+/// A text field (`.field input`: recessed, 500 17 / 0.08 em, 14 in) `size` big: `text` with the caret before its
+/// character `caret` while the field takes the keys (`Some`: the line scrolls to keep the caret in view), `hint`
+/// muted while it is empty. The keys are the caller's; a click is the response's.
+pub fn text_field(ui: &mut Ui, text: &str, caret: Option<usize>, hint: &str, size: Vec2) -> Response {
+    const FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+    let k = tokens();
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let l = look(ui, &resp, caret.is_some());
+    let p = ui.painter();
+    p.rect_filled(rect, RADIUS_PLATE, k.glass_deep);
+    rim(p, rect, RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, l.hover));
+    edge_line(p, rect, RADIUS_PLATE as f32, true, Color32::from_black_alpha(200));
+    if l.focus {
+        focus_mark(p, rect, RADIUS_PLATE as f32, 2.0);
+    }
+    let inner = rect.shrink2(Vec2::new(14.0, 0.0));
+    if text.is_empty() && caret.is_none() {
+        Text::new(hint, FONT).color(k.ink_muted).paint(ui, inner);
+        return resp;
+    }
+    let galley = ui.painter().layout_job(FONT.job(text, if l.on { k.ink } else { k.ink_muted }));
+    let at_caret = galley.pos_from_cursor(egui::text::CCursor::new(caret.unwrap_or(0).min(text.chars().count()))).min.x;
+    let shift = if caret.is_some() { (at_caret - inner.width() + 4.0).max(0.0) } else { 0.0 };
+    let top = baseline(rect, FONT) - super::fit::Fitted { galley: galley.clone(), font: FONT, cut: false, width: 0.0 }.baseline();
+    let at = Pos2::new(inner.left() - shift, top);
+    let painter = ui.painter_at(inner.expand2(Vec2::new(2.0, 0.0)));
+    if text.is_empty() {
+        Text::new(hint, FONT).color(k.ink_muted).paint(ui, inner);
+    }
+    if caret.is_some() {
+        if (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0 {
+            let x = at.x + at_caret;
+            painter.line_segment([Pos2::new(x, rect.center().y - 11.0), Pos2::new(x, rect.center().y + 11.0)], Stroke::new(1.5f32, k.ink));
+        }
+        ui.ctx().request_repaint();
+    }
+    painter.galley(at, galley, k.ink);
+    resp
+}
+
 /// A settings row (`.orow`: 50 high, its 16-point label at the left, its control at the right, the label cut to the
 /// room the control leaves); `focused` lit (the keyboard's row), `enabled` false muted.
 pub fn option_row<R>(ui: &mut Ui, label: &str, focused: bool, enabled: bool, control: impl FnOnce(&mut Ui) -> R) -> (Response, R) {
