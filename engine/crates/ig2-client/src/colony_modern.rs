@@ -225,7 +225,13 @@ pub enum Pic {
     Info,
     /// The radar's terrain picture, drawn under the panels ([`radar_under`]).
     Radar,
+    /// The short info's globe (the planet's card), [`GLOBE_SRC`] of the info model drawn round.
+    Globe,
 }
+
+/// The info pass's globe (`KIS_INFO_AT`: about (27.1, 446.4) on the virtual screen, 23 across) with a margin as the
+/// starmap card's: 1.171 times taller than wide, the pass's perspective (31° off its axis) undone when drawn square.
+const GLOBE_SRC: [f32; 4] = [27.1 - 12.75, 446.4 - 14.95, 25.5, 29.9];
 
 /// What stays between frames.
 #[derive(Debug, Clone, Default)]
@@ -346,7 +352,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         egui::Area::new(egui::Id::new("cmh-build")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| build_menu(ui, b, st, (card_top - top - 16.0).max(200.0), &mut acts));
     }
     let war = v.war.is_some();
-    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else { CARD_W }, &mut acts));
+    let card = egui::Area::new(egui::Id::new("cmh-card")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| card_panel(ui, v, st, if war { WAR_CARD_W } else if v.card.planet { sm::CARD_W } else { CARD_W }, &mut acts));
     let card = card.response.rect;
     // The selected building's round buttons right of the card, the window over them.
     let a = &v.actions;
@@ -574,45 +580,57 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
             }
         });
     }
+    if c.planet {
+        // The starmap's selection card: the round globe between the ratios, the info key in the button row.
+        let ratios = c.ratios.map(|(a, b)| [format!("{a}%"), format!("{b}%")]);
+        let ratio = |i: usize| ratios.as_ref().map(|r| ("", r[i].as_str()));
+        let card = sm::Card { ratios: [ratio(0), ratio(1)], title: &c.title, caret: None, lines: &c.lines, extra: None };
+        let wells = &mut st.wells;
+        let picture = |ui: &mut Ui, r: Rect| {
+            ds::shadow(ui.painter(), r.shrink(r.width() * 0.08), 255, 0, 14, 0, Color32::from_black_alpha(200));
+            wells.push((Pic::Globe, r, ui.opacity()));
+        };
+        let buttons = |ui: &mut Ui, _: f32| {
+            if key(ui, ds::Icon::Info, false, vec2(36.0, 32.0), &v.details).clicked() {
+                acts.push(Act::Card(false));
+            }
+        };
+        let card = sm::card(ui, &card, picture, buttons);
+        let card = if c.tip.is_empty() { card } else { card.on_hover_text(&c.tip) };
+        if card.clicked() {
+            acts.push(Act::Card(false));
+        }
+        if card.secondary_clicked() {
+            acts.push(Act::Card(true));
+        }
+        return;
+    }
     let at = ui.painter().add(Shape::Noop);
-    let well_w = if c.planet { 80.0 } else if v.war.is_some() { 112.0 } else { 84.0 };
+    let well_w = if v.war.is_some() { 112.0 } else { 84.0 };
     let inner = egui::Frame::new().inner_margin(14).show(ui, |ui| {
         ui.set_width(width - 28.0);
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 14.0;
-            if c.planet {
-                // The globe between the planet's ratios (`.ig-card .side`).
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let ratio = |ui: &mut Ui, n: Option<i32>| _ = Text::new(&n.map(|n| format!("{n}%")).unwrap_or_default(), Font::DATA.sized(12.0).tracking(0.08)).center().color(k.ink_muted).show(ui, vec2(well_w, 14.0));
-                    ratio(ui, c.ratios.map(|r| r.0));
-                    let (r, _) = ui.allocate_exact_size(vec2(well_w, 72.0), Sense::hover());
-                    st.wells.push((Pic::Info, Rect::from_center_size(r.center(), vec2(72.0, 72.0)), ui.opacity()));
-                    ratio(ui, c.ratios.map(|r| r.1));
-                });
-            } else {
-                well(ui, vec2(well_w, 96.0), Pic::Info, st);
-            }
+            well(ui, vec2(well_w, 96.0), Pic::Info, st);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
                 let w = ui.available_width();
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    let keys = if c.planet || !v.actions.on[2] { 1.0 } else { 2.0 };
-                    let title = if c.planet { Font::HEADING.sized(20.0).weight(Weight::Medium) } else { Font::HEADING };
-                    Text::new(&c.title, title).color(k.ink).shrink(14.0).show(ui, vec2(w - keys * 42.0, 32.0));
+                    let keys = if v.actions.on[2] { 2.0 } else { 1.0 };
+                    Text::new(&c.title, Font::HEADING).color(k.ink).shrink(14.0).show(ui, vec2(w - keys * 42.0, 32.0));
                     if key(ui, ds::Icon::Info, false, vec2(36.0, 32.0), &v.details).clicked() {
                         acts.push(Act::Card(false));
                     }
-                    if !c.planet && v.actions.on[2] && ds::either(&key(ui, ds::Icon::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
+                    if v.actions.on[2] && ds::either(&key(ui, ds::Icon::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
                         acts.push(Act::Spot(0x11));
                     }
                 });
                 // The lines and the `ig-table` rows 2 apart under the title row's 6.
                 ui.spacing_mut().item_spacing.y = 2.0;
                 for (i, (l, col)) in c.lines.iter().enumerate() {
-                    // The units' empire as the board's empire label; the planet's lines upper case (`.ig-card .line`).
-                    let f = if c.planet { Font::DATA.tracking(0.12).upper(true) } else if i == 0 { Font::LABEL.tracking(0.16) } else { Font::DATA };
+                    // The units' empire as the board's empire label.
+                    let f = if i == 0 { Font::LABEL.tracking(0.16) } else { Font::DATA };
                     Text::new(l, f).shrink(11.0).color(*col).show(ui, vec2(w, 20.0));
                 }
                 for r in &c.rows {
@@ -1000,6 +1018,15 @@ pub fn pictures(f: &mut crate::render::Frame, wells: &[(Pic, Rect, f32)], buildi
             // The box's model stands about (26, 446): its middle, not the box's empty edges.
             Pic::Info => (info, [4.0, 418.0, 44.0, 56.0]),
             Pic::Radar => continue,
+            Pic::Globe => {
+                let Some(tex) = info else { continue };
+                let wide = crate::kit::Wide::new(v);
+                let [x0, y0, w0, h0] = GLOBE_SRC;
+                let mut i = crate::render::Instance::new(crate::render::kind::SPRITE, [r.center().x, r.center().y], [r.width() / 2.0, r.height() / 2.0], [alpha; 4]);
+                i.uv = [wide.u(x0), y0 / 480.0, w0 / (640.0 * wide.sx), h0 / 480.0];
+                f.push(tex, crate::render::Blend::GammaPremul, i);
+                continue;
+            }
         };
         let Some(tex) = tex else { continue };
         let [mut x0, mut y0, mut w0, mut h0] = src;

@@ -321,7 +321,7 @@ const LINE_H: f32 = 30.0;
 /// The bar's row: the key groups and the LCDs 32 high, the ticker and the research button 30 in its middle.
 const ROW_H: f32 = 32.0;
 /// The selection card (`.ig-panel.deep`, 380 wide, 14 × 16 inside; the globe's column 96, 16 to the text).
-const CARD_W: f32 = 380.0;
+pub(crate) const CARD_W: f32 = 380.0;
 const CARD_SIDE: f32 = 96.0;
 /// The round action buttons beside the card (the colony's: 60 across).
 const ROUND: f32 = 60.0;
@@ -712,14 +712,29 @@ fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
     let i = Rect::from_center_size(pos2(r.center().x - w / 2.0 + 6.0, r.center().y), vec2(12.0, 12.0));
     (if habitability { ds::Icon::Users } else { ds::Icon::Hammer }).paint(ui.painter(), i, k.ink_muted);
     Text::new(value, RATIO).color(k.ink_muted).paint_only(ui, Rect::from_min_max(pos2(i.right() + 3.0, r.top()), r.max));
-    resp.on_hover_text(label);
+    if !label.is_empty() {
+        resp.on_hover_text(label);
+    }
 }
 
-/// The selection card (`.ig-panel.deep` with `.ig-card`): the globe between its ratios, the name, the original's
-/// lines, the buttons as plates (the colony or split, the details) and keys (tanks, production).
-fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: &mut State) {
+/// What a selection card shows: the side's ratios (richness, habitability: label, value), the name (with a caret: a
+/// text field, the rename), its lines (six at most) and a last line of its own.
+pub(crate) struct Card<'a> {
+    pub ratios: [Option<(&'a str, &'a str)>; 2],
+    pub title: &'a str,
+    pub caret: Option<usize>,
+    pub lines: &'a [(String, Color32)],
+    pub extra: Option<(&'a str, Color32)>,
+}
+
+/// The selection card (`.ig-panel.deep` with `.ig-card`, 380 wide, 14 × 16 inside): the side column (a ratio, the
+/// 84-point picture `picture` fills, a ratio) centred on the text column (the name, the lines, 8 and the 32-high
+/// button row `buttons` fills, its width given). The starmap's and the colony's planet. Gives the card body's
+/// response (the info box: left and right click; the buttons win theirs).
+pub(crate) fn card(ui: &mut egui::Ui, c: &Card, picture: impl FnOnce(&mut egui::Ui, Rect), buttons: impl FnOnce(&mut egui::Ui, f32)) -> egui::Response {
     let k = ds::tokens();
     let at = ui.painter().add(Shape::Noop);
+    let lines = &c.lines[..c.lines.len().min(6)];
     let frame = egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 }).show(ui, |ui| {
         let inner = CARD_W - 32.0;
         ui.set_width(inner);
@@ -730,84 +745,105 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
                 ui.set_width(CARD_SIDE);
                 // Centred on the text column (`.ig-card`'s `align-items: center`): its name, lines, gap and plates
                 // against the two ratios round the globe.
-                let lines = info.lines.len().min(6) + info.redirect as usize;
-                ui.add_space(((28.0 + 2.0 + lines as f32 * 22.0 + 8.0 + 32.0 - (14.0 + 2.0 + 84.0 + 2.0 + 14.0)) / 2.0).max(0.0));
-                if let Some((l, val)) = info.stats.first() {
+                let n = lines.len() + c.extra.is_some() as usize;
+                ui.add_space(((28.0 + 2.0 + n as f32 * 22.0 + 8.0 + 32.0 - (14.0 + 2.0 + 84.0 + 2.0 + 14.0)) / 2.0).max(0.0));
+                if let Some((l, val)) = c.ratios[0] {
                     ratio(ui, l, val, false);
                 }
                 let (g, _) = ui.allocate_exact_size(vec2(CARD_SIDE, 84.0), Sense::hover());
-                let r = Rect::from_center_size(g.center(), vec2(84.0, 84.0));
-                match info.mark.filter(|_| !v.globe) {
-                    // The original's mark: a brush, drawn by the window into `st.mark`.
-                    Some(m) => st.mark = Some((m, r.shrink(r.width() * 0.2), ui.opacity())),
-                    None => planet(ui, r, info.colour, v.globe.then_some(if info.planet { GLOBE_SRC } else { FLAG_SRC }), info.planet, &mut st.wells),
-                }
-                if let Some((l, val)) = info.stats.get(1) {
+                picture(ui, Rect::from_center_size(g.center(), vec2(84.0, 84.0)));
+                if let Some((l, val)) = c.ratios[1] {
                     ratio(ui, l, val, true);
                 }
             });
             ui.vertical(|ui| {
                 ui.set_width(main_w);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                match info.caret {
-                    Some(c) => _ = ds::text_field(ui, &info.title, Some(c), "", vec2(main_w, 28.0)),
-                    None => _ = Text::new(&info.title, Font::CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0)),
+                match c.caret {
+                    Some(caret) => _ = ds::text_field(ui, c.title, Some(caret), "", vec2(main_w, 28.0)),
+                    None => _ = Text::new(c.title, Font::CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0)),
                 }
-                for (l, c) in info.lines.iter().take(6) {
-                    Text::new(l, Font::CARD_LINE).color(*c).show(ui, vec2(main_w, 20.0));
+                for (l, col) in lines {
+                    Text::new(l, Font::CARD_LINE).color(*col).show(ui, vec2(main_w, 20.0));
                 }
-                if info.redirect {
-                    Text::new(&v.labels.redirect, Font::LABEL).color(k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.45 })).show(ui, vec2(main_w, 20.0));
+                if let Some((l, col)) = c.extra {
+                    Text::new(l, Font::LABEL).color(col).show(ui, vec2(main_w, 20.0));
                 }
                 ui.add_space(8.0);
                 ui.allocate_exact_size(vec2(main_w, 32.0), Sense::hover()).0
             })
             .inner
         });
-        let buttons = body.inner;
-        // The card itself is the info box (hot-spot 8): left and right click as the original's.
+        let row = body.inner;
         let card = ui.interact(body.response.rect, ui.id().with("smh-info-card"), Sense::click());
         let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
         ds::hover_rim(ui.painter(), body.response.rect.expand(6.0), ds::RADIUS_PLATE, hot);
-        let card = ds::tip_mouse(hand(card), &info.tip);
-        if card.clicked() {
-            acts.push(Act::Info(false));
-        }
-        if card.secondary_clicked() {
-            acts.push(Act::Info(true));
-        }
-        // The buttons over the card (they win its click): the plates as wide as their labels, a share of the room at
-        // most.
-        ui.scope_builder(egui::UiBuilder::new().max_rect(buttons).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+        // The buttons over the card (they win its click).
+        ui.scope_builder(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            // One type size for both plates (`.ig-plate`, 14 points, 12 aside), smaller together when
-            // the labels and the keys don't fit; a label still too long is shrunk or cut by the plate.
-            // The board's plate: 12 aside, the label's last letter spacing after it (CSS), and the 3 points the
-            // browser's label measures wider than ours.
-            const PAD: f32 = 2.0 * 12.0 + 14.0 * 0.16 + 3.0;
-            let labels: Vec<&str> = info.right.iter().map(|s| s.as_str()).chain([info.left.as_str()]).collect();
-            let room = main_w - 6.0 * (labels.len() as f32 - 1.0) - PAD * labels.len() as f32;
-            let ctx = ui.ctx().clone();
-            let text_w = |s: &str, f: Font| Text::new(s, f).layout(&ctx, f32::INFINITY).width;
-            let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0))).sum();
-            let font = Plate::FONT.sized((14.0 * room / natural.max(1.0)).clamp(11.0, 14.0));
-            let share = (room / labels.len() as f32).floor() + PAD;
-            let fits = labels.iter().map(|s| text_w(s, font)).sum::<f32>() <= room + 0.5;
-            let pw = |s: &str| (text_w(s, font) + PAD).min(if fits { f32::INFINITY } else { share });
-            if let Some(r) = &info.right {
-                let pw = pw(r);
-                let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
-                if hand(ds::tip_key(ui.add_sized(vec2(pw, 32.0), Plate::new(r).height(32.0).width(pw).font(font)), r, key)).clicked() {
-                    acts.push(Act::Info(true));
-                }
-            }
-            let lw = pw(&info.left);
-            if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
-                acts.push(Act::Info(false));
-            }
+            buttons(ui, main_w);
         });
+        card
     });
     ds::behind(ui, at, |p| ds::paint_panel(p, frame.response.rect, ds::PanelKind::Deep, 1.0));
+    frame.inner
+}
+
+/// The selection card ([`card`]): the globe or the model between its ratios, the original's lines, the buttons as
+/// plates (the colony or split, the details).
+fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: &mut State) {
+    let k = ds::tokens();
+    let stat = |i: usize| info.stats.get(i).map(|(l, val)| (l.as_str(), val.as_str()));
+    let c = Card {
+        ratios: [stat(0), stat(1)],
+        title: &info.title,
+        caret: info.caret,
+        lines: &info.lines,
+        extra: info.redirect.then(|| (v.labels.redirect.as_str(), k.lcd_ink.gamma_multiply(if v.blink { 1.0 } else { 0.45 }))),
+    };
+    let (mark, wells) = (&mut st.mark, &mut st.wells);
+    let picture = |ui: &mut egui::Ui, r: Rect| match info.mark.filter(|_| !v.globe) {
+        // The original's mark: a brush, drawn by the window into `st.mark`.
+        Some(m) => *mark = Some((m, r.shrink(r.width() * 0.2), ui.opacity())),
+        None => planet(ui, r, info.colour, v.globe.then_some(if info.planet { GLOBE_SRC } else { FLAG_SRC }), info.planet, wells),
+    };
+    let mut pressed = Vec::new();
+    let buttons = |ui: &mut egui::Ui, main_w: f32| {
+        // One type size for both plates (`.ig-plate`, 14 points, 12 aside), smaller together when the labels don't
+        // fit; a label still too long is shrunk or cut by the plate. The plates as wide as their labels, a share of
+        // the room at most. The board's plate: 12 aside, the label's last letter spacing after it (CSS), and the 3
+        // points the browser's label measures wider than ours.
+        const PAD: f32 = 2.0 * 12.0 + 14.0 * 0.16 + 3.0;
+        let labels: Vec<&str> = info.right.iter().map(|s| s.as_str()).chain([info.left.as_str()]).collect();
+        let room = main_w - 6.0 * (labels.len() as f32 - 1.0) - PAD * labels.len() as f32;
+        let ctx = ui.ctx().clone();
+        let text_w = |s: &str, f: Font| Text::new(s, f).layout(&ctx, f32::INFINITY).width;
+        let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0))).sum();
+        let font = Plate::FONT.sized((14.0 * room / natural.max(1.0)).clamp(11.0, 14.0));
+        let share = (room / labels.len() as f32).floor() + PAD;
+        let fits = labels.iter().map(|s| text_w(s, font)).sum::<f32>() <= room + 0.5;
+        let pw = |s: &str| (text_w(s, font) + PAD).min(if fits { f32::INFINITY } else { share });
+        if let Some(r) = &info.right {
+            let pw = pw(r);
+            let key = if info.planet { v.screens.iter().find(|s| s.n == 3).map_or("", |s| s.key.as_str()) } else { "" };
+            if hand(ds::tip_key(ui.add_sized(vec2(pw, 32.0), Plate::new(r).height(32.0).width(pw).font(font)), r, key)).clicked() {
+                pressed.push(Act::Info(true));
+            }
+        }
+        let lw = pw(&info.left);
+        if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
+            pressed.push(Act::Info(false));
+        }
+    };
+    // The card itself is the info box (hot-spot 8): left and right click as the original's.
+    let card = ds::tip_mouse(hand(card(ui, &c, picture, buttons)), &info.tip);
+    if card.clicked() {
+        acts.push(Act::Info(false));
+    }
+    if card.secondary_clicked() {
+        acts.push(Act::Info(true));
+    }
+    acts.extend(pressed);
 }
 
 /// The camera's keys under the radar, one row of plates: rotate, zoom and tilt held (the left button's way, the
