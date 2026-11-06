@@ -723,7 +723,7 @@ fn install_on_disk() -> Result<PathBuf, Vec<(ig2_rules::install::Candidate, ig2_
     let settings = ig2_formats::options::Options::load();
     let remembered = settings.get(setup::INSTALL_KEY).filter(|s| !s.is_empty()).map(PathBuf::from);
     let found = ig2_rules::install::find(remembered.as_deref())?;
-    if matches!(found.source, Source::Registry | Source::DefaultFolder | Source::BesideRemake) {
+    if matches!(found.source, Source::Registry | Source::DefaultFolder | Source::Steam | Source::BesideRemake) {
         if let Err(e) = ig2_formats::options::Options::store_own(&[(setup::INSTALL_KEY, &found.path.to_string_lossy())]) {
             eprintln!("ig2-client: remembering the install: {e}");
         }

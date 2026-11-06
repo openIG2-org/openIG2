@@ -89,7 +89,7 @@ fn new_campaign_matches_the_exe() {
         runs.retain(|p| p.file_stem().is_some_and(|n| n.to_string_lossy().contains(&only)));
     }
     let rules = common::game_rules(&inst);
-    let exe = std::fs::read(inst.root().join("ig2.exe")).unwrap();
+    let exe = inst.read_raw("ig2.exe").unwrap();
     let pe = ig2_rules::PeImage::parse(&exe).unwrap();
     let image = |at: u32, len: usize| pe.read_loaded(at, len).unwrap_or_else(|_| vec![0; len]);
     let scenario = |n: i32| inst.read(&format!("dataraw/scenario/{n}.scn")).ok().map(|b| text::decode(&b, inst.lang()));

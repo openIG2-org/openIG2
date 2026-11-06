@@ -40,6 +40,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 541 | space battle, modern HUD | open: a press on a modern top-bar pop-up (research list, message history, screen menus) during a battle may also reach the battlefield (the HUD's panels hold only the bar's rectangle); unverified | yes | ADR 0077 |
 | 542 | space battle, modern top bar | open: the bar's right press, the second-button rule and the message key's gate are not checked against the original's top bar handler (exe 0x4e07d6, 0x4e086d, 0x555470) | yes | ADR 0077 |
 | 543 | space battle, modern HUD | open: a stance-slider drag loses its mapping when the selection changes while it runs | no | ADR 0077 |
+| 545 | multiplayer, Steam and GOG installs | open: a Steam player and a GOG player cannot join each other's games; the rules fingerprint hashes the exe as read, and the Steam exe's rebuilt image differs from GOG's although every rule value is the same | yes | exe-builds.md |
 
 ## Keep
 

@@ -9,7 +9,9 @@
 //! macOS) the launchers' records stand in for the registry (Heroic's `gog_store/installed.json`, native, Flatpak and
 //! macOS), and the default folders are `~/GOG Games`, `~/Games`, `~/Games/Heroic`, on macOS `~/Applications` and
 //! `/Applications`, and the Wine prefixes' GOG folders (`~/.wine`, Lutris' `~/Games/<game>/`, CrossOver's and
-//! Whisky's bottles). A place counts when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]).
+//! Whisky's bottles), then the Steam libraries (Steam's default folders and its `libraryfolders.vdf`). A place counts
+//! when it holds `dataraw/text/scenario.txt` and an `ig2.exe` of the catalogued build ([`crate::GOG_2017_SHA256`]) or
+//! of another known build ([`ig2_formats::exe_builds`]).
 
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,8 @@ pub enum Source {
     Remembered,
     Registry,
     DefaultFolder,
+    /// A Steam library (`steamapps/common/`).
+    Steam,
     BesideRemake,
     /// The player pointed at it (a folder dropped on the window).
     Chosen,
@@ -35,6 +39,7 @@ impl Source {
             Source::Remembered => "remembered",
             Source::Registry => if cfg!(windows) { "GOG registry" } else { "Heroic launcher" },
             Source::DefaultFolder => "default folder",
+            Source::Steam => "Steam library",
             Source::BesideRemake => "beside the remake",
             Source::Chosen => "chosen",
         }
@@ -60,7 +65,7 @@ impl Verdict {
             Verdict::Missing => "no such folder".into(),
             Verdict::NotInstall => "not an IG2 install (no dataraw/text/scenario.txt)".into(),
             Verdict::NoExe => "no ig2.exe".into(),
-            Verdict::WrongBuild(h) => format!("ig2.exe is another build (sha256 {}…); the GOG 2017 build is needed", &h[..h.len().min(12)]),
+            Verdict::WrongBuild(h) => format!("ig2.exe is another build (sha256 {}…); the GOG 2017 or Steam 2018 build is needed", &h[..h.len().min(12)]),
         }
     }
 }
@@ -94,6 +99,7 @@ pub fn check(root: &Path) -> Verdict {
         return Verdict::NotInstall;
     }
     let Some(exe) = find_file(root, "ig2.exe").and_then(|p| std::fs::read(p).ok()) else { return Verdict::NoExe };
+    let exe = ig2_formats::exe_builds::to_gog_layout(&exe).unwrap_or(exe);
     match crate::check_build(&exe) {
         Ok(()) => Verdict::Ok,
         Err(crate::Error::UnknownBuild(h)) => Verdict::WrongBuild(h),
@@ -138,7 +144,49 @@ pub fn candidates(remembered: Option<&Path>) -> Vec<Candidate> {
     for p in default_folders() {
         add(p, Source::DefaultFolder);
     }
+    for p in steam_folders() {
+        add(p, Source::Steam);
+    }
     out
+}
+
+/// The game's folders in the Steam libraries: Steam's default places and every library its
+/// `steamapps/libraryfolders.vdf` lists, each library's `steamapps/common/<named like the game>`.
+fn steam_folders() -> Vec<PathBuf> {
+    let mut steams = Vec::new();
+    if cfg!(windows) {
+        for d in b'C'..=b'Z' {
+            let drive = PathBuf::from(format!("{}:\\", d as char));
+            steams.extend(["Program Files (x86)\\Steam", "Program Files\\Steam", "Steam", "SteamLibrary"].map(|s| drive.join(s)));
+        }
+    } else if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        steams.extend([".steam/steam", ".local/share/Steam", ".var/app/com.valvesoftware.Steam/data/Steam", "Library/Application Support/Steam"].map(|s| home.join(s)));
+    }
+    let mut libraries = steams.clone();
+    for s in &steams {
+        if let Ok(vdf) = std::fs::read_to_string(s.join("steamapps").join("libraryfolders.vdf")) {
+            libraries.extend(vdf_paths(&vdf));
+        }
+    }
+    let mut out = Vec::new();
+    for lib in libraries {
+        let Ok(rd) = std::fs::read_dir(lib.join("steamapps").join("common")) else { continue };
+        let mut found: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.is_dir() && p.file_name().is_some_and(|n| named_like_game(&n.to_string_lossy()))).collect();
+        found.sort();
+        out.extend(found);
+    }
+    out.dedup();
+    out
+}
+
+/// The `"path"  "…"` values of a Steam `libraryfolders.vdf` (`\` unescaped).
+fn vdf_paths(vdf: &str) -> Vec<PathBuf> {
+    vdf.lines()
+        .filter_map(|l| {
+            let mut parts = l.split('"').skip(1).step_by(2);
+            (parts.next()? == "path").then(|| PathBuf::from(parts.next().unwrap_or_default().replace("\\\\", "\\")))
+        })
+        .collect()
 }
 
 /// The first usable candidate, else every candidate with its verdict.
@@ -343,6 +391,12 @@ mod tests {
     fn heroic_install_paths() {
         let json = r#"{"installed":[{"platform":"windows","install_path":"/home/p/Games/Heroic/Imperium Galactica II","appName":"1254614904"},{"install_path" : "/a\/b \"c\""}]}"#;
         assert_eq!(registry::install_paths(json), [PathBuf::from("/home/p/Games/Heroic/Imperium Galactica II"), PathBuf::from("/a/b \"c\"")]);
+    }
+
+    #[test]
+    fn steam_library_paths() {
+        let vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\Program Files (x86)\\Steam\"\n\t\t\"label\"\t\t\"\"\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"E:\\SteamLibrary\"\n\t}\n}\n";
+        assert_eq!(vdf_paths(vdf), [PathBuf::from(r"C:\Program Files (x86)\Steam"), PathBuf::from(r"E:\SteamLibrary")]);
     }
 
     #[test]

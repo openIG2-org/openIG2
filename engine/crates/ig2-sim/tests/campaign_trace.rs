@@ -70,6 +70,7 @@ struct Buildings {
 fn tables() -> Option<(CampaignTables, Buildings)> {
     let dir = std::env::var_os("IG2_INSTALL_DIR")?;
     let exe = std::fs::read(PathBuf::from(dir).join("ig2.exe")).ok()?;
+    let exe = ig2_formats::exe_builds::to_gog_layout(&exe).unwrap_or(exe);
     let rules = ig2_rules::Rules::from_exe(&exe).ok()?;
     let b = &rules.buildings;
     let buildings = Buildings {

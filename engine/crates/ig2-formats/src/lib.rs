@@ -8,6 +8,7 @@ pub mod colony_map;
 pub mod config;
 pub mod container;
 pub mod dialogue;
+pub mod exe_builds;
 pub mod diplomacy;
 pub mod formation;
 pub mod highscore;

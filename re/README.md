@@ -14,6 +14,7 @@ State: **verified** = matched against the exe at runtime (Frida or capture); **p
 | Container `ecGs`/`neGs`, PVR v3, VFS (ADR 0001) | [`formats/ecgs-container.md`](formats/ecgs-container.md) | verified | `ig2-formats` |
 | `.xv` models, `.ani`, colony maps, `.scn`, formations | [`xv`](formats/xv.md), [`ani`](formats/ani.md), [`colony-map`](formats/colony-map.md), [`scn`](formats/scn.md), [`formation`](formats/formation.md) | verified | `ig2-formats` |
 | Text tables, dialogue, story fleets, tutorial script; locale | [`formats/text.md`](formats/text.md), [`formats/locale.md`](formats/locale.md) | verified | `ig2-formats` |
+| Other store builds of `ig2.exe` (Steam), install search | [`formats/exe-builds.md`](formats/exe-builds.md) | verified | `ig2-formats::exe_builds`, `ig2-rules::install` |
 | Save games, MP blob; saves as sim state + the whole tick (§8) | [`formats/save.md`](formats/save.md) | verified | `ig2-formats::save`, `ig2-sim::{save, game}` |
 | Compiled-in rules tables | [`rules/tables.md`](rules/tables.md) | verified | `ig2-rules` |
 | Story data (building/designs/values) | [`rules/story-data.md`](rules/story-data.md) | verified | `ig2-formats`, `ig2-rules` |

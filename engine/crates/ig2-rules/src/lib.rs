@@ -30,8 +30,12 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// Fails unless `exe` is the catalogued build (every table address below is that build's).
+/// Fails unless `exe` is the catalogued build (every table address below is that build's), or another store's build
+/// already rebuilt in its layout ([`ig2_formats::exe_builds`]).
 pub(crate) fn check_build(exe: &[u8]) -> Result<()> {
+    if ig2_formats::exe_builds::converted_from(exe).is_some() {
+        return Ok(());
+    }
     let digest: String = Sha256::digest(exe).iter().map(|b| format!("{b:02x}")).collect();
     if digest != GOG_2017_SHA256 {
         return Err(Error::UnknownBuild(digest));

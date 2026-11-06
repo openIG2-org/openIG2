@@ -1,7 +1,7 @@
 # User guide
 
 ## Installing
-You need the GOG release of *Imperium Galactica II*; openIG2 ships no game data and reads your copy. The simplest
+You need the GOG or the Steam release of *Imperium Galactica II*; openIG2 ships no game data and reads your copy. The simplest
 setup: unzip the release into the game's folder and run `ig2-client.exe`. Nothing else is needed. At start the
 client looks, in this order, in:
 1. `IG2_INSTALL_DIR` (optional: an override that wins over everything);
@@ -16,9 +16,14 @@ client looks, in this order, in:
    `~/Games/Heroic/*` and the same GOG folders inside the Wine prefixes `~/.wine/drive_c` and Lutris'
    `~/Games/<game>/drive_c`; on macOS also `~/Applications/*`, `/Applications/*` and the CrossOver and Whisky
    bottles (`~/Library/Application Support/CrossOver/Bottles/*/drive_c`,
-   `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c`).
+   `~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*/drive_c`);
+6. the Steam libraries: Steam's default folders (`<drive>:\Program Files [(x86)]\Steam`, `<drive>:\Steam`,
+   `<drive>:\SteamLibrary`; on Linux `~/.steam/steam`, `~/.local/share/Steam` and the Flatpak's; on macOS
+   `~/Library/Application Support/Steam`) and every library their `steamapps/libraryfolders.vdf` lists, each one's
+   `steamapps/common/Imperium Galactica II`.
 
-A folder counts when it has `dataraw/text/scenario.txt` and the GOG 2017 build of `ig2.exe` (checked by hash). A
+A folder counts when it has `dataraw/text/scenario.txt` and the GOG 2017 or the Steam 2018 build of `ig2.exe`
+(the 1999 CD release is not supported yet). A
 folder found by the search is remembered, so later starts skip it. If nothing is found, a window says so, lists
 each place tried and why it failed, and takes the game's folder (or its `ig2.exe`) dropped onto it: it is checked,
 remembered, and the game restarts. Esc quits.

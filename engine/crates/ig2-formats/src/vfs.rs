@@ -482,7 +482,9 @@ impl Install {
     /// Raw on-disk bytes (still wrapped in the container).
     pub fn read_raw(&self, path: &str) -> Result<Vec<u8>> {
         let p = self.resolve(path).ok_or_else(|| Error::NotFound(path.to_owned()))?;
-        self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })
+        let raw = self.files.read(p).map_err(|source| Error::Io { path: p.display().to_string(), source })?;
+        // other stores' builds are read through the GOG layout (crate::exe_builds)
+        Ok(if normalize(path) == "ig2.exe" { crate::exe_builds::to_gog_layout(&raw).unwrap_or(raw) } else { raw })
     }
 
     /// Fully decoded file contents, with the mods' text patches (ADR 0044 §10) applied.
@@ -553,10 +555,17 @@ impl Install {
     }
 }
 
-/// Every file under `root`: lowercase `/`-separated relative path → absolute path.
+/// Steam's own bookkeeping files in the game's folders (`re/formats/exe-builds.md`): not game data.
+const STORE_FILES: [&str; 3] = [".list.dir", ".filedb.json", ".sourcefiledb.json"];
+
+/// Every file under `root` but the store's own: lowercase `/`-separated relative path → absolute path.
 fn scan(files: &dyn Files, root: &Path) -> Result<HashMap<String, PathBuf>> {
     let found = files.scan(root).map_err(|source| Error::Io { path: root.display().to_string(), source })?;
-    Ok(found.into_iter().filter_map(|p| Some((normalize(&p.strip_prefix(root).ok()?.to_string_lossy()), p))).collect())
+    Ok(found
+        .into_iter()
+        .filter(|p| !p.file_name().is_some_and(|n| STORE_FILES.iter().any(|s| n.eq_ignore_ascii_case(s))))
+        .filter_map(|p| Some((normalize(&p.strip_prefix(root).ok()?.to_string_lossy()), p)))
+        .collect())
 }
 
 /// `foo.bmp`, then `foo.bmt`, then `foo.bmf` (`D3DTexture::Load`), with `.` → `_`, lowercased.
