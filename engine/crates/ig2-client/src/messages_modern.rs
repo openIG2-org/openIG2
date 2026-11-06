@@ -87,6 +87,13 @@ const HEAD: egui::Vec2 = egui::Vec2::new(720.0, 405.0);
 const GAP: f32 = 40.0;
 const ROW_H: f32 = 96.0;
 const ROW_GAP: f32 = 6.0;
+const FULL_W: f32 = 260.0;
+/// The panels' insides: the inbox's, the card's, the text's.
+const INBOX_PAD: egui::Vec2 = egui::Vec2::new(16.0, 16.0);
+const CARD_PAD: egui::Vec2 = egui::Vec2::new(24.0, 20.0);
+const TEXT_PAD: egui::Vec2 = egui::Vec2::new(32.0, 24.0);
+/// The card's label column.
+const LABEL_W: f32 = 76.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
@@ -98,7 +105,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
         ui.allocate_rect(ui.max_rect(), Sense::click_and_drag());
     });
-    let bottom = h - 40.0 * g;
+    let bottom = ds::board_bottom(ctx);
     let inbox = Rect::from_min_max(pos2(ds::BOARD_EDGE, top), pos2(ds::BOARD_EDGE + INBOX_W.min(w * 0.3), bottom));
     ds::place(ctx, "mmh-inbox", inbox, |ui| inbox_panel(ui, v, inbox.size(), &mut acts));
     // Right of the inbox: the head and the message's card side by side, the text under them, the plates at the foot.
@@ -107,49 +114,32 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let head_w = HEAD.x.min(room * 0.6);
     let head = Rect::from_min_size(pos2(x0, top), vec2(head_w, (head_w * 9.0 / 16.0).min(HEAD.y)));
     ds::place(ctx, "mmh-head", head, |ui| {
-        well(ui, head);
+        // Black under the talking head's clip.
+        ui.painter().rect_filled(head, ds::RADIUS_PANEL, Color32::BLACK);
+        ds::picture_well(ui.painter(), head);
         st.well = Some(Rect::from_min_max(head.min * ctx.pixels_per_point(), head.max * ctx.pixels_per_point()));
     });
     let card = Rect::from_min_max(pos2(head.right() + GAP, top), pos2(w - ds::BOARD_EDGE, head.bottom()));
     ds::place(ctx, "mmh-card", card, |ui| card_panel(ui, v, card.size(), &mut acts));
-    let plates = 48.0;
     // The board's 430-high text panel, shorter where the window is.
     let text_top = head.bottom() + 28.0 * g;
-    let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - ds::BOARD_EDGE, (text_top + 430.0).min(bottom - plates - 24.0 * g)));
+    let text = Rect::from_min_max(pos2(x0, text_top), pos2(w - ds::BOARD_EDGE, (text_top + 430.0).min(bottom - ds::FOOT_H - 24.0 * g)));
     ds::place(ctx, "mmh-text", text, |ui| text_panel(ui, v, text.size(), &mut acts));
-    let full = Rect::from_min_size(pos2(x0, bottom - plates), vec2(260.0, plates));
-    ds::place(ctx, "mmh-full", full, |ui| {
-        let typing = v.open.as_ref().is_some_and(|o| o.typing);
-        if ds::either(&ui.add_enabled(typing, ds::Plate::new(&v.labels.full_text).width(260.0).height(plates))) {
-            acts.push(Act::Hurry);
-        }
-    });
-    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - 220.0, bottom - plates), vec2(220.0, plates));
-    ds::place(ctx, "mmh-exit", exit, |ui| {
-        if ds::either(&ui.add_enabled(v.leave, ds::Plate::new(&v.labels.exit).width(220.0).height(plates))) {
-            acts.push(Act::Leave);
-        }
-    });
+    let typing = v.open.as_ref().is_some_and(|o| o.typing);
+    if ds::foot_plate(ctx, "mmh-full", x0, FULL_W, &v.labels.full_text, typing) {
+        acts.push(Act::Hurry);
+    }
+    if ds::exit_plate(ctx, "mmh-exit", &v.labels.exit, v.leave) {
+        acts.push(Act::Leave);
+    }
     acts
-}
-
-/// The head's well: black in a cast-metal frame; the window draws the clip into it ([`State::well`]).
-fn well(ui: &Ui, r: Rect) {
-    let k = ds::tokens();
-    let p = ui.painter();
-    p.rect_filled(r.expand(6.0), ds::RADIUS_PANEL + 4, k.metal_shadow);
-    p.rect_filled(r, ds::RADIUS_PANEL, Color32::BLACK);
-    ds::rim(p, r.expand(1.0), ds::RADIUS_PANEL, k.metal_dark);
-    ds::relief(p, r.expand(6.0), ds::RADIUS_PANEL + 4);
 }
 
 /// The inbox: the title, the new and total counts, every message from the top (oldest first, the newest at the
 /// bottom, scrolling with the newest kept in view), the colour hint.
 fn inbox_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
-    let inner = rect.shrink(16.0);
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, INBOX_PAD);
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), 40.0));
     let count_w = 130.0;
     Text::new(&v.labels.title, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, head.with_max_x(head.right() - count_w - 8.0));
@@ -190,16 +180,13 @@ fn inbox_row(ui: &mut Ui, r: &Row, acts: &mut Vec<Act>) {
 /// The open message's card: the subject, the sender and the date as table lines, the answers once they show.
 fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Glass, 0.88);
+    let inner = ds::board_panel(ui, size, PanelKind::Glass, CARD_PAD);
     let Some(o) = &v.open else { return };
-    let inner = rect.shrink2(vec2(24.0, 20.0));
     Text::new(&o.subject, Font::HEADING).lines(2).color(k.ink).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 52.0)));
-    for (n, (l, val)) in [(&v.labels.sender, &o.sender), (&v.labels.date, &o.date)].into_iter().enumerate() {
-        let r = Rect::from_min_size(pos2(inner.left(), inner.top() + 56.0 + n as f32 * 28.0), vec2(inner.width(), 22.0));
-        let base = ds::fit::baseline(r, Font::DATA);
-        Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 100.0));
-        Text::new(val, Font::DATA).shrink(11.0).baseline(base).color(k.ink).paint(ui, r.with_min_x(r.left() + 110.0));
+    let mut lines = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(inner.left(), inner.top() + 58.0), inner.max)).layout(egui::Layout::top_down(egui::Align::Min)));
+    lines.spacing_mut().item_spacing.y = 8.0;
+    for (l, val) in [(&v.labels.sender, &o.sender), (&v.labels.date, &o.date)] {
+        ds::kv(&mut lines, l, val, ds::Tone::Info, LABEL_W);
     }
     // The answers (`Valasztasok`, a..d), each a plate of two lines with its key, from the card's foot up.
     let keys = ["A", "B", "C", "D"];
@@ -226,33 +213,10 @@ fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
 /// The text: the open message as wrapped body text in its colours (the newest lines kept in view), the typer's caret
 /// blinking at its end; a press in it hurries the typer.
 fn text_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
-    let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, TEXT_PAD);
     let Some(o) = &v.open else { return };
-    let resp = ui.interact(rect, ui.id().with("mmh-text"), Sense::click());
-    let inner = rect.shrink2(vec2(32.0, 24.0));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
-    egui::ScrollArea::vertical().id_salt("mmh-body").auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {
-        let f = Font::BODY.sized(19.0);
-        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping { max_width: inner.width().min(1140.0) - 16.0, ..Default::default() }, ..Default::default() };
-        for (t, c) in &o.body {
-            job.append(&t.replace('\n', "\n\n"), 0.0, egui::TextFormat { font_id: f.id(), color: *c, extra_letter_spacing: f.spacing(), line_height: Some(32.0), ..Default::default() });
-        }
-        let galley = ui.fonts(|x| x.layout_job(job));
-        let (r, _) = ui.allocate_exact_size(vec2(inner.width() - 16.0, galley.size().y.max(32.0)), Sense::hover());
-        let end = galley.rect.right_bottom();
-        let last = galley.rows.last().map_or(egui::Rect::NOTHING, |row| row.rect());
-        ui.painter().galley(r.min, galley, k.ink);
-        if o.typing && (ui.input(|i| i.time) * 2.5) as i64 % 2 == 0 {
-            let x = r.left() + if last.is_finite() { last.right() } else { end.x } + 2.0;
-            let y = r.top() + if last.is_finite() { last.top() } else { 0.0 };
-            ui.painter().rect_filled(Rect::from_min_size(pos2(x, y + 6.0), vec2(10.0, 20.0)), 0, k.ink);
-        }
-    });
-    if o.typing {
-        ui.ctx().request_repaint();
-    }
+    let body: Vec<(String, Color32)> = o.body.iter().map(|(t, c)| (t.replace('\n', "\n\n"), *c)).collect();
+    let resp = ds::typed_text(ui, "mmh-body", inner, &body, Font { line: 32.0, ..Font::BODY.sized(19.0) }, 1140.0, o.typing);
     if ds::either(&resp) && o.typing {
         acts.push(Act::Hurry);
     }
