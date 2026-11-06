@@ -654,6 +654,48 @@ impl Widget for IconKey<'_> {
     }
 }
 
+/// The width of a [`key_group`] of `n` keys `w` wide.
+pub fn key_group_w(n: usize, w: f32) -> f32 {
+    n as f32 * w + n.saturating_sub(1) as f32 * 2.0 + 4.0
+}
+
+/// The cast-metal plate (`radial-gradient(ellipse at 50% 0%, metal-light, metal 35 %, metal-dark)` with the relief and
+/// its shadow): the radar's, the battle's navigation.
+pub fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
+    let k = tokens();
+    shadow(p, r.translate(Vec2::new(0.0, 3.0)), radius, 0, 8, 0, Color32::from_black_alpha(204));
+    radial(p, r, radius, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
+    relief(p, r, radius);
+}
+
+/// The boards' radar: a metal plate (18 round, 10 inside) round a black well `well` big (10 round, sunk: a shadow
+/// from its top edge, a dark ring) that `content` draws into, and a row of keys `keys_w` wide centred 8 under it.
+/// `see_through`: no black and the metal only round the well (a picture under the panels shows in it). The well's
+/// rectangle.
+pub fn radar(ui: &mut Ui, well: Vec2, see_through: bool, keys_w: f32, content: impl FnOnce(&mut Ui, Rect), keys: impl FnOnce(&mut Ui)) -> Rect {
+    let k = tokens();
+    let (outer, _) = ui.allocate_exact_size(well + Vec2::new(20.0, 20.0 + 8.0 + 32.0), Sense::hover());
+    let screen = Rect::from_min_size(outer.min + Vec2::splat(10.0), well);
+    let parts = if see_through {
+        let o = outer.expand(12.0);
+        vec![o.with_max_y(screen.top()), o.with_min_y(screen.bottom()), Rect::from_x_y_ranges(o.left()..=screen.left(), screen.y_range()), Rect::from_x_y_ranges(screen.right()..=o.right(), screen.y_range())]
+    } else {
+        vec![ui.clip_rect()]
+    };
+    for part in parts {
+        metal_plate(&ui.painter().with_clip_rect(part.intersect(ui.clip_rect())), outer, 18);
+    }
+    if !see_through {
+        ui.painter().rect_filled(screen, 10, Color32::BLACK);
+    }
+    content(ui, screen);
+    vgrad(ui.painter(), screen, 10, &[(0.0, Color32::from_black_alpha(220)), (6.0 / screen.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
+    rim(ui.painter(), screen.expand(1.0), 11, k.metal_shadow);
+    let row = Rect::from_center_size(egui::pos2(outer.center().x, screen.bottom() + 8.0 + 16.0), Vec2::new(keys_w, 32.0));
+    keys(&mut ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Min))));
+    screen
+}
+
 /// A segmented metal block holding keys (`.ig-speeds`: 2 points of padding and gap on the darkest metal).
 pub fn key_group<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     let k = tokens();

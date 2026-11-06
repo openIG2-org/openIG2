@@ -937,77 +937,54 @@ fn menu_list(ui: &Ui, f: Rect, s: &Setting, st: &mut State) -> Option<i32> {
 /// starmap.
 fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let (outer, _) = ui.allocate_exact_size(vec2(RADAR_W, RADAR_W + 8.0 + 32.0), Sense::hover());
-    let screen = Rect::from_min_size(outer.min + vec2(10.0, 10.0), vec2(RADAR_W - 20.0, RADAR_W - 20.0));
-    // Over the terrain's picture the metal is a frame around the screen (the picture lies under the panels).
-    let parts = if r.picture {
-        let o = outer.expand(12.0);
-        vec![o.with_max_y(screen.top()), o.with_min_y(screen.bottom()), Rect::from_x_y_ranges(o.left()..=screen.left(), screen.y_range()), Rect::from_x_y_ranges(screen.right()..=o.right(), screen.y_range())]
-    } else {
-        vec![ui.clip_rect()]
-    };
-    for part in parts {
-        let p = ui.painter().with_clip_rect(part.intersect(ui.clip_rect()));
-        ds::shadow(&p, outer.translate(vec2(0.0, 3.0)), 18, 0, 8, 0, Color32::from_black_alpha(204));
-        ds::radial(&p, outer, 18, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
-        ds::relief(&p, outer, 18);
-    }
-    // Hot-spot 5 is off in the planet info mode (spec §12.2).
-    let resp = ui.interact(screen, ui.id().with("cmh-radar-screen"), if live { Sense::click_and_drag() } else { Sense::hover() });
-    let p = ui.painter().with_clip_rect(screen);
-    if r.picture {
-        // The board's terrain picture, its edges sunk into the recess.
-        st.wells.push((Pic::Radar, screen, ui.opacity()));
-        ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, Color32::TRANSPARENT), (0.75, Color32::TRANSPARENT), (1.0, Color32::from_black_alpha(140))]);
-    } else {
-        p.rect_filled(screen, 10, Color32::BLACK);
-        ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, k.glass.gamma_multiply(0.9)), (1.0, Color32::BLACK)]);
-        let grid = Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18));
-        for j in 1..8 {
-            let (x, y) = (screen.left() + screen.width() * j as f32 / 8.0, screen.top() + screen.height() * j as f32 / 8.0);
-            p.vline(x, screen.y_range(), grid);
-            p.hline(screen.x_range(), y, grid);
+    let (mut zoom, mut card) = (None, false);
+    let well = vec2(RADAR_W - 20.0, RADAR_W - 20.0);
+    ds::radar(ui, well, r.picture, ds::key_group_w(3, 34.0), |ui, screen| {
+        // Hot-spot 5 is off in the planet info mode (spec §12.2).
+        let resp = ui.interact(screen, ui.id().with("cmh-radar-screen"), if live { Sense::click_and_drag() } else { Sense::hover() });
+        let p = ui.painter().with_clip_rect(screen);
+        if r.picture {
+            // The board's terrain picture, its edges sunk into the recess.
+            st.wells.push((Pic::Radar, screen, ui.opacity()));
+            ds::radial(&p, screen, 10, [0.5, 0.5], &[(0.0, Color32::TRANSPARENT), (0.75, Color32::TRANSPARENT), (1.0, Color32::from_black_alpha(140))]);
         }
-    }
-    let at = |u: [f32; 2]| pos2(screen.left() + u[0] * screen.width(), screen.top() + u[1] * screen.height());
-    for &(u, c) in &r.buildings {
-        p.rect_filled(Rect::from_center_size(at(u), vec2(5.0, 5.0)), 1, c);
-    }
-    for &(u, own) in &r.units {
-        let c = if own { k.own } else { k.enemy };
-        p.circle_filled(at(u), 4.0, c.gamma_multiply(0.25));
-        p.circle_filled(at(u), 2.2, c);
-    }
-    if let Some(q) = r.view {
-        let pts: Vec<Pos2> = [q[0], q[1], q[3], q[2]].into_iter().map(at).collect();
-        p.add(Shape::convex_polygon(pts.clone(), k.lcd_ink.gamma_multiply(0.06), Stroke::NONE));
-        p.add(Shape::closed_line(pts, Stroke::new(1.5f32, if r.picture { k.ink } else { k.lcd_ink })));
-    }
-    // The recess's inner shadow and the metal's dark ring.
-    ds::vgrad(ui.painter(), screen, 10, &[(0.0, Color32::from_black_alpha(220)), (6.0 / screen.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
-    ds::rim(ui.painter(), screen.expand(1.0), 11, k.metal_shadow);
-    let resp = if r.tip.is_empty() { resp } else { resp.on_hover_text(&r.tip) };
-    if live && resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
-    }
-    let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
-    if let (true, Some(q)) = (live && resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
-        acts.push(Act::Radar([(q.x - screen.left()) / screen.width(), (q.y - screen.top()) / screen.height()], first));
-    }
-    // The keys.
-    let keys = Rect::from_center_size(pos2(outer.center().x, outer.bottom() - 10.0 - 16.0), vec2(3.0 * 34.0 + 2.0 * 2.0 + 4.0, 32.0));
-    let mut zoom = None;
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(keys));
-    ds::key_group(&mut child, |ui| {
-        for (i, (ic, z)) in [(ds::Icon::ZoomOut, Some(false)), (ds::Icon::ZoomIn, Some(true)), (ds::Icon::Target, None)].into_iter().enumerate() {
-            let resp = key(ui, ic, false, vec2(34.0, 28.0), &r.keys[i]);
-            match z {
-                Some(z) if resp.is_pointer_button_down_on() => zoom = Some(z),
-                None if resp.clicked() => acts.push(Act::Card(true)),
-                _ => {}
+        let at = |u: [f32; 2]| pos2(screen.left() + u[0] * screen.width(), screen.top() + u[1] * screen.height());
+        for &(u, c) in &r.buildings {
+            p.rect_filled(Rect::from_center_size(at(u), vec2(5.0, 5.0)), 1, c);
+        }
+        for &(u, own) in &r.units {
+            let c = if own { k.own } else { k.enemy };
+            p.circle_filled(at(u), 4.0, c.gamma_multiply(0.25));
+            p.circle_filled(at(u), 2.2, c);
+        }
+        if let Some(q) = r.view {
+            let pts: Vec<Pos2> = [q[0], q[1], q[3], q[2]].into_iter().map(at).collect();
+            p.add(Shape::convex_polygon(pts.clone(), k.lcd_ink.gamma_multiply(0.06), Stroke::NONE));
+            p.add(Shape::closed_line(pts, Stroke::new(1.5f32, if r.picture { k.ink } else { k.lcd_ink })));
+        }
+        let resp = if r.tip.is_empty() { resp } else { resp.on_hover_text(&r.tip) };
+        if live && resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        }
+        let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
+        if let (true, Some(q)) = (live && resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
+            acts.push(Act::Radar([(q.x - screen.left()) / screen.width(), (q.y - screen.top()) / screen.height()], first));
+        }
+    }, |ui| {
+        ds::key_group(ui, |ui| {
+            for (i, (ic, z)) in [(ds::Icon::ZoomOut, Some(false)), (ds::Icon::ZoomIn, Some(true)), (ds::Icon::Target, None)].into_iter().enumerate() {
+                let resp = key(ui, ic, false, vec2(34.0, 28.0), &r.keys[i]);
+                match z {
+                    Some(z) if resp.is_pointer_button_down_on() => zoom = Some(z),
+                    None if resp.clicked() => card = true,
+                    _ => {}
+                }
             }
-        }
+        });
     });
+    if card {
+        acts.push(Act::Card(true));
+    }
     if zoom != st.zoom {
         acts.push(Act::Zoom(zoom));
         st.zoom = zoom;

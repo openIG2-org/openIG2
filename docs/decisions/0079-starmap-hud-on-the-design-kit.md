@@ -28,9 +28,10 @@ because the original's hot-spot code hit-tests it there.
    original's lines upper case in their colours, then the plates (the colony or split, the details) and the tanks key.
    Production is its own round button with its label under it, right of the card (the colony screen's round action
    button), shown when the planet can produce. The card is still the info box: left and right click are the original's.
-3. **Navigation plate** (cast metal, 300 wide, 24 from the bottom-right corner): the radar sunk into it at 280 wide in
-   the classic window's ratio (the view's outline in the focus colour, the target pointer over it), under it the
-   camera's keys in two blocks (rotate, zoom, tilt held; top and side view).
+3. **Navigation plate** (cast metal, 300 wide, 24 from the bottom-right corner): the radar (`ds::radar`, shared with the
+   colony) sunk into it as the board's 280 × 208 black well without a grid (the view's outline in the focus colour, the
+   target pointer over it), under it the camera's eight keys in one evenly spaced row centred under the well (rotate,
+   zoom, tilt held; top and side view).
 4. **The long info as the board's panel**: 460 wide, 24 from the screen's right, 28 under the bar, sliding in and
    fading with the camera's flight: a lit header (the globe, the name, the owner glowing in its colour, the ratios), the
    original's lines as a data table (labels muted and upper case without the game's colons, values in the info colour,

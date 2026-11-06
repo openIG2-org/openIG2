@@ -558,6 +558,8 @@ const ROUND: f32 = 60.0;
 /// The navigation plate (300 wide, 10 inside): the radar 280 wide in the classic window's ratio, the camera's keys.
 const NAV_W: f32 = 280.0;
 const CAM_KEY: Vec2 = vec2(32.0, 28.0);
+/// The radar's well height (the board's 280 × 208).
+const NAV_H: f32 = 208.0;
 
 /// The ticker's and the research button's type (`15px/30px`, 0.06 em; `500 14px`, 0.08 em).
 const TICKER: Font = Font { size: 15.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
@@ -595,13 +597,10 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
         egui::Area::new(egui::Id::new("smh-mini")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
-            let at = ui.painter().add(Shape::Noop);
-            let r = egui::Frame::new().inner_margin(10).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 8.0;
-                minimap(ui, mini, v, &ink, &mut acts);
-                camera_buttons(ui, v, &ink, &mut acts);
-            });
-            ds::behind(ui, at, |p| metal_plate(p, r.response.rect, 18));
+            let well = vec2(NAV_W, NAV_H);
+            let mut cam = Vec::new();
+            ds::radar(ui, well, false, ds::key_group_w(8, CAM_KEY.x), |ui, r| minimap(ui, r, mini, v, &ink, &mut acts), |ui| camera_buttons(ui, v, &ink, &mut cam));
+            acts.extend(cam);
         });
     } else {
         acts.push(Act::Hold(None));
@@ -619,10 +618,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
 /// The cast-metal plate (the navigation's: `radial-gradient(ellipse at 50% 0%, metal-light, metal 35 %, metal-dark)`
 /// with the relief).
 pub(crate) fn metal_plate(p: &egui::Painter, r: Rect, radius: u8) {
-    let k = ds::tokens();
-    ds::shadow(p, r.translate(vec2(0.0, 3.0)), radius, 0, 8, 0, Color32::from_black_alpha(204));
-    ds::radial(p, r, radius, [0.5, 0.0], &[(0.0, k.metal_light), (0.35, k.metal), (1.0, k.metal_dark)]);
-    ds::relief(p, r, radius);
+    ds::metal_plate(p, r, radius);
 }
 
 /// The top bar's area, the boards sharing the bar place themselves under it ([`bar_bottom`]).
@@ -1048,54 +1044,46 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
     ds::behind(ui, at, |p| ds::paint_panel(p, frame.response.rect, ds::PanelKind::Deep, 1.0));
 }
 
-/// The camera's keys under the radar: rotate, zoom and tilt held (the left button's way, the right button the other
-/// way as on the console), the top and side views clicked.
+/// The camera's keys under the radar, one row of plates: rotate, zoom and tilt held (the left button's way, the
+/// right button the other way as on the console), the top and side views clicked.
 fn camera_buttons(ui: &mut egui::Ui, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
     let mut held = None;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        ui.add_space(((NAV_W - group_w(6, CAM_KEY.x) - group_w(2, CAM_KEY.x) - 4.0) / 2.0).max(0.0));
-        let none = String::new();
-        ds::key_group(ui, |ui| {
-            let buttons = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
-            for (i, spot, left, key) in buttons {
-                let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-                let r = hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], key, ink));
-                if r.is_pointer_button_down_on() && r.contains_pointer() {
-                    let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
-                    held = Some((spot, left != right));
-                }
+    let none = String::new();
+    ds::key_group(ui, |ui| {
+        let held_keys = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
+        for (i, spot, left, key) in held_keys {
+            let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
+            let r = hand(tip(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], key, ink));
+            if r.is_pointer_button_down_on() && r.contains_pointer() {
+                let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
+                held = Some((spot, left != right));
             }
-        });
-        ds::key_group(ui, |ui| {
-            for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
-                let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-                if ds::either(&hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
-                    acts.push(Act::View(spot));
-                }
+        }
+        for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
+            let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
+            if ds::either(&hand(tip(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], "", ink))) {
+                acts.push(Act::View(spot));
             }
-        });
+        }
     });
     acts.push(Act::Hold(held));
 }
 
-/// The radar (a black window sunk into the metal): the planets and fleets, the view's outline; press or drag moves
-/// the camera there (the target pointer).
-fn minimap(ui: &mut egui::Ui, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
-    let k = ds::tokens();
-    let size = vec2(NAV_W, (NAV_W * MINI[3] / MINI[2]).round());
-    let (r, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let back = ui.painter();
-    ds::shadow(back, r, 10, 0, 0, 1, k.metal_shadow);
-    back.rect_filled(r, 10, Color32::BLACK);
-    ds::vgrad(back, r, 10, &[(0.0, Color32::from_black_alpha(255)), (6.0 / r.height(), Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
-    let p = ui.painter().with_clip_rect(r.shrink(2.0));
-    // A faint grid: the console's screen.
-    for j in 1..6 {
-        let (x, y) = (r.left() + r.width() * j as f32 / 6.0, r.top() + r.height() * j as f32 / 6.0);
-        p.vline(x, r.y_range(), Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
-        p.hline(r.x_range(), y, Stroke::new(1.0f32, k.rim_bright.gamma_multiply(0.18)));
+/// A camera key's icon: the kit's zoom lenses (the board's), the HUD's own for the rest.
+fn cam_glyph(i: Icon, draw: &dyn Fn(&egui::Painter, Rect, Color32)) -> ds::Glyph<'_> {
+    match i {
+        Icon::ZoomIn => ds::Glyph::Icon(ds::Icon::ZoomIn),
+        Icon::ZoomOut => ds::Glyph::Icon(ds::Icon::ZoomOut),
+        _ => ds::Glyph::Custom(draw),
     }
+}
+
+/// The radar's well `r` ([`ds::radar`]): the planets and fleets, the view's outline; press or drag moves the camera
+/// there (the target pointer).
+fn minimap(ui: &mut egui::Ui, r: Rect, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let resp = ui.interact(r, ui.id().with("smh-radar-well"), Sense::click_and_drag());
+    let p = ui.painter().with_clip_rect(r.shrink(2.0));
     let at = |u: [f32; 2]| pos2(r.left() + u[0] * r.width(), r.top() + u[1] * r.height());
     for &(u, c, sel) in &mini.fleets {
         let c = if sel && !v.blink { c.gamma_multiply(0.3) } else { c };
@@ -1113,7 +1101,6 @@ fn minimap(ui: &mut egui::Ui, mini: &Mini, v: &View, ink: &Ink, acts: &mut Vec<A
         p.add(Shape::convex_polygon(outline.clone(), k.focus.gamma_multiply(0.06), Stroke::NONE));
         p.add(Shape::closed_line(outline, Stroke::new(1.2f32, k.focus)));
     }
-    ds::rim(back, r, 10, Color32::from_white_alpha(10));
     let resp = tip(resp, &v.tips[7], "", ink).on_hover_cursor(egui::CursorIcon::Crosshair);
     let (down, first) = ui.input(|i| (i.pointer.any_down(), i.pointer.any_pressed()));
     if let (true, Some(q)) = (resp.is_pointer_button_down_on() && down, resp.interact_pointer_pos()) {
@@ -1838,9 +1825,9 @@ mod tests {
                 rect = area(ctx, "smh-mini");
             });
         }
-        // The strip's third key (zoom in), under the radar.
-        let x0 = 10.0 + ((NAV_W - group_w(6, CAM_KEY.x) - group_w(2, CAM_KEY.x) - 4.0) / 2.0).max(0.0) + 2.0;
-        let p = rect.left_bottom() + vec2(x0 + 2.0 * (CAM_KEY.x + 2.0) + CAM_KEY.x / 2.0, -10.0 - 2.0 - CAM_KEY.y / 2.0);
+        // The row's fourth key (zoom in), centred under the radar.
+        let x0 = 10.0 + (NAV_W - ds::key_group_w(8, CAM_KEY.x)) / 2.0 + 2.0;
+        let p = rect.left_bottom() + vec2(x0 + 3.0 * (CAM_KEY.x + 2.0) + CAM_KEY.x / 2.0, -10.0 - 2.0 - CAM_KEY.y / 2.0);
         let mut held = Vec::new();
         for step in 0..5 {
             g.pointer(Some([p.x * k, p.y * k]), k);

@@ -32,8 +32,8 @@ plates, metal keys, rust round buttons, LCD readouts, Oxanium type, text that fi
      of its units against the larger side's, the retreat between them as a round button; the other war buttons (air
      strike and laser strike with their charge bar, detonator, devastator, mines, cancel order) as round buttons
      above it;
-   - bottom right, the radar in a cast-metal frame (the buildings, the units, the view's outline on a dark screen
-     with a faint grid) with three keys under it: zoom out, zoom in (held: the numpad − / + camera flags, §11.9) and
+   - bottom right, the radar in a cast-metal frame (the buildings, the units, the view's outline in the kit's
+     radar, `ds::radar`: a sunk black well, no grid) with three keys under it: zoom out, zoom in (held: the numpad − / + camera flags, §11.9) and
      the starmap (hot-spot 4's right release);
    - under the top bar, centred: the attack banner, the retreat and landing lines, the self-destruct's countdown on
      an LCD with a pulsing red glow and its cancel plate.
