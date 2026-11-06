@@ -25,8 +25,9 @@ because the original's hot-spot code hit-tests it there.
 2. **Selection card** (`.ig-panel.deep` with `.ig-card`, 380 wide, 24 from the bottom-left corner, the board's solid
    navy glass): a shaded globe in the owner's colour (a fleet's mark for a fleet) centred on the text column with the
    richness (hammer) and habitability (people) ratios, the name, the
-   original's lines upper case in their colours, then the plates (the colony or split, the details) and the tanks and
-   production keys. The card is still the info box: left and right click are the original's.
+   original's lines upper case in their colours, then the plates (the colony or split, the details) and the tanks key.
+   Production is its own round button with its label under it, right of the card (the colony screen's round action
+   button), shown when the planet can produce. The card is still the info box: left and right click are the original's.
 3. **Navigation plate** (cast metal, 300 wide, 24 from the bottom-right corner): the radar sunk into it at 280 wide in
    the classic window's ratio (the view's outline in the focus colour, the target pointer over it), under it the
    camera's keys in two blocks (rotate, zoom, tilt held; top and side view).

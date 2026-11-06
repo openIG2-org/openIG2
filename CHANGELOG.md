@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern starmap: Production is its own round button with its label under it, right of the selection card, instead of a small key squeezed into the card's button row (issue #66).
 - Modern starmap's selection card (bottom left) matches its design board: solid navy glass, board-sized plates, the globe and its two ratios centred on the text, richness shown with a hammer and habitability with people (issue #64).
 - The "UI theme" setting is gone: every modern screen always has the design boards' look (navy glass, white titles, blue plates) instead of the near-black, grey-titled look the default theme gave them; the classic screens keep the game's look, and `--theme` and mod `theme.toml` files are no longer used.
 - Modern top bar matches its design board: one even row of keys and LCDs, wider money and date readouts, line icons on the screen keys, and a yellow count of unread messages on the Messages key.

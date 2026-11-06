@@ -553,6 +553,8 @@ const ROW_H: f32 = 32.0;
 /// The selection card (`.ig-panel.deep`, 380 wide, 14 × 16 inside; the globe's column 96, 16 to the text).
 const CARD_W: f32 = 380.0;
 const CARD_SIDE: f32 = 96.0;
+/// The round action buttons beside the card (the colony's: 60 across).
+const ROUND: f32 = 60.0;
 /// The navigation plate (300 wide, 10 inside): the radar 280 wide in the classic window's ratio, the camera's keys.
 const NAV_W: f32 = 280.0;
 const CAM_KEY: Vec2 = vec2(32.0, 28.0);
@@ -578,7 +580,17 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     st.mark = None;
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, st));
+        let card = egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, st)).response.rect;
+        // Production as its own round button right of the card (as the colony's repair and demolish).
+        if info.product {
+            egui::Area::new(egui::Id::new("smh-actions")).pivot(Align2::LEFT_BOTTOM).fixed_pos(pos2(card.right() + 24.0, card.bottom())).fade_in(false).show(ctx, |ui| {
+                let tip = &v.tips[9];
+                let label = tip.split(['\n', '.']).next().unwrap_or("");
+                if hand(ds::round_action(ui, ds::Glyph::Icon(ds::Icon::Factory), ROUND, false, label, tip)).clicked() {
+                    acts.push(Act::Panel(11));
+                }
+            });
+        }
     }
     // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
@@ -1001,7 +1013,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             ui.spacing_mut().item_spacing.x = 6.0;
             // One type size for both plates (`.ig-plate`, 14 points, 12 aside), smaller together when
             // the labels and the keys don't fit; a label still too long is shrunk or cut by the plate.
-            let keys = info.tanks as usize + info.product as usize;
+            let keys = info.tanks as usize;
             // The board's plate: 12 aside, the label's last letter spacing after it (CSS), and the 3 points the
             // browser's label measures wider than ours.
             const PAD: f32 = 2.0 * 12.0 + 14.0 * 0.16 + 3.0;
@@ -1025,12 +1037,10 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
             if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
                 acts.push(Act::Info(false));
             }
-            for (on, i, n, id) in [(info.tanks, Icon::Tanks, 8, 10), (info.product, Icon::Factory, 9, 11)] {
-                if on {
-                    let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-                    if hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[n], "", ink)).clicked() {
-                        acts.push(Act::Panel(id));
-                    }
+            if info.tanks {
+                let draw = |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, Icon::Tanks, c);
+                if hand(tip(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[8], "", ink)).clicked() {
+                    acts.push(Act::Panel(10));
                 }
             }
         });
@@ -1748,6 +1758,14 @@ mod tests {
         assert_eq!(left, vec![Act::Info(false)]);
         let right = drive(&view(), &[(None, None), (None, Some((1, true))), (None, Some((1, false)))], at);
         assert_eq!(right, vec![Act::Info(true)]);
+    }
+
+    /// Production is its own round button right of the card (the console's production key).
+    #[test]
+    fn production_round_button() {
+        let at = |ctx: &egui::Context| area(ctx, "smh-actions").left_top() + vec2(36.0, 36.0);
+        let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
+        assert_eq!(acts, vec![Act::Panel(11)]);
     }
 
     /// The card's picture: the globe for a planet, the fleet model's own place for a fleet, the original's mark for
