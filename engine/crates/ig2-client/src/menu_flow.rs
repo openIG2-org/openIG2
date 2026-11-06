@@ -62,6 +62,21 @@ impl Item {
             Item::Level(_) => "Normal",
         }
     }
+
+    /// Ours: what a tutorial part teaches (the remake text table's key), shown under it on the modern page; the parts
+    /// follow `main.tut`'s chapters (starmap, colony, production and research, battles, trade/diplomacy/spying).
+    pub fn about(self) -> Option<&'static str> {
+        match self {
+            Item::Part(n) => Some([
+                "The starmap: the camera, planets and fleets",
+                "Colony management: buildings on a new colony",
+                "Production, research and ship design",
+                "Space and ground battles",
+                "Trade, diplomacy and spying",
+            ][(n as usize).clamp(1, 5) - 1]),
+            _ => None,
+        }
+    }
 }
 
 /// Which ring set the panel stands for.
@@ -191,6 +206,15 @@ pub fn saves_newest_first(dir: &Path) -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_tutorial_part_says_what_it_teaches_in_both_languages() {
+        for n in 1..=5 {
+            let about = Item::Part(n).about().expect("a part's line");
+            assert_ne!(crate::tr::get(ig2_formats::text::Lang::Hu, about), about.as_bytes(), "{about}");
+        }
+        assert_eq!(Item::Tutorial.about(), None);
+    }
 
     #[test]
     fn panel_items_and_history() {

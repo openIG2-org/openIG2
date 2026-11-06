@@ -701,3 +701,4 @@ Port status: `menu_flow.rs` (panel, Back label, `saves_newest_first`), `MainScr:
 `menu_flow::tests`, `mainscr::tests::{flow_panel_replaces_the_rings, flow_back_paths}`.
 
 Modern pages: `newgame_modern.rs` is the race choice of §9.2 with the Modern interface (ADR 0078 §8, deviations 533); the multiplayer name prompt is ADR 0078 §11.
+The modern tutorial list (ours) puts a short line under each part saying what it teaches, after `main.tut`'s chapters (1 starmap, 2 colony, 3 production, research and design, 4 space and ground battles, 5 trade, diplomacy and spying; the script's own lines are long intros, so the lines are the remake text table's, `menu_flow::Item::about`).

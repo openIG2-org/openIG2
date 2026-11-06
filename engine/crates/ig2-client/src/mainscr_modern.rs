@@ -68,13 +68,15 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
     let n = all.iter().map(|g| g.1.len()).sum::<usize>() as f32 + if p == Panel::Main { 0.0 } else { 1.0 };
     // The board's column is `gap: 4px` between all its children: a heading 24 + 4, a rim line 4 + 14 + 1 + 14 + 4.
     let fixed = 48.0 + all.iter().filter(|g| g.0.is_some()).count() as f32 * 28.0 + (all.len() as f32 - 1.0 + (p != Panel::Main) as u8 as f32) * 37.0;
-    // The entries 4 apart inside each group (Back is a group of its own); Continue's two lines take 49.
+    // The entries 4 apart inside each group (Back is a group of its own); two lines (Continue's, a tutorial part's)
+    // take 49.
     let groups = all.len() as f32 + if p == Panel::Main { 0.0 } else { 1.0 };
     let cont = can_continue && p == Panel::Main;
-    let line = |h: f32| fixed + n * h + (n - groups) * 4.0 + if cont { (49.0 - h).max(0.0) } else { 0.0 };
+    let two = all.iter().flat_map(|g| &g.1).filter(|i| i.about().is_some() || (cont && **i == Item::Continue)).count() as f32;
+    let line = |h: f32| fixed + n * h + (n - groups) * 4.0 + two * (49.0 - h).max(0.0);
     // At a large UI scale the entries get lower (to 36 points), then the panel rises over the title's place.
     let room = screen.height() - PANEL[1] - 36.0 - fixed - (n - groups) * 4.0;
-    let item_h = if cont { (room - 49.0) / (n - 1.0) } else { room / n }.clamp(36.0, 48.0);
+    let item_h = if two > 0.0 && two < n { (room - 49.0 * two) / (n - two) } else { room / n }.clamp(36.0, 48.0);
     let top = PANEL[1].min(screen.height() - line(item_h) - 24.0).max(16.0);
     let show_title = top >= PANEL[1] - 20.0 || heading(p).is_none() && top >= 200.0;
     // The title: the game's name and ours, or the sub-menu's.
@@ -110,8 +112,10 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
                     ds::menu_heading(ui, &tr(h));
                 }
                 let labels: Vec<String> = items.iter().map(|&i| tr(i.label())).collect();
-                let entries: Vec<ds::MenuEntry> = items.iter().zip(&labels).map(|(&i, l)| {
+                let abouts: Vec<Option<String>> = items.iter().map(|i| i.about().map(tr)).collect();
+                let entries: Vec<ds::MenuEntry> = items.iter().zip(&labels).zip(&abouts).map(|((&i, l), about)| {
                     let mut e = ds::MenuEntry::new(l);
+                    e.sub = about.as_deref();
                     if i == Item::Continue {
                         e.off = !can_continue;
                         e.sub = continue_line.as_deref().filter(|_| can_continue);
