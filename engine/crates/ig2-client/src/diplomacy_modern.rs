@@ -48,13 +48,17 @@ pub enum Tone {
 }
 
 impl Tone {
-    fn color(self) -> Color32 {
-        let k = ds::tokens();
+    /// The kit's tone of the same colour.
+    fn kit(self) -> ds::Tone {
         match self {
-            Tone::Neutral => k.info,
-            Tone::Hostile => k.enemy,
-            Tone::Friendly => k.own,
+            Tone::Neutral => ds::Tone::Info,
+            Tone::Hostile => ds::Tone::Enemy,
+            Tone::Friendly => ds::Tone::Own,
         }
+    }
+
+    fn color(self) -> Color32 {
+        self.kit().color()
     }
 }
 
@@ -115,6 +119,9 @@ const MENUS_TOP: f32 = 620.0;
 const ROOT_W: f32 = 330.0;
 const SUB_W: f32 = 240.0;
 const ROW_H: f32 = 38.0;
+/// The info card's and the dialogue's insides, the card's label column.
+const PAD: egui::Vec2 = egui::Vec2::new(24.0, 20.0);
+const LABEL_W: f32 = 150.0;
 const TEXT: Rect = Rect { min: egui::Pos2::new(640.0, 790.0), max: egui::Pos2::new(1440.0, 1020.0) };
 
 /// The menus whose rows open sub-menus (`run_cascade`); the others are one-level answers (`run_plain`).
@@ -183,12 +190,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let text = Rect::from_min_max(pos2(TEXT.left().max(w / 2.0 - 320.0), TEXT.top() * g), pos2(TEXT.right().min(w / 2.0 + 480.0), h - 60.0 * g));
     let plain: Vec<usize> = v.shown.iter().copied().filter(|m| !CASCADES.contains(m)).collect();
     ds::place(ctx, "dmh-text", text, |ui| text_panel(ui, v, st, &plain, text.size(), &mut acts));
-    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 44.0), vec2(ds::EXIT_W, 44.0));
-    ds::place(ctx, "dmh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(44.0)).clicked() {
-            acts.push(Act::Bar(sm::Act::Screen(2)));
-        }
-    });
+    if ds::exit_plate(ctx, "dmh-exit", &v.labels.exit, true) {
+        acts.push(Act::Bar(sm::Act::Screen(2)));
+    }
     acts
 }
 
@@ -239,39 +243,25 @@ fn contacts_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts:
 /// The selected empire's card: its name, then known planets, treaty and status as table rows.
 fn info_panel(ui: &mut Ui, v: &View, info: &(String, String, String, String, Tone), size: egui::Vec2) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Glass, 0.9);
-    let inner = rect.shrink2(vec2(24.0, 20.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Glass, PAD);
     Text::new(&info.0, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 26.0)));
-    let rows = [(&v.labels.planets, &info.1, k.info), (&v.labels.treaty, &info.2, k.info), (&v.labels.status, &info.3, info.4.color())];
-    for (n, (l, val, c)) in rows.into_iter().enumerate() {
-        let r = Rect::from_min_size(pos2(inner.left(), inner.top() + 38.0 + n as f32 * 28.0), vec2(inner.width(), 22.0));
-        let base = ds::fit::baseline(r, Font::DATA);
-        Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 140.0));
-        Text::new(val, Font::DATA).shrink(11.0).baseline(base).color(c).paint(ui, r.with_min_x(r.left() + 150.0));
+    let mut lines = ui.new_child(egui::UiBuilder::new().max_rect(inner.with_min_y(inner.top() + 40.0)).layout(egui::Layout::top_down(egui::Align::Min)));
+    lines.spacing_mut().item_spacing.y = 8.0;
+    for (l, val, tone) in [(&v.labels.planets, &info.1, ds::Tone::Info), (&v.labels.treaty, &info.2, ds::Tone::Info), (&v.labels.status, &info.3, info.4.kit())] {
+        ds::kv(&mut lines, l, val, tone, LABEL_W);
     }
 }
 
 /// One menu of the cascade: its rows, the opened one framed with a chevron when it leads on; a greyed row only
 /// clicks. Returns the row pressed and whether it is greyed.
 fn menu_panel(ui: &mut Ui, rows: &[Row], picked: Option<usize>, size: egui::Vec2) -> Option<(usize, bool)> {
-    let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, vec2(10.0, 10.0));
+    let mut list = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+    list.spacing_mut().item_spacing.y = 0.0;
     let mut out = None;
     for (i, row) in rows.iter().enumerate() {
-        let r = Rect::from_min_size(pos2(rect.left() + 10.0, rect.top() + 10.0 + i as f32 * ROW_H), vec2(rect.width() - 20.0, ROW_H));
-        let resp = ui.interact(r, ui.id().with(("dmh-row", i)), Sense::click());
-        let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered() && !row.off);
-        ds::row_back(ui, r, hot, picked == Some(i));
-        let room = if row.sub.is_some() { 28.0 } else { 8.0 };
-        let c = pos2(r.right() - 16.0, r.center().y);
-        Text::new(&row.text, Font::BODY.sized(19.0)).shrink(13.0).color(if row.off { k.ink_muted } else { k.ink }).paint(ui, Rect::from_min_max(r.min + vec2(8.0, 0.0), r.max - vec2(room, 0.0)));
-        if row.sub.is_some() && !row.off && (picked == Some(i) || hot > 0.0) {
-            let ink = k.ink_silver.gamma_multiply(if picked == Some(i) { 1.0 } else { hot });
-            ui.painter().line(vec![c + vec2(-3.0, -5.0), c + vec2(2.0, 0.0), c + vec2(-3.0, 5.0)], egui::Stroke::new(1.5f32, ink));
-        }
-        let resp = resp.on_hover_cursor(if row.off { egui::CursorIcon::NotAllowed } else { egui::CursorIcon::PointingHand });
+        let r = ds::ListRow::new(&row.text).height(ROW_H).font(Font::BODY.sized(19.0)).selected(picked == Some(i)).off(row.off).lead(row.sub.is_some());
+        let resp = list.add(r).on_hover_cursor(if row.off { egui::CursorIcon::NotAllowed } else { egui::CursorIcon::PointingHand });
         if resp.clicked() {
             out = Some((i, row.off));
         }
@@ -283,31 +273,20 @@ fn menu_panel(ui: &mut Ui, rows: &[Row], picked: Option<usize>, size: egui::Vec2
 /// wrapped and scrolling; the one-level answer menus as buttons along the foot.
 fn text_panel(ui: &mut Ui, v: &View, st: &State, plain: &[usize], size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
-    let inner = rect.shrink2(vec2(24.0, 18.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
     let heading = st.heading.join(" · ");
     Text::new(&heading, Font::LABEL).shrink(10.0).color(k.ink_muted).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 18.0)));
     let buttons: Vec<(usize, usize, &Row)> = plain.iter().flat_map(|&m| v.menus.get(m).into_iter().flatten().enumerate().map(move |(i, r)| (m, i, r))).collect();
     let foot = if buttons.is_empty() { 0.0 } else { 46.0 };
     let body = Rect::from_min_max(pos2(inner.left(), inner.top() + 28.0), pos2(inner.right(), inner.bottom() - foot));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
-    egui::ScrollArea::vertical().id_salt("dmh-body").auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {
-        let f = Font::BODY.sized(18.0);
-        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping { max_width: body.width() - 16.0, ..Default::default() }, ..Default::default() };
-        let mut add = |lines: &[String], c: Color32| {
-            if lines.is_empty() {
-                return;
-            }
-            let sep = if job.text.is_empty() { "" } else { "\n" };
-            job.append(&format!("{sep}{}", lines.join(" ")), 0.0, egui::TextFormat { font_id: f.id(), color: c, extra_letter_spacing: f.spacing(), line_height: Some(30.0), ..Default::default() });
-        };
-        add(&v.own, k.own.gamma_multiply(v.own_alpha));
-        add(&v.other, v.other_tone.color().gamma_multiply(v.other_alpha));
-        let galley = ui.fonts(|x| x.layout_job(job));
-        let (r, _) = ui.allocate_exact_size(vec2(body.width() - 16.0, galley.size().y.max(30.0)), Sense::hover());
-        ui.painter().galley(r.min, galley, k.ink);
-    });
+    let mut pieces = Vec::new();
+    for (lines, c) in [(&v.own, k.own.gamma_multiply(v.own_alpha)), (&v.other, v.other_tone.color().gamma_multiply(v.other_alpha))] {
+        if !lines.is_empty() {
+            let sep = if pieces.is_empty() { "" } else { "\n" };
+            pieces.push((format!("{sep}{}", lines.join(" ")), c));
+        }
+    }
+    ds::typed_text(ui, "dmh-body", body, &pieces, Font { line: 30.0, ..Font::BODY.sized(18.0) }, f32::INFINITY, false);
     let mut x = inner.left();
     for (m, i, row) in buttons {
         let wdt = (ui.fonts(|f| f.layout_no_wrap(row.text.clone(), Font::BODY.sized(15.0).id(), k.ink).size().x) + 40.0).clamp(96.0, (inner.right() - x).max(96.0));
