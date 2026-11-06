@@ -38,3 +38,11 @@ frame's opening and the hull sliding in. The modern look wants its own short tra
   the screen's opening).
 - No exe capture exists for the transitions; the unit test `gui::transition::tests::opens_and_closes` holds the
   timing.
+
+## Amendment: research, design, info and messages
+The same transition on the modern research, design, info and messages screens (`research::Research::modern`,
+`design::Design::transition`, `info_screen::InfoScreen::modern` and `leave`, `messages_screen::MessagesScreen::modern`):
+each opens with it and leaves once its closing has run out (the info screen, which the original leaves at once, waits
+for it too). Their pages' anchored areas take the entrance through `gui::ds::entrance`; the research and design 3D and
+the talking head's clip appear with the renders. The messages screen's own timing (`mesframe`) still runs under the
+page, so the text starts typing at the original's moment.

@@ -265,6 +265,8 @@ pub struct Research {
     pub animated: bool,
     pub opened: bool,
     pub closing: bool,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub modern: Option<crate::gui::Transition>,
     started: bool,
     closed_once: bool,
     pub pin: Option<f32>,
@@ -383,6 +385,7 @@ impl Research {
             // [obs: `resframe` 4.0 at tick 10, open at tick 150; sequence diff 2026-10-22].
             started: true,
             closed_once: false,
+            modern: None,
             pin: None,
             key_old: false,
             old_area: 0,
@@ -864,6 +867,9 @@ impl Research {
     /// One 10 ms frame: `FRISSIT_Research2` (ELF 0x5eb780, the 100 Hz UI tick), then a drawn frame
     /// (`Research3DUpdate` ELF 0x5e4e10 / exe 0x51fd10 and `ResearchGfx2D_2`'s per-frame steps).
     pub fn step(&mut self, state: &SaveState) {
+        if let Some(t) = &mut self.modern {
+            t.tick();
+        }
         self.frames += 1;
         let en = en(state);
         let techs = state.tech();
@@ -1178,6 +1184,10 @@ impl Research {
     /// returns whether the screen can go now. The original loops `UpdateFrame` + `FRISSITES` until frame 0 was drawn
     /// once.
     pub fn leave(&mut self) -> bool {
+        if let Some(t) = &mut self.modern {
+            t.close();
+            return t.closed();
+        }
         if !self.animated {
             return true;
         }
@@ -1198,6 +1208,9 @@ impl Research {
 
     /// The closing has drawn frame 0 (`Research_Kilep::VoltNulla`) and one more frame.
     pub fn closed(&mut self) -> bool {
+        if let Some(t) = &self.modern {
+            return t.closed();
+        }
         if !self.closing || self.frame != 0.0 {
             return false;
         }
@@ -2386,6 +2399,7 @@ mod tests {
             closing: false,
             started: true,
             closed_once: false,
+            modern: None,
             pin: None,
             key_old: false,
             old_area: 3,

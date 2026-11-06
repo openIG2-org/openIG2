@@ -254,6 +254,8 @@ impl InfoData {
 /// The screen's UI state.
 #[derive(Debug, Clone)]
 pub struct InfoScreen {
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's leaves at once).
+    pub modern: Option<crate::gui::Transition>,
     /// The sounds the screen started since the window last took them (re/screens/audio.md §6.3).
     pub sounds: Vec<crate::audio::SoundId>,
     /// `InfoSelected`: the empire the panels show (the human on entry).
@@ -622,6 +624,18 @@ impl InfoScreen {
             tri_sent: None,
             frames: 0,
             buttons: Buttons3d::default(),
+            modern: None,
+        }
+    }
+
+    /// Leaving the screen: at once, or once the modern screen's closing has run out (true = gone now).
+    pub fn leave(&mut self) -> bool {
+        match &mut self.modern {
+            Some(t) => {
+                t.close();
+                t.closed()
+            }
+            None => true,
         }
     }
 

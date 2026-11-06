@@ -131,10 +131,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let screen = ctx.screen_rect();
     // The bottom row: the properties, the console buttons, the exit.
     let props = egui::Area::new(egui::Id::new("dmh-props")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| properties(ui, v, &mut acts));
     });
     let room = props.response.rect.top() - 16.0 - top;
     egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, room - 32.0 - 34.0, &mut acts));
     });
     // The data panel between the list and the parts, as wide as fits (the board's 780).
@@ -145,16 +147,22 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let cw = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-console"))).map_or(560.0, |r| r.width());
     let centre = (right - mid / 2.0).max(ds::EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - ds::EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
     egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::RIGHT_TOP, vec2(right - screen.right(), top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, mid - 32.0));
     });
     egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| parts(ui, v, st, &mut acts));
     });
     // Too narrow for it between them (a large UI scale): above the exit instead.
     let fits = cw <= screen.width() - 2.0 * ds::EDGE - LIST_W - 320.0 - 32.0;
     let (pivot, at) = if fits { (Align2::CENTER_BOTTOM, vec2(centre, -ds::EDGE)) } else { (Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE - 56.0 - 12.0)) };
-    let console = egui::Area::new(egui::Id::new("dmh-console")).anchor(pivot, at).fade_in(false).show(ctx, |ui| console(ui, v, &mut acts));
+    let console = egui::Area::new(egui::Id::new("dmh-console")).anchor(pivot, at).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
+        console(ui, v, &mut acts)
+    });
     egui::Area::new(egui::Id::new("dmh-exit")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         if ds::pressed(&ui.add(Plate::new(&v.labels.exit).width(320.0).height(56.0))) {
             acts.push(Act::Bar(sm::Act::Screen(2)));
         }
@@ -389,6 +397,7 @@ fn console(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
 fn popup(ctx: &egui::Context, p: &Popup, at: egui::Pos2, pivot: Align2, acts: &mut Vec<Act>) {
     let t = ds::open_t(ctx, egui::Id::new("dmh-popup"), true);
     let r = egui::Area::new(egui::Id::new("dmh-popup")).pivot(pivot).fixed_pos(at + vec2(0.0, (1.0 - t) * 8.0)).order(egui::Order::Foreground).constrain(true).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ui.multiply_opacity(t);
         ds::panel(ui, PanelKind::Deep, 0.96, 8.0, |ui| {
             ui.set_width(320.0);

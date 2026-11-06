@@ -1237,6 +1237,10 @@ impl App {
         let dip_in = self.diplomacy.as_ref().and_then(|d| d.screen.modern).unwrap_or(crate::gui::Transition::open());
         let spy_in = self.spy.as_ref().and_then(|s| s.screen.modern).unwrap_or(crate::gui::Transition::open());
         let trade_in = self.trade.as_ref().and_then(|t| t.modern).unwrap_or(crate::gui::Transition::open());
+        let research_in = self.research.as_ref().and_then(|r| r.modern).unwrap_or(crate::gui::Transition::open());
+        let design_in = self.design.as_ref().and_then(|d| d.transition).unwrap_or(crate::gui::Transition::open());
+        let info_in = self.hud.as_ref().and_then(|h| h.info.modern).unwrap_or(crate::gui::Transition::open());
+        let messages_in = self.hud.as_ref().and_then(|h| h.messages.modern).unwrap_or(crate::gui::Transition::open());
         // Ours (ADR 0071): the production view's and the research screen's modern panels; the original's production
         // view (its 3D buttons, faders and texts) is not drawn under them.
         let production_modern = self.production_modern_up();
@@ -1534,6 +1538,7 @@ impl App {
                         d.modern = design_modern;
                         sc.draw(&mut frame, &mut g.renderer, &self.install, self.tables, d, state, &techs, en, size);
                         if design_modern {
+                            design_in.veil(&mut frame, backdrop, h.white, size);
                             let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                             let mut m = h.design_modern_view(state, self.tables, &self.world.ui, d, &self.design_tips, gates, t);
                             m.bar.bind_keys(&self.bindings);
@@ -1562,6 +1567,7 @@ impl App {
                 (crate::ui::Screen::Research, ..) if research_modern => {
                     if let (Some(r), Some((tex, lines))) = (&self.research, research) {
                         h.draw_research_scene(&mut frame, r, tex, lines, size, t);
+                        research_in.veil(&mut frame, backdrop, h.white, size);
                     }
                     if let Some(r) = &self.research {
                         let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
@@ -1634,7 +1640,7 @@ impl App {
             let (st, acts, band, install) = (&mut self.info_modern, &mut self.info_acts, g.band(), &self.install);
             g.gui.run(band, &style, |ctx| {
                 st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, install));
-                acts.extend(crate::info_modern::show(ctx, iv, st));
+                acts.extend(crate::gui::ds::entering(info_in.panels(), || crate::info_modern::show(ctx, iv, st)));
             });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
@@ -1662,15 +1668,17 @@ impl App {
         if let (Some(mv), Some(h)) = (&mmv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.messages_modern, &mut self.messages_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::messages_modern::show(ctx, mv, st)));
+            g.gui.run(band, &style, |ctx| acts.extend(crate::gui::ds::entering(messages_in.panels(), || crate::messages_modern::show(ctx, mv, st))));
             let mut f = crate::render::Frame::new([0.0; 4]);
-            // The talking head's clip (and its interlace) fitted into the well the page left.
+            // The talking head's clip (and its interlace) fitted into the well the page left, appearing with the
+            // renders of the screen's transition (ADR 0084).
             if let (Some((tex, _, _)), Some(w)) = (h.clip, st.well) {
                 let (c, half) = ([w.center().x, w.center().y], [w.width() / 2.0, w.height() / 2.0]);
-                f.push(tex, crate::render::Blend::GammaAlpha, crate::render::Instance::new(crate::render::kind::SPRITE, c, half, [1.0; 4]));
+                let a = messages_in.renders();
+                f.push(tex, crate::render::Blend::GammaAlpha, crate::render::Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, a]));
                 if let Some(il) = h.interlace {
                     let [lo, hi] = self.tables.videos.interlace_uv;
-                    let mut q = crate::render::Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, 25.0 / 255.0]);
+                    let mut q = crate::render::Instance::new(crate::render::kind::SPRITE, c, half, [1.0, 1.0, 1.0, 25.0 / 255.0 * a]);
                     q.uv = [lo, lo, hi - lo, hi - lo];
                     f.push(il, crate::render::Blend::GammaAlpha, q);
                 }
@@ -1681,7 +1689,7 @@ impl App {
         if let (Some(rv), Some(h)) = (&rmv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.research_modern, &mut self.research_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::research_modern::show(ctx, rv, st)));
+            g.gui.run(band, &style, |ctx| acts.extend(crate::gui::ds::entering(research_in.panels(), || crate::research_modern::show(ctx, rv, st))));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -1689,7 +1697,7 @@ impl App {
         if let (Some(dv), Some(h)) = (&dmv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.design_modern, &mut self.design_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::design_modern::show(ctx, dv, st)));
+            g.gui.run(band, &style, |ctx| acts.extend(crate::gui::ds::entering(design_in.panels(), || crate::design_modern::show(ctx, dv, st))));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -1797,6 +1805,7 @@ impl App {
             let world = &mut self.world;
             (h.line_held, h.message_waiting, h.story_line) = (!line_on, waiting, story);
             let on_messages = self.overlay == Some(crate::ui::Screen::Messages);
+            let info_up = self.overlay == Some(crate::ui::Screen::Info);
             let now_ms = now as f64;
             for (line, colour) in world.chat_lines.drain(..) {
                 h.chat.ring.add(line, colour, now_ms);
@@ -1817,6 +1826,9 @@ impl App {
                 // `Info_Main`'s per-frame spots see the hot-spot under the pointer (`AktIkon2`).
                 let spot = if on_info { h.info.spot_at(&self.tables.race_name_x, at, &world.ui) } else { None };
                 h.info.ui_frame(&world.ui.info, world.ui.human, spot, at[1], info_down);
+                if let Some(t) = h.info.modern.as_mut().filter(|_| info_up) {
+                    t.tick();
+                }
                 h.messages.ui_frame();
                 if on_messages {
                     h.messages.tick();

@@ -46,6 +46,7 @@ impl App {
                 if let Some(h) = &mut self.hud {
                     h.messages.pending = None;
                     h.messages.enter(true);
+                    h.messages.modern = self.display.modern.then(crate::gui::Transition::opening);
                 }
             }
         }
@@ -55,6 +56,7 @@ impl App {
             let tri = h.info.tri;
             h.info = crate::ui::InfoScreen::enter(self.world.ui.human);
             h.info.tri = tri;
+            h.info.modern = self.display.modern.then(crate::gui::Transition::opening);
         }
     }
 
@@ -168,7 +170,10 @@ impl App {
         let place = self.research_place.unwrap_or_else(|| crate::research::Place::read(&self.world.game.state));
         // The modern screen (ADR 0071) has no 3D console to open.
         let animated = opens_animated(from) && !self.display.modern;
-        self.research = Some(crate::research::Research::open_at(&self.world.game.state, self.tables, animated, place));
+        let mut r = crate::research::Research::open_at(&self.world.game.state, self.tables, animated, place);
+        // Ours (ADR 0084): the modern screen's own opening.
+        r.modern = self.display.modern.then(crate::gui::Transition::opening);
+        self.research = Some(r);
         self.overlay = Some(crate::ui::Screen::Research);
     }
 
@@ -270,6 +275,7 @@ impl App {
         }
         self.drop_research();
         let mut d = crate::design::Design::open(&self.world.game.state, opens_animated(from) && !self.display.modern);
+        d.transition = self.display.modern.then(crate::gui::Transition::opening);
         if let Some(h) = &self.hud {
             d.names = crate::design_edit::Names::read(&h.texts);
         }

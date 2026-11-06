@@ -111,6 +111,22 @@ fn entrance_offset(rect: Rect, screen: Rect, t: f32) -> Vec2 {
     dir * (1.0 - t) * ENTRANCE_SLIDE
 }
 
+/// Ours (ADR 0084): an area's own entrance while [`entering`] runs (for a page whose areas are anchored rather than
+/// [`place`]d): call it first in the area's contents; the area fades and its layer slides in from its side of the
+/// screen, as [`place`]'s panels do. Nothing at rest.
+pub fn entrance(ui: &mut Ui) {
+    let t = ENTRANCE.with(|e| e.get());
+    let layer = ui.layer_id();
+    let off = match ui.ctx().memory(|m| m.area_rect(layer.id)) {
+        Some(r) if t < 1.0 => entrance_offset(r, ui.ctx().screen_rect(), t),
+        _ => Vec2::ZERO,
+    };
+    ui.ctx().set_transform_layer(layer, egui::emath::TSTransform::from_translation(off));
+    if t < 1.0 {
+        ui.multiply_opacity(t);
+    }
+}
+
 /// `add` in a fixed rectangle of the screen (an area `id` of its own, top-down).
 pub fn place<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     let t = ENTRANCE.with(|e| e.get());

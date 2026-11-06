@@ -147,16 +147,22 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let top = sm::bar_bottom(ctx) + 20.0;
     let screen = ctx.screen_rect();
     // The bottom row first: the panels above stop over it.
-    let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| categories(ui, v, screen.width() - 2.0 * ds::EDGE, &mut acts));
+    let nav = egui::Area::new(egui::Id::new("rmh-areas")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
+        categories(ui, v, screen.width() - 2.0 * ds::EDGE, &mut acts)
+    });
     let room = nav.response.rect.top() - 16.0 - top;
     let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 240.0).max(26.0 * 4.0), &mut acts));
     });
     let auto_top = (list.response.rect.bottom() + 16.0).max(top + 272.0);
     egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(ds::EDGE, auto_top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
     });
     egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| info(ui, v, room - 32.0, &mut acts));
     });
     acts

@@ -91,12 +91,13 @@ impl App {
     /// or a screen's closing running.
     pub(super) fn screen_changing(&self) -> bool {
         self.kep_kell.is_some()
-            || self.research.as_ref().is_some_and(|r| r.closing)
-            || self.design.as_ref().is_some_and(|d| d.closing)
+            || self.research.as_ref().is_some_and(|r| r.closing || r.modern.is_some_and(|t| t.closing()))
+            || self.design.as_ref().is_some_and(|d| d.closing || d.transition.is_some_and(|t| t.closing()))
+            || (self.overlay == Some(Screen::Info) && self.hud.as_ref().is_some_and(|h| h.info.modern.is_some_and(|t| t.closing())))
             || self.trade.as_ref().is_some_and(|t| t.changing())
             || self.spy.as_ref().is_some_and(|s| s.screen.closing || s.screen.modern.is_some_and(|t| t.closing()))
             || (self.overlay == Some(Screen::Diplomacy) && self.diplomacy.as_ref().is_some_and(|d| d.screen.closing || d.screen.modern.is_some_and(|t| t.closing())))
-            || (self.overlay == Some(Screen::Messages) && self.hud.as_ref().is_some_and(|h| h.messages.closing))
+            || (self.overlay == Some(Screen::Messages) && self.hud.as_ref().is_some_and(|h| h.messages.closing || h.messages.modern.is_some_and(|t| t.closing())))
     }
 
     /// `Messages_Kilep` towards another screen: true = gone now (its closing has run out, or there is none).
@@ -229,7 +230,12 @@ impl App {
                     self.trade = None;
                     self.overlay = None;
                 }
-                9 => self.overlay = None,
+                9 => {
+                    if !self.hud.as_mut().is_none_or(|h| h.info.leave()) {
+                        return;
+                    }
+                    self.overlay = None;
+                }
                 10 => {
                     if !self.leave_messages_screen() {
                         return;

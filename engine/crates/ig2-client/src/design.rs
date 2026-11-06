@@ -201,6 +201,8 @@ pub struct Design {
     pub frame: f32,
     pub opened: bool,
     pub closing: bool,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub transition: Option<crate::gui::Transition>,
     /// `Design_Kilep` was asked for: the main loop calls it after this tick's frame, so the closing starts with the
     /// next tick [obs: the exe's panels fold one tick later].
     leaving: bool,
@@ -322,6 +324,7 @@ impl Design {
             opened: !animated,
             closing: false,
             leaving: false,
+            transition: None,
             animated,
             // The first frame is drawn (`desELINDULT`) before the first UI tick.
             started: true,
@@ -401,6 +404,10 @@ impl Design {
     /// `Design_Kilep` towards another game screen: the closing runs out (`desframe` down by 1.2 a tick) before the
     /// screen goes; true = gone now. (Towards the messages, help or options screen it goes at once, silently.)
     pub fn leave(&mut self) -> bool {
+        if let Some(t) = &mut self.transition {
+            t.close();
+            return t.closed();
+        }
         if !self.animated {
             return true;
         }
@@ -413,7 +420,10 @@ impl Design {
 
     /// The closing has finished.
     pub fn closed(&self) -> bool {
-        self.closing && self.frame <= 0.0
+        match &self.transition {
+            Some(t) => t.closed(),
+            None => self.closing && self.frame <= 0.0,
+        }
     }
 
     /// Hold the screen at rest (snapshots).
@@ -426,6 +436,9 @@ impl Design {
     /// One UI tick: `FRISSIT_Design2`, then `Design3DUpdate`'s state (the exe runs that per drawn frame; one frame a
     /// tick here, as the captures run).
     pub fn step(&mut self, c: &Ctx, mask: &[u8]) {
+        if let Some(t) = &mut self.transition {
+            t.tick();
+        }
         let (state, rules) = (c.state, c.rules);
         self.frames += 1;
         crate::design_scene::track_boxes(c, self);
@@ -1300,6 +1313,7 @@ mod tests {
             opened: true,
             closing: false,
             leaving: false,
+            transition: None,
             animated: true,
             started: true,
             keringeto: 0.0,

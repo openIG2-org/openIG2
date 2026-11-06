@@ -663,6 +663,8 @@ pub struct MessagesScreen {
     pub opened: bool,
     /// `mesBECSUKAS`: `Messages_Kilep`'s closing runs.
     pub closing: bool,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub modern: Option<crate::gui::Transition>,
     /// `KELLKINYITAS2`: a message was opened, the frame goes on to 30.
     pub want_open: bool,
     /// A message opened from the inbox: `KELLKINYITAS2` is set after the next tick's steps (the exe's 15 → 30 begins
@@ -755,6 +757,9 @@ impl MessagesScreen {
     /// The frame's steps of one UI tick (`FRISSIT_Messages2` exe 0x505180, asm 0x5052c0..0x5053a3): each step is
     /// `(float)((double)mesframe ± c)`.
     pub fn tick(&mut self) {
+        if let Some(t) = &mut self.modern {
+            t.tick();
+        }
         const THIRD: f64 = 1.0 / 3.0;
         if self.animated && !self.closing && self.started && self.frame < 15.0 {
             self.frame = (self.frame as f64 + THIRD) as f32;
@@ -783,6 +788,9 @@ impl MessagesScreen {
     /// 0x506c50): the closing is over when a pass begins at `mesframe` 0 the second time; else the render marks the
     /// screen drawn and open from 15 on. True = the screen is gone (nothing more to draw).
     pub fn render_step(&mut self) -> bool {
+        if let Some(t) = &self.modern {
+            self.gone |= t.closed();
+        }
         if self.closing && self.frame == 0.0 {
             if self.zero_seen {
                 self.gone = true;
@@ -802,6 +810,12 @@ impl MessagesScreen {
     /// `Messages_Kilep` (exe 0x5083d0): the closing starts (with the animation) or the screen goes at once; true =
     /// gone now.
     pub fn leave(&mut self) -> bool {
+        if let Some(t) = &mut self.modern {
+            (self.kilep, self.left) = (true, true);
+            t.close();
+            self.gone |= t.closed();
+            return self.gone;
+        }
         if !self.left {
             (self.kilep, self.left) = (true, true);
             if !self.animated {
