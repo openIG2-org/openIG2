@@ -24,7 +24,7 @@ use ig2_sim::game::GameRules;
 
 use crate::options::EntryKey;
 
-mod page;
+pub(crate) mod page;
 
 /// The game port a host listens on first (the LAN announcement carries the real one).
 pub const GAME_PORT: u16 = ig2_net::discovery::DISCOVERY_PORT + 1;
@@ -698,6 +698,7 @@ mod words {
     pub const SAVED_GAMES: &[u8] = b"Saved games";
     pub const JOIN_DIRECTLY: &[u8] = b"Join directly";
     pub const RELAY_TITLE: &[u8] = b"Relay server";
+    pub const RELAY_ADDRESS: &[u8] = b"Address";
     pub const RELAY_HINT: &[u8] = b"Optional. For internet games: it lists public games, helps players behind a router reach each other and relays when nothing else works.";
     pub const NONE_FOUND_HINT: &[u8] = b"Games hosted on this network show here as they open.";
     pub const NO_PUBLIC_HINT: &[u8] = b"Host one yourself, or press Refresh to ask again.";

@@ -2116,11 +2116,14 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if o.screen.as_deref() == Some("main") {
         return crate::mainscr_scene::snapshot(o, out);
     }
-    if o.screen.as_deref() == Some("options") {
+    if matches!(o.screen.as_deref(), Some("options" | "saves")) {
         return crate::options::snapshot(o, out);
     }
     if o.screen.as_deref() == Some("stats") {
         return crate::stats_screen::modern::snapshot(o, out);
+    }
+    if matches!(o.screen.as_deref(), Some("lobby" | "lobby-room")) {
+        return crate::mp_lobby::page::snapshot(o, out);
     }
     if o.screen.as_deref() == Some("help") {
         return crate::help::snapshot(o, out);

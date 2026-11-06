@@ -417,6 +417,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Join code: {}  (click: copy)", "Csatlakozási kód: {}  (kattintás: másolás)"),
     ("The join code is on the clipboard", "A csatlakozási kód a vágólapon van"),
     ("Address or join code:", "Cím vagy csatlakozási kód:"),
+    ("Address", "Cím"),
     ("Relay server: {}", "Közvetítő szerver: {}"),
     ("Relay server: opening the room...", "Közvetítő szerver: szoba nyitása..."),
     ("Relay server: room open, seen at {}", "Közvetítő szerver: a szoba nyitva, itt látható: {}"),

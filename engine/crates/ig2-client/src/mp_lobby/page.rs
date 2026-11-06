@@ -55,17 +55,6 @@ impl Stage {
     }
 }
 
-/// The boards' small square tag (`.badge`: raised glass, a rim, 600 12 / 0.12 em upper case) in `c`.
-fn tag(ui: &mut egui::Ui, text: &str, c: Color32) {
-    let k = ds::tokens();
-    let f = Font { size: 12.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.12, upper: true, lcd: false };
-    let fit = Text::new(text, f).layout(ui.ctx(), 220.0);
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width + 20.0, 26.0), egui::Sense::hover());
-    ui.painter().rect_filled(rect, ds::RADIUS_PLATE, k.glass_raised);
-    ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, k.rim);
-    Text::new(text, f).color(c).center().paint(ui, rect.shrink2(Vec2::new(6.0, 0.0)));
-}
-
 /// A section label (`.lbl`).
 fn label(ui: &mut egui::Ui, text: &str) {
     ds::heading_label(ui, text);
@@ -85,41 +74,11 @@ fn hint(ui: &mut egui::Ui, text: &str, c: Color32, lines: usize) {
     ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
 }
 
-/// One of our text fields (`.field input`: 44 high, recessed; its keys are ours): the text (dots for a password),
-/// the caret while `focused`, scrolled to keep the caret in view; the hint muted while empty. A click focuses it.
+/// One of our text fields (its keys are ours): the text (dots for a password), the caret while `focused`.
 #[allow(clippy::too_many_arguments)]
 fn field(ui: &mut egui::Ui, f: &Field, lang: ig2_formats::text::Lang, focused: bool, masked: bool, hint: &str, width: f32, height: f32) -> egui::Response {
-    let k = ds::tokens();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
-    let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-    let p = ui.painter();
-    p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
-    ds::rim(p, rect, ds::RADIUS_PLATE, k.rim.lerp_to_gamma(k.rim_bright, hover));
-    ds::edge_line(p, rect, ds::RADIUS_PLATE as f32, true, Color32::from_black_alpha(200));
-    if focused {
-        ds::focus_mark(p, rect, ds::RADIUS_PLATE as f32, 2.0);
-    }
-    let inner = rect.shrink2(Vec2::new(14.0, 0.0));
-    let font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
     let text = if masked { "•".repeat(f.text.len()) } else { ig2_formats::text::decode(&f.text, lang) };
-    if text.is_empty() {
-        Text::new(hint, font).color(k.ink_muted).paint(ui, inner);
-    } else {
-        let galley = ui.painter().layout_job(font.job(&text, k.ink));
-        let caret = galley.pos_from_cursor(egui::text::CCursor::new(f.cursor.min(text.chars().count()))).min.x;
-        let shift = (caret - inner.width() + 4.0).max(0.0);
-        let at = Pos2::new(inner.left() - shift, inner.center().y - galley.size().y / 2.0);
-        let painter = ui.painter_at(inner.expand2(Vec2::new(2.0, 0.0)));
-        if focused && (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0 {
-            let x = at.x + caret;
-            painter.line_segment([Pos2::new(x, rect.top() + 11.0), Pos2::new(x, rect.bottom() - 11.0)], egui::Stroke::new(1.5f32, k.ink));
-        }
-        painter.galley(at, galley, k.ink);
-    }
-    if focused {
-        ui.ctx().request_repaint();
-    }
-    resp
+    ds::text_field(ui, &text, focused.then_some(f.cursor), hint, Vec2::new(width, height))
 }
 
 /// A panel at `rect` (an area of its own): its background behind `add`, `margin` inside.
@@ -160,66 +119,26 @@ fn bare<R>(ctx: &egui::Context, id: &str, rect: Rect, opacity: f32, layout: egui
 /// The page title (34 / 40, 600, 0.3 em, silver) and what it shows under it in the info colour.
 fn heading(ctx: &egui::Context, st: Stage, opacity: f32, text: &str, sub: &str) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(Pos2::new(st.r.left() + st.m + 16.0, st.r.top() + 112.0), Vec2::new(st.r.width() - 2.0 * st.m - 32.0, 68.0));
+    let rect = Rect::from_min_size(Pos2::new(st.r.left() + st.m + 16.0, st.r.top() + 109.0), Vec2::new(st.r.width() - 2.0 * st.m - 32.0, 68.0));
     bare(ctx, "mp-title", rect, opacity, egui::Layout::top_down(egui::Align::Min), |ui| {
         let f = Font { size: 34.0, line: 40.0, ..Font::PAGE_TITLE };
         Text::new(text, f).color(k.ink_silver).show(ui, Vec2::new(rect.width(), 40.0));
-        ui.add_space(8.0);
+        ui.add_space(3.0);
         let sf = Font { size: 15.0, line: 20.0, weight: Weight::Medium, tracking: 0.1, upper: false, lcd: false };
         Text::new(sub, sf).color(k.info).show(ui, Vec2::new(rect.width(), 20.0));
     });
 }
 
-/// The tab well (`.tabs`: a recessed strip, 44-high plates, 500 17 / 0.12 em). Gives the clicked tab.
-fn tab_well(ui: &mut egui::Ui, labels: &[String], selected: usize) -> Option<usize> {
-    let k = ds::tokens();
-    let f = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false };
-    let widths: Vec<f32> = labels.iter().map(|s| Text::new(s, f).layout(ui.ctx(), f32::INFINITY).width + 44.0).collect();
-    let (whole, _) = ui.allocate_exact_size(Vec2::new(widths.iter().sum::<f32>() + 4.0 * (labels.len() as f32 + 1.0), 52.0), egui::Sense::hover());
-    ui.painter().rect_filled(whole, ds::RADIUS_PANEL, k.glass_deep);
-    ds::rim(ui.painter(), whole, ds::RADIUS_PANEL, k.rim);
-    let mut x = whole.left() + 4.0;
-    let mut out = None;
-    for (i, (s, w)) in labels.iter().zip(&widths).enumerate() {
-        let r = Rect::from_min_size(Pos2::new(x, whole.top() + 4.0), Vec2::new(*w, 44.0));
-        let resp = ui.interact(r, ui.id().with(("mp-tab", i)), egui::Sense::click());
-        let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-        if i == selected {
-            ds::plate_fill(ui.painter(), r, ds::RADIUS_PLATE, false);
-        } else {
-            ds::hover_rim(ui.painter(), r, ds::RADIUS_PLATE, hover);
-        }
-        let c = if i == selected { k.ink } else { k.ink_muted.lerp_to_gamma(k.ink_silver, hover) };
-        Text::new(s, f).color(c).center().paint(ui, r);
-        if resp.clicked() && i != selected {
-            out = Some(i);
-        }
-        x += w + 4.0;
-    }
-    out
-}
+/// The tabs' labels (`.tabs button`: 500 17 / 0.12 em).
+const TAB_FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false };
 
-/// A table's cells: the name's column takes what the fixed ones leave (`.row`: 1fr 200 140 260, 16 apart, 16 in).
-fn cells(r: Rect, fixed: &[f32]) -> Vec<Rect> {
-    let inner = r.shrink2(Vec2::new(16.0, 0.0));
-    let rest = inner.width() - fixed.iter().sum::<f32>() - 16.0 * fixed.len() as f32;
-    let mut x = inner.left();
-    std::iter::once(rest.max(40.0)).chain(fixed.iter().copied()).map(|w| {
-        let c = Rect::from_x_y_ranges(x..=x + w, r.y_range());
-        x += w + 16.0;
-        c
-    }).collect()
-}
+/// The rows' text (500 17 / 0.06 em) and the drop-downs' (`.pick`).
+const BODY: Font = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
+const PICK_FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.06, upper: false, lcd: false };
 
-/// A row's look: selected (`.sel`: a white wash fading right, the silver rim), else the bright rim under the pointer.
-fn row_look(ui: &egui::Ui, rect: Rect, on: bool, hover: f32) {
-    let k = ds::tokens();
-    if on {
-        ds::hgrad(ui.painter(), rect, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(36)), (1.0, Color32::from_white_alpha(5))]);
-        ds::rim(ui.painter(), rect, ds::RADIUS_PLATE, k.ink_silver);
-    } else {
-        ds::hover_rim(ui.painter(), rect, ds::RADIUS_PLATE, hover);
-    }
+/// The game table's cells (`.row`: 1fr 200 140 260, 16 apart, 16 in).
+fn cells(r: Rect) -> Vec<Rect> {
+    ds::columns(r.shrink2(Vec2::new(16.0, 0.0)), &[0.0, 200.0, 140.0, 260.0], 16.0)
 }
 
 /// The footer's plates at the bottom right (`bottom` points up from the screen's bottom), right to left; the status
@@ -324,7 +243,8 @@ impl MpScreen {
             };
             ui.horizontal(|ui| {
                 let labels = [w(words::LAN), w(words::INTERNET), w(words::SAVED_GAMES)];
-                if let Some(n) = tab_well(ui, &labels, tab) {
+                let mut n = tab;
+                if ds::segmented_plates(ui, &mut n, &labels.each_ref().map(String::as_str), None, 44.0, TAB_FONT).changed() {
                     match (tab, n) {
                         (2, 1) => acts.extend([Act::Spot(spot::SAVED, false), Act::Spot(spot::BROWSE, false)]),
                         (2, _) => acts.push(Act::Spot(spot::SAVED, false)),
@@ -342,13 +262,13 @@ impl MpScreen {
                     });
                 }
             });
-            ui.add_space(16.0);
+            ui.add_space(14.0);
             self.rows_list(ui, texts, acts);
         });
         // Join directly, the relay server.
         let right = st.right_col(st.r.top() + 216.0);
         let join = Rect::from_min_size(right.min, Vec2::new(right.width(), 0.0));
-        let h = place(ctx, "mp-join", join, ds::PanelKind::Glass, 0.88, [24.0, 24.0], op, |ui| {
+        let h = place(ctx, "mp-join", join, ds::PanelKind::Glass, 0.88, [24.0, 22.0], op, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             let width = ui.available_width();
             title(ui, &w(words::JOIN_DIRECTLY));
@@ -373,14 +293,16 @@ impl MpScreen {
             ui.min_rect().height()
         });
         let relay = Rect::from_min_size(Pos2::new(right.left(), right.top() + h + 48.0 + 24.0), Vec2::new(right.width(), 0.0));
-        place(ctx, "mp-relay", relay, ds::PanelKind::Glass, 0.88, [24.0, 24.0], op, |ui| {
+        place(ctx, "mp-relay", relay, ds::PanelKind::Glass, 0.88, [24.0, 22.0], op, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             let width = ui.available_width();
             title(ui, &w(words::RELAY_TITLE));
             ui.add_space(8.0);
+            label(ui, &w(words::RELAY_ADDRESS));
             if field(ui, &self.relay, lang, self.focus == Focus::Relay, false, "relay.example.org:port", width, 44.0).clicked() {
                 acts.push(Act::Spot(spot::RELAY, false));
             }
+            ui.add_space(10.0);
             hint(ui, &w(words::RELAY_HINT), k.ink_muted, 4);
         });
         // Back, Host; the status: a refusal, a connect error, the host lost.
@@ -418,32 +340,29 @@ impl MpScreen {
             Text::new(&w(sub), f).color(k.ink_muted).center().show(ui, Vec2::new(wd, 22.0));
             return;
         }
-        const COLS: [f32; 3] = [200.0, 140.0, 260.0];
         let (head, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), egui::Sense::hover());
         let heads = [crate::tr::text(lang, "Game").to_owned(), w(words::HOST_MARK), w(words::PLAYERS), crate::tr::text(lang, "Status").to_owned()];
-        for (c, t) in cells(head, &COLS).into_iter().zip(&heads) {
-            Text::new(t, Font::LABEL).color(k.ink_muted).paint(ui, c);
-        }
-        ui.add_space(4.0);
+        ds::table_head(ui, &cells(head), &heads.each_ref().map(String::as_str), &[]);
+        ui.add_space(18.0);
         // One row: the name, the host (or the scenario, the save's players), the players, the tags; a click selects, a
         // second click (or a double click) joins.
         let mut row = |ui: &mut egui::Ui, n: usize, name: String, host: String, players: String, tags: &[(&[u8], Color32)], off: bool| {
             let on = self.selected == Some(n);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), egui::Sense::click());
-            row_look(ui, rect, on, ds::hover_t(ui.ctx(), resp.id, resp.hovered()));
+            ds::row_back(ui, rect, ds::hover_t(ui.ctx(), resp.id, resp.hovered()), on);
             if on && self.reveal.take() {
                 // Up and Down keep the selection in view.
                 ui.scroll_to_rect(rect, None);
             }
-            let c = cells(rect, &COLS);
-            let body = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
-            Text::new(&name, body).color(if off { k.ink_muted } else { k.ink }).paint(ui, c[0]);
-            Text::new(&host, body).color(k.info).paint(ui, c[1]);
-            Text::new(&players, Font { size: 19.0, line: 22.0, ..Font::READOUT }).color(if off { k.ink_muted } else { k.ink }).paint(ui, c[2]);
+            let c = cells(rect);
+            let base = ds::baseline(rect, BODY);
+            Text::new(&name, BODY).color(if off { k.ink_muted } else { k.ink }).baseline(base).paint(ui, c[0]);
+            Text::new(&host, BODY).color(k.info).baseline(base).paint(ui, c[1]);
+            Text::new(&players, Font { size: 19.0, line: 22.0, ..Font::READOUT }).upright().baseline(base).color(if off { k.ink_muted } else { k.ink }).paint(ui, c[2]);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(c[3]).layout(egui::Layout::left_to_right(egui::Align::Center)));
             child.spacing_mut().item_spacing.x = 8.0;
             for (t, col) in tags {
-                tag(&mut child, &w(t), *col);
+                ds::tag(&mut child, &w(t), *col);
             }
             if resp.clicked() {
                 acts.push(Act::Spot(spot::LIST + n as u32, false));
@@ -511,7 +430,7 @@ impl MpScreen {
         let stage = Stage::new(ctx);
         let op = self.open / 100.0;
         // The title row: the room's name, its tags; the ready count at the right.
-        let top = Rect::from_min_size(Pos2::new(stage.r.left() + stage.m + 16.0, stage.r.top() + 112.0), Vec2::new(stage.r.width() - 2.0 * stage.m - 32.0, 44.0));
+        let top = Rect::from_min_size(Pos2::new(stage.r.left() + stage.m + 16.0, stage.r.top() + 109.0), Vec2::new(stage.r.width() - 2.0 * stage.m - 32.0, 44.0));
         bare(ctx, "mp-title", top, op, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 20.0;
             let humans = st.slots.iter().filter(|s| matches!(s.kind, SlotKind::Human(_))).count();
@@ -521,12 +440,12 @@ impl MpScreen {
             let fit = Text::new(&st.name, f).layout(ui.ctx(), room_w);
             Text::new(&st.name, f).color(k.ink_silver).show(ui, Vec2::new(fit.width.min(room_w) + 4.0, 44.0));
             ui.spacing_mut().item_spacing.x = 8.0;
-            tag(ui, &w(if host { words::HOST_MARK } else { words::JOINED }), k.ink_silver);
+            ds::tag(ui, &w(if host { words::HOST_MARK } else { words::JOINED }), k.ink_silver);
             if st.private {
-                tag(ui, &w(words::PRIVATE_BADGE), k.ink_silver);
+                ds::tag(ui, &w(words::PRIVATE_BADGE), k.ink_silver);
             }
             if st.password {
-                tag(ui, &w(words::LOCKED), k.ink_silver);
+                ds::tag(ui, &w(words::LOCKED), k.ink_silver);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
@@ -538,16 +457,17 @@ impl MpScreen {
         // The seats.
         let left = stage.left(stage.r.top() + 196.0);
         let seats = Rect::from_min_size(left.min, Vec2::new(left.width(), 0.0));
-        let h = place(ctx, "mp-seats", seats, ds::PanelKind::Deep, 0.86, [24.0, 20.0], op, |ui| {
+        let h = place(ctx, "mp-seats", seats, ds::PanelKind::Deep, 0.86, [24.0, 18.0], op, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             title(ui, &w(words::PLAYERS));
+            ui.add_space(6.0);
             for (i, sl) in st.slots.iter().enumerate().take(8) {
                 self.slot_row(ui, texts, palette, i, sl, st, me, acts);
             }
             ui.min_rect().height()
         });
         // The galaxy's settings: four a row, the setting's name over its stepper (the host's).
-        let galaxy = Rect::from_min_size(Pos2::new(left.left(), left.top() + h + 40.0 + 40.0), Vec2::new(left.width(), 0.0));
+        let galaxy = Rect::from_min_size(Pos2::new(left.left(), left.top() + h + 36.0 + 30.0), Vec2::new(left.width(), 0.0));
         place(ctx, "mp-galaxy", galaxy, ds::PanelKind::Glass, 0.88, [24.0, 20.0], op, |ui| {
             match st.galaxy {
                 Some(o) => {
@@ -571,9 +491,9 @@ impl MpScreen {
                         ui.horizontal_top(|ui| {
                             ui.spacing_mut().item_spacing.x = 24.0;
                             for (c, (name, value, down, up)) in four.iter().enumerate() {
-                                ui.allocate_ui_with_layout(Vec2::new(cell, 66.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
                                     ui.set_width(cell);
-                                    ui.spacing_mut().item_spacing.y = 8.0;
+                                    ui.spacing_mut().item_spacing.y = 12.0;
                                     label(ui, name.trim_end_matches(':'));
                                     let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
                                     if (step < 0 && *down) || (step > 0 && *up) {
@@ -601,7 +521,7 @@ impl MpScreen {
         let right = stage.right_col(stage.r.top() + 196.0);
         let mut chat_top = right.top();
         if let Some(Role::Host { listener, .. }) = &self.role {
-            let h = place(ctx, "mp-conn", Rect::from_min_size(right.min, Vec2::new(right.width(), 0.0)), ds::PanelKind::Glass, 0.88, [24.0, 20.0], op, |ui| {
+            let h = place(ctx, "mp-conn", Rect::from_min_size(right.min, Vec2::new(right.width(), 0.0)), ds::PanelKind::Glass, 0.88, [24.0, 18.0], op, |ui| {
                 ui.spacing_mut().item_spacing.y = 14.0;
                 title(ui, &w(words::CONNECTION));
                 match self.join_code() {
@@ -628,13 +548,14 @@ impl MpScreen {
                 let (off_l, on_l) = (s(texts.get(13, 3, 2)), s(texts.get(13, 3, 1)));
                 let opt = |ui: &mut egui::Ui, name: &str, sub: Option<(String, Color32)>, on: bool, live: bool| -> bool {
                     let mut v = on;
-                    let (_, changed) = ds::option_row_in(ui, 36.0, Font { size: 16.0, line: 20.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false }, name, false, live, |ui| ds::toggle(ui, &mut v, &off_l, &on_l).changed());
+                    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::hover());
+                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                    let changed = child.add_enabled_ui(live, |ui| ds::toggle(ui, &mut v, &off_l, &on_l).changed()).inner;
+                    let f = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+                    Text::new(name, f).color(if live { k.ink } else { k.ink_muted }).paint(ui, row.with_max_x(row.right() - child.min_rect().width() - 16.0));
                     if let Some((t, c)) = sub {
-                        ui.add_space(-10.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(8.0);
-                            hint(ui, &t, c, 2);
-                        });
+                        ui.add_space(-8.0);
+                        hint(ui, &t, c, 2);
                     }
                     changed
                 };
@@ -670,7 +591,7 @@ impl MpScreen {
                 }
                 ui.min_rect().height()
             });
-            chat_top += h + 40.0 + 24.0;
+            chat_top += h + 36.0 + 24.0;
         }
         let chat = Rect::from_min_max(Pos2::new(right.left(), chat_top), right.max);
         if chat.height() > 120.0 {
@@ -705,7 +626,7 @@ impl MpScreen {
         let own = me.is_some_and(|m| sl.kind == SlotKind::Human(m));
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 46.0), egui::Sense::hover());
         let hovered = ui.rect_contains_pointer(rect);
-        row_look(ui, rect, own, ds::hover_t(ui.ctx(), resp.id, hovered) * 0.6);
+        ds::row_back(ui, rect, ds::hover_t(ui.ctx(), resp.id, hovered) * 0.6, own);
         // ADR 0041: a stripe in the empire's colour (`ColonyKisInfo`'s owner colour 0xf + empire), the race's head.
         let stripe = Rect::from_min_size(rect.min, Vec2::new(6.0, rect.height()));
         if sl.kind != SlotKind::Closed {
@@ -718,24 +639,18 @@ impl MpScreen {
             egui::Image::new(egui::load::SizedTexture::new(t.id(), head.size())).corner_radius(ds::RADIUS_PLATE).paint_at(ui, head);
         }
         ds::rim(ui.painter(), head, ds::RADIUS_PLATE, k.rim);
-        let body = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
+        let body = BODY;
         // The race: a drop-down (`.pick`, 190 × 38) for the host and the holder.
-        let pick = Rect::from_min_size(Pos2::new(head.right() + 14.0, rect.center().y - 19.0), Vec2::new(190.0, 38.0));
+        let pick = Rect::from_min_size(Pos2::new(head.right() + 18.0, rect.center().y - 19.0), Vec2::new(190.0, 38.0));
         let race_name = |r: u8| s(texts.race(r));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(pick).layout(egui::Layout::left_to_right(egui::Align::Center)));
-        child.spacing_mut().interact_size.y = 38.0;
         if st.galaxy.is_some() {
             if (host || own) && sl.kind != SlotKind::Closed {
-                let mut picked = None;
-                egui::ComboBox::from_id_salt(("mp-race", i)).width(pick.width() - 8.0).truncate().selected_text(race_name(sl.race)).show_ui(&mut child, |ui| {
-                    for r in texts.playable_races() {
-                        if ui.add(egui::Button::selectable(r == sl.race, race_name(r))).clicked() {
-                            picked = Some(r);
-                        }
+                let races: Vec<(i32, String, bool)> = texts.playable_races().into_iter().map(|r| (r as i32, race_name(r), false)).collect();
+                if let (_, Some(Some(r))) = ds::select(&mut child, ("mp-race", i), &race_name(sl.race), &races, pick.size(), PICK_FONT, k.ink) {
+                    if r as u8 != sl.race {
+                        acts.push(Act::Race(i, r as u8));
                     }
-                });
-                if let Some(r) = picked.filter(|&r| r != sl.race) {
-                    acts.push(Act::Race(i, r));
                 }
             } else if sl.kind != SlotKind::Closed {
                 Text::new(&race_name(sl.race), body).color(k.ink_silver).paint(ui, pick.shrink2(Vec2::new(14.0, 0.0)));
@@ -762,23 +677,20 @@ impl MpScreen {
                 Text::new(&name, body).color(k.ink).paint(ui, who);
             }
             kind if host => {
-                let mut picked = None;
+                // The rows' values: 0 open, 10 + level the computer, 20 closed.
                 let levels: &[u8] = if st.galaxy.is_some() { &[1, 2, 3] } else { &[0] };
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(who.shrink2(Vec2::new(0.0, 4.0))).layout(egui::Layout::left_to_right(egui::Align::Center)));
-                child.spacing_mut().interact_size.y = 38.0;
-                egui::ComboBox::from_id_salt(("mp-holder", i)).width((who.width() - 8.0).min(260.0)).truncate().selected_text(holder(kind, now)).show_ui(&mut child, |ui| {
-                    if ui.add(egui::Button::selectable(kind == SlotKind::Open, holder(SlotKind::Open, 0))).clicked() {
-                        picked = Some((SlotKind::Open, 0));
-                    }
-                    for &l in levels {
-                        if ui.add(egui::Button::selectable(kind == SlotKind::Ai && l == now, holder(SlotKind::Ai, l))).clicked() {
-                            picked = Some((SlotKind::Ai, l));
-                        }
-                    }
-                    if ui.add(egui::Button::selectable(kind == SlotKind::Closed, holder(SlotKind::Closed, 0))).clicked() {
-                        picked = Some((SlotKind::Closed, 0));
-                    }
-                });
+                let mut rows = vec![(0, holder(SlotKind::Open, 0), false)];
+                rows.extend(levels.iter().map(|&l| (10 + l as i32, holder(SlotKind::Ai, l), false)));
+                rows.push((20, holder(SlotKind::Closed, 0), false));
+                let size = Vec2::new(who.width().min(260.0), pick.height());
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(Pos2::new(who.left(), pick.top()), size)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                let ink = if kind == SlotKind::Ai { k.info } else { k.ink_muted };
+                let picked = match ds::select(&mut child, ("mp-holder", i), &holder(kind, now), &rows, size, PICK_FONT, ink).1 {
+                    Some(Some(0)) => Some((SlotKind::Open, 0)),
+                    Some(Some(20)) => Some((SlotKind::Closed, 0)),
+                    Some(Some(v)) => Some((SlotKind::Ai, (v - 10) as u8)),
+                    _ => None,
+                };
                 if let Some((n, l)) = picked {
                     if n != kind {
                         acts.push(Act::Slot(i, n));
@@ -801,16 +713,16 @@ impl MpScreen {
             _ => None,
         };
         match (sl.kind, ready) {
-            (_, Some(true)) => tag(&mut child, &s(texts.get(14, 5, 6)), k.own),
+            (_, Some(true)) => _ = ds::tag(&mut child, &s(texts.get(14, 5, 6)), k.own),
             (SlotKind::Human(0), _) => {}
-            (_, Some(false)) => tag(&mut child, &w(words::NOT_READY), k.ink_muted),
+            (_, Some(false)) => _ = ds::tag(&mut child, &w(words::NOT_READY), k.ink_muted),
             _ => {}
         }
         if sl.kind == SlotKind::Human(0) {
-            tag(&mut child, &w(words::HOST_MARK), k.ink_silver);
+            ds::tag(&mut child, &w(words::HOST_MARK), k.ink_silver);
         }
         if own {
-            tag(&mut child, &w(words::YOU), k.ink_silver);
+            ds::tag(&mut child, &w(words::YOU), k.ink_silver);
         }
         // Sit here: an open or computer seat, offered under the pointer.
         let free = matches!(sl.kind, SlotKind::Open | SlotKind::Ai) && !own;
@@ -851,4 +763,53 @@ impl MpScreen {
             field(ui, &self.entry, lang, true, false, &w(words::CHAT_HINT), width, 42.0);
         });
     }
+}
+
+/// `ig2-client --snapshot OUT --screen lobby|lobby-room [--size WxH] [--mouse X,Y]`: the connection page with sample
+/// internet rooms, or a hosted room with a computer seat and chat lines (offline), over black.
+pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
+    use ig2_net::discovery::Announcement;
+    let l = crate::load(o)?;
+    let mut r = crate::render::Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
+    let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+    let mut s = MpScreen::open(true, "Dawee", [0; 32]);
+    s.open = 100.0;
+    s.load_heads(&gui.ctx, &l.install);
+    let mut net = super::OfflineNet;
+    if o.screen.as_deref() == Some("lobby-room") {
+        s.host(&mut net);
+        s.set_slot(3, SlotKind::Ai);
+        s.set_slot(7, SlotKind::Closed);
+        s.chat = vec![("Alice".into(), "hi all, starting in 5 minutes".into()), ("Dawee".into(), "one moment, picking a race".into())];
+    } else {
+        let room = |name: &str, scenario: &str, humans: u8, slots: u8, password: bool, started: bool, rules: u8| ig2_net::rendezvous::Listing {
+            announcement: Announcement { session: 1, name: name.into(), port: 1, fingerprint: [0; 32], password, version: ig2_net::lobby::LOBBY_VERSION, rules: [rules; 32], scenario: scenario.into(), humans, slots, started },
+            mods: [0; 32],
+        };
+        let at = std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, 1);
+        s.internet = Some(vec![
+            (at, room("Alice's galaxy", "Alice", 3, 8, false, false, 0)),
+            (at, room("Friends only", "Bob", 2, 4, true, false, 0)),
+            (at, room("Big galaxy, 6 AIs", "Zoltan", 1, 8, false, false, 0)),
+            (at, room("Evening match", "Kata", 4, 4, false, true, 0)),
+            (at, room("Modded rules", "Peti", 2, 8, false, false, 1)),
+        ]);
+        s.selected = Some(0);
+        s.address.text = b"K7QF-29MX-TA4P".to_vec();
+    }
+    let theme = crate::theme::Theme::modern();
+    let style = crate::gui::style(&theme);
+    let k = crate::gui::Gui::scale(o.size.1);
+    let v = crate::font::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
+    gui.pointer(o.mouse.map(|m| v.px(m[0], m[1])), k);
+    for _ in 0..3 {
+        gui.run(o.size, &style, |ctx| {
+            s.page(ctx, &hud.texts, &hud.palette, &theme, false);
+        });
+    }
+    let rgba = r.draw_to_image_over(&crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), o.size, 0.0, |d, q, t| gui.paint(d, q, t));
+    crate::assets::write_snapshot(out, o, &rgba)?;
+    println!("{}", out.display());
+    Ok(())
 }

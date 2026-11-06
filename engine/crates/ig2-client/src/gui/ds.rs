@@ -11,7 +11,7 @@ pub mod fit;
 pub mod gallery;
 pub mod widgets;
 
-pub use fit::{text, Text};
+pub use fit::{baseline, text, Text};
 pub use widgets::*;
 
 use crate::theme::Theme;
