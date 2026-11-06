@@ -8,11 +8,21 @@ type Line = (Vec<[f32; 2]>, bool);
 
 /// Strokes the icon `svg` into `rect` (its 24 units over the shorter side) in `c`.
 pub fn paint(p: &Painter, rect: Rect, svg: &str, c: Color32) {
-    let s = rect.width().min(rect.height()) / 24.0;
-    let o = rect.center() - Vec2::splat(12.0 * s);
-    let at = |q: [f32; 2]| o + Vec2::new(q[0], q[1]) * s;
-    let st = Stroke::new((2.0 * s).max(1.0), c);
-    for (points, closed) in lines(svg) {
+    let lines = lines(svg);
+    // Every icon the same size and in the middle: its outline (with the stroke) centred, its longer side 20 units
+    // (Lucide's live area in the 24 grid), whatever room the drawing leaves in its grid.
+    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+    for q in lines.iter().flat_map(|l| &l.0) {
+        lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+        hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+    }
+    let (w, h) = ((hi[0] - lo[0]).max(0.0) + 2.0, (hi[1] - lo[1]).max(0.0) + 2.0);
+    let unit = rect.width().min(rect.height()) / 24.0;
+    let s = unit * 22.0 / w.max(h);
+    let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    let at = |q: [f32; 2]| rect.center() + Vec2::new(q[0] - mid[0], q[1] - mid[1]) * s;
+    let st = Stroke::new((2.0 * unit).max(1.0), c);
+    for (points, closed) in lines {
         let pts: Vec<Pos2> = points.iter().map(|&q| at(q)).collect();
         // Round ends and joins: a dot at each corner (a zero-length line is Lucide's dot).
         for q in &pts {
