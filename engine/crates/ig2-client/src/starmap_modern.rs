@@ -271,251 +271,6 @@ pub(crate) fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(m(a.r(), b.r()), m(a.g(), b.g()), m(a.b(), b.b()))
 }
 
-/// The vector icons the HUD's buttons draw.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum Icon {
-    RotateLeft,
-    RotateRight,
-    ZoomIn,
-    ZoomOut,
-    TiltUp,
-    TiltDown,
-    TopView,
-    SideView,
-    Tanks,
-    Factory,
-    Details,
-    Split,
-    Mail,
-    /// A screen of the screen menu by its number (`AktKep`).
-    Screen(i32),
-    /// A radial menu icon by its number (`StarmapRopIkonok`).
-    Rop(i32),
-}
-
-/// `pts` (in `k` units around `m`) as one line, closed or not.
-fn path(p: &egui::Painter, m: Pos2, k: f32, pts: &[(f32, f32)], closed: bool, s: Stroke) {
-    let v: Vec<Pos2> = pts.iter().map(|&(x, y)| pos2(m.x + x * k, m.y + y * k)).collect();
-    p.add(if closed { Shape::closed_line(v, s) } else { Shape::line(v, s) });
-}
-
-/// An arc around `c` from `a0` to `a1` (radians, y down), `rx` by `ry`.
-fn arc(c: Pos2, rx: f32, ry: f32, a0: f32, a1: f32) -> Vec<Pos2> {
-    (0..=20).map(|j| {
-        let a = a0 + (a1 - a0) * j as f32 / 20.0;
-        pos2(c.x + a.cos() * rx, c.y + a.sin() * ry)
-    }).collect()
-}
-
-pub(crate) fn icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
-    use std::f32::consts::{PI, TAU};
-    let s = Stroke::new(1.4f32, c);
-    let m = r.center();
-    let k = r.height().min(r.width()) * 0.3;
-    match i {
-        Icon::RotateLeft | Icon::RotateRight => {
-            let dir = if i == Icon::RotateLeft { -1.0 } else { 1.0 };
-            let pts: Vec<Pos2> = (0..=16).map(|j| {
-                let a = PI * (0.15 + 1.2 * j as f32 / 16.0);
-                pos2(m.x + dir * a.cos() * k, m.y - a.sin() * k * 0.9 + k * 0.25)
-            }).collect();
-            let end = pts[0];
-            p.add(Shape::line(pts, s));
-            p.add(Shape::convex_polygon(vec![pos2(end.x - dir * k * 0.45, end.y - k * 0.1), pos2(end.x + dir * k * 0.25, end.y - k * 0.15), pos2(end.x - dir * k * 0.05, end.y + k * 0.5)], c, Stroke::NONE));
-        }
-        Icon::ZoomIn | Icon::ZoomOut => {
-            let o = pos2(m.x - k * 0.2, m.y - k * 0.2);
-            p.circle_stroke(o, k * 0.75, s);
-            p.line_segment([pos2(o.x + k * 0.55, o.y + k * 0.55), pos2(m.x + k, m.y + k)], Stroke::new(2.0f32, c));
-            p.line_segment([pos2(o.x - k * 0.4, o.y), pos2(o.x + k * 0.4, o.y)], s);
-            if i == Icon::ZoomIn {
-                p.line_segment([pos2(o.x, o.y - k * 0.4), pos2(o.x, o.y + k * 0.4)], s);
-            }
-        }
-        Icon::TiltUp | Icon::TiltDown => {
-            let d = if i == Icon::TiltUp { -1.0 } else { 1.0 };
-            p.add(Shape::convex_polygon(vec![pos2(m.x, m.y + d * k), pos2(m.x - k, m.y - d * k * 0.2), pos2(m.x + k, m.y - d * k * 0.2)], Color32::TRANSPARENT, s));
-            p.line_segment([pos2(m.x - k * 1.1, m.y - d * k * 0.75), pos2(m.x + k * 1.1, m.y - d * k * 0.75)], s);
-        }
-        Icon::TopView => {
-            p.circle_stroke(m, k, s);
-            p.circle_filled(m, k * 0.3, c);
-        }
-        Icon::SideView => {
-            p.add(Shape::closed_line(arc(m, k * 1.1, k * 0.35, 0.0, TAU), s));
-            p.circle_filled(pos2(m.x, m.y - k * 0.1), k * 0.32, c);
-        }
-        Icon::Tanks => {
-            p.rect_stroke(Rect::from_center_size(pos2(m.x, m.y + k * 0.35), vec2(k * 2.0, k * 0.8)), k * 0.4, s, egui::StrokeKind::Middle);
-            p.rect_filled(Rect::from_center_size(pos2(m.x - k * 0.1, m.y - k * 0.3), vec2(k * 0.9, k * 0.55)), 1.0, c);
-            p.line_segment([pos2(m.x + k * 0.3, m.y - k * 0.35), pos2(m.x + k * 1.15, m.y - k * 0.55)], s);
-        }
-        Icon::Factory => path(p, m, k, &[(-1.0, 1.0), (-1.0, -0.2), (-0.35, 0.2), (-0.35, -0.2), (0.3, 0.2), (0.3, -1.0), (0.75, -1.0), (0.75, 1.0)], true, s),
-        Icon::Details => {
-            p.circle_stroke(m, k, s);
-            p.circle_filled(pos2(m.x, m.y - k * 0.5), k * 0.13, c);
-            p.line_segment([pos2(m.x, m.y - k * 0.15), pos2(m.x, m.y + k * 0.55)], Stroke::new(1.6f32, c));
-        }
-        Icon::Split => {
-            path(p, m, k, &[(0.0, 1.0), (0.0, 0.1), (-0.75, -0.8)], false, s);
-            p.line_segment([pos2(m.x, m.y + k * 0.1), pos2(m.x + k * 0.75, m.y - k * 0.8)], s);
-            path(p, m, k, &[(-0.75, -0.35), (-0.75, -0.8), (-0.3, -0.8)], false, s);
-            path(p, m, k, &[(0.75, -0.35), (0.75, -0.8), (0.3, -0.8)], false, s);
-        }
-        Icon::Mail => {
-            p.rect_stroke(Rect::from_center_size(m, vec2(k * 2.0, k * 1.4)), 0.0, s, egui::StrokeKind::Middle);
-            path(p, m, k, &[(-1.0, -0.7), (0.0, 0.1), (1.0, -0.7)], false, s);
-        }
-        Icon::Rop(n) => match n {
-            // Redirect: a curved route ending on a ringed target.
-            3 => {
-                let mut v = arc(pos2(m.x + k * 0.5, m.y + k * 0.9), k * 1.4, k * 1.6, PI * 1.0, PI * 1.38);
-                v.push(pos2(m.x + k * 0.25, m.y - k * 0.62));
-                p.add(Shape::line(v, s));
-                p.circle_stroke(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.42, s);
-                p.circle_filled(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.14, c);
-            }
-            // Satellite: a body between two panels; the spy satellite adds its lens.
-            5 | 6 => {
-                p.rect_stroke(Rect::from_center_size(m, vec2(k * 0.6, k * 0.6)), 0.0, s, egui::StrokeKind::Middle);
-                for d in [-1.0, 1.0] {
-                    p.line_segment([pos2(m.x + d * k * 0.3, m.y), pos2(m.x + d * k * 0.5, m.y)], s);
-                    p.rect_stroke(Rect::from_center_size(pos2(m.x + d * k * 0.8, m.y), vec2(k * 0.6, k * 0.95)), 0.0, s, egui::StrokeKind::Middle);
-                }
-                if n == 6 {
-                    p.circle_filled(pos2(m.x, m.y + k * 0.62), k * 0.2, c);
-                    p.line_segment([pos2(m.x, m.y + k * 0.3), pos2(m.x, m.y + k * 0.45)], s);
-                }
-            }
-            // Terraform: a globe with its parallels.
-            7 => {
-                p.circle_stroke(m, k, s);
-                p.add(Shape::line(arc(m, k, k * 0.35, 0.0, PI), s));
-                p.add(Shape::line(arc(pos2(m.x, m.y - k * 0.45), k * 0.88, k * 0.22, 0.0, PI), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
-                p.add(Shape::line(arc(m, k * 0.4, k, -PI * 0.5, PI * 0.5), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
-            }
-            // Colonise: a flag planted on a world's rim.
-            8 => {
-                p.add(Shape::line(arc(pos2(m.x, m.y + k * 2.0), k * 1.3, k * 1.05, PI * 1.2, PI * 1.8), s));
-                p.line_segment([pos2(m.x - k * 0.3, m.y + k * 0.95), pos2(m.x - k * 0.3, m.y - k * 1.0)], s);
-                p.add(Shape::convex_polygon(vec![pos2(m.x - k * 0.3, m.y - k * 1.0), pos2(m.x + k * 0.75, m.y - k * 0.65), pos2(m.x - k * 0.3, m.y - k * 0.3)], c, Stroke::NONE));
-            }
-            // The vehicles' info: a tank over a list.
-            9 => {
-                icon(p, Rect::from_center_size(pos2(m.x, m.y - k * 0.35), r.size() * 0.8), Icon::Tanks, c);
-                for (j, w) in [1.0, 0.6].iter().enumerate() {
-                    let y = m.y + k * (0.55 + 0.38 * j as f32);
-                    p.line_segment([pos2(m.x - k, y), pos2(m.x - k + 2.0 * k * w, y)], Stroke::new(1.2f32, c));
-                }
-            }
-            // Join: two routes merging into one.
-            0xe => {
-                path(p, m, k, &[(-0.8, -0.9), (0.0, 0.0), (0.8, -0.9)], false, s);
-                path(p, m, k, &[(0.0, 0.0), (0.0, 1.0)], false, s);
-                path(p, m, k, &[(-0.4, 0.6), (0.0, 1.0), (0.4, 0.6)], false, s);
-            }
-            // Wormhole: a spiral.
-            0x10 => {
-                let v: Vec<Pos2> = (0..=40).map(|j| {
-                    let t = j as f32 / 40.0;
-                    let a = t * TAU * 1.6;
-                    pos2(m.x + a.cos() * k * (0.15 + 0.85 * t), m.y + a.sin() * k * (0.15 + 0.85 * t))
-                }).collect();
-                p.add(Shape::line(v, s));
-            }
-            // Virus alert: a cell with its spikes.
-            0x11 => {
-                p.circle_stroke(m, k * 0.55, s);
-                for j in 0..8 {
-                    let a = TAU * j as f32 / 8.0 + PI / 8.0;
-                    let (x, y) = (a.cos(), a.sin());
-                    p.line_segment([pos2(m.x + x * k * 0.55, m.y + y * k * 0.55), pos2(m.x + x * k * 0.9, m.y + y * k * 0.9)], s);
-                    p.circle_filled(pos2(m.x + x * k * 1.0, m.y + y * k * 1.0), k * 0.12, c);
-                }
-            }
-            // The gigabomb: a sphere with a burst of rays.
-            0x12 => {
-                p.circle_filled(pos2(m.x - k * 0.15, m.y + k * 0.2), k * 0.6, c);
-                for j in 0..5 {
-                    let a = -PI * 0.15 - PI * 0.175 * j as f32;
-                    p.line_segment([pos2(m.x + k * 0.45 + a.cos() * k * 0.2, m.y - k * 0.45 + a.sin() * k * 0.2), pos2(m.x + k * 0.45 + a.cos() * k * 0.6, m.y - k * 0.45 + a.sin() * k * 0.6)], s);
-                }
-            }
-            _ => icon(p, r, Icon::Details, c),
-        },
-        Icon::Screen(n) => match n {
-            // Help: a question mark in a ring.
-            1 => {
-                p.circle_stroke(m, k * 1.05, s);
-                let mut v = arc(pos2(m.x, m.y - k * 0.3), k * 0.38, k * 0.35, PI * 1.05, PI * 2.35);
-                v.push(pos2(m.x, m.y + k * 0.25));
-                p.add(Shape::line(v, s));
-                p.circle_filled(pos2(m.x, m.y + k * 0.6), k * 0.12, c);
-            }
-            // The starmap: stars joined by routes.
-            2 => {
-                let stars = [(-0.95, 0.55), (-0.25, -0.35), (0.45, 0.35), (0.95, -0.8)];
-                path(p, m, k, &stars, false, Stroke::new(1.0f32, c.gamma_multiply(0.7)));
-                for (j, (x, y)) in stars.into_iter().enumerate() {
-                    p.circle_filled(pos2(m.x + x * k, m.y + y * k), k * if j == 1 { 0.3 } else { 0.22 }, c);
-                }
-            }
-            // A colony: a dome with its mast.
-            3 => {
-                let base = m.y + k * 0.7;
-                p.add(Shape::line(arc(pos2(m.x, base), k * 0.95, k * 1.0, PI, TAU), s));
-                p.line_segment([pos2(m.x - k * 0.55, base - k * 0.45), pos2(m.x + k * 0.55, base - k * 0.45)], Stroke::new(1.0f32, c.gamma_multiply(0.7)));
-                p.line_segment([pos2(m.x - k * 1.1, base), pos2(m.x + k * 1.1, base)], s);
-                p.line_segment([pos2(m.x, base - k * 1.0), pos2(m.x, base - k * 1.6)], s);
-            }
-            // Research: a flask.
-            4 => {
-                path(p, m, k, &[(-0.3, -1.0), (-0.3, -0.3), (-0.95, 0.85), (0.95, 0.85), (0.3, -0.3), (0.3, -1.0)], false, s);
-                p.line_segment([pos2(m.x - k * 0.5, m.y - k), pos2(m.x + k * 0.5, m.y - k)], s);
-                p.line_segment([pos2(m.x - k * 0.62, m.y + k * 0.25), pos2(m.x + k * 0.62, m.y + k * 0.25)], s);
-            }
-            // Design: a ship's outline.
-            5 => path(p, m, k, &[(0.0, -1.05), (0.35, -0.2), (0.95, 0.5), (0.35, 0.45), (0.25, 0.95), (-0.25, 0.95), (-0.35, 0.45), (-0.95, 0.5), (-0.35, -0.2)], true, s),
-            // Diplomacy: two rings joined.
-            6 => {
-                p.circle_stroke(pos2(m.x - k * 0.4, m.y), k * 0.65, s);
-                p.circle_stroke(pos2(m.x + k * 0.4, m.y), k * 0.65, s);
-            }
-            // Spies: an eye.
-            7 => {
-                let mut v = arc(pos2(m.x, m.y + k * 0.9), k * 1.35, k * 1.5, PI * 1.22, PI * 1.78);
-                v.extend(arc(pos2(m.x, m.y - k * 0.9), k * 1.35, k * 1.5, PI * 0.22, PI * 0.78));
-                p.add(Shape::closed_line(v, s));
-                p.circle_filled(m, k * 0.32, c);
-            }
-            // Trade: two arrows both ways.
-            8 => {
-                path(p, m, k, &[(-1.0, -0.4), (0.95, -0.4)], false, s);
-                path(p, m, k, &[(0.5, -0.85), (0.95, -0.4), (0.5, 0.05)], false, s);
-                path(p, m, k, &[(1.0, 0.45), (-0.95, 0.45)], false, s);
-                path(p, m, k, &[(-0.5, 0.0), (-0.95, 0.45), (-0.5, 0.9)], false, s);
-            }
-            // Information: a bar chart.
-            9 => {
-                for (j, h) in [0.7, 1.3, 1.9].iter().enumerate() {
-                    let x = m.x - k * 0.75 + j as f32 * k * 0.75;
-                    p.rect_filled(Rect::from_min_max(pos2(x - k * 0.22, m.y + k * 0.95 - h * k), pos2(x + k * 0.22, m.y + k * 0.95)), 0.0, c);
-                }
-            }
-            10 => icon(p, r, Icon::Mail, c),
-            // Options: a gear.
-            _ => {
-                p.circle_stroke(m, k * 0.55, s);
-                for j in 0..8 {
-                    let a = TAU * j as f32 / 8.0;
-                    let (x, y) = (a.cos(), a.sin());
-                    p.line_segment([pos2(m.x + x * k * 0.62, m.y + y * k * 0.62), pos2(m.x + x * k * 1.05, m.y + y * k * 1.05)], Stroke::new(2.0f32, c));
-                }
-            }
-        },
-    }
-}
-
 /// The top bar's height (`.ig-topbar`: 44, 4 × 12 inside, 10 between its parts).
 const BAR_H: f32 = 44.0;
 const BAR_PAD: Vec2 = vec2(12.0, 4.0);
@@ -1013,11 +768,8 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
             if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
                 acts.push(Act::Info(false));
             }
-            if info.tanks {
-                let draw = |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, Icon::Tanks, c);
-                if hand(ds::tip_key(ui.add(IconKey::new(ds::Glyph::Custom(&draw)).size(vec2(KEY.x, 32.0))), &v.tips[8], "")).clicked() {
-                    acts.push(Act::Panel(10));
-                }
+            if info.tanks && hand(ds::tip_key(ui.add(IconKey::icon(ds::Icon::Tanks).size(vec2(KEY.x, 32.0))), &v.tips[8], "")).clicked() {
+                acts.push(Act::Panel(10));
             }
         });
     });
@@ -1030,32 +782,21 @@ fn camera_buttons(ui: &mut egui::Ui, v: &View, acts: &mut Vec<Act>) {
     let mut held = None;
     let none = String::new();
     ds::key_group(ui, |ui| {
-        let held_keys = [(Icon::RotateLeft, 3, true, &none), (Icon::RotateRight, 2, true, &none), (Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (Icon::TiltUp, 6, true, &none), (Icon::TiltDown, 6, false, &none)];
+        let held_keys = [(ds::Icon::RotateLeft, 3, true, &none), (ds::Icon::RotateRight, 2, true, &none), (ds::Icon::ZoomOut, 5, false, &v.keys.zoom[1]), (ds::Icon::ZoomIn, 5, true, &v.keys.zoom[0]), (ds::Icon::TiltUp, 6, true, &none), (ds::Icon::TiltDown, 6, false, &none)];
         for (i, spot, left, key) in held_keys {
-            let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-            let r = hand(ds::tip_key(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], key));
+            let r = hand(ds::tip_key(ui.add(IconKey::icon(i).size(CAM_KEY)), &v.tips[spot as usize], key));
             if r.is_pointer_button_down_on() && r.contains_pointer() {
                 let right = ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary) && !i.pointer.primary_down());
                 held = Some((spot, left != right));
             }
         }
-        for (i, spot) in [(Icon::TopView, 1), (Icon::SideView, 4)] {
-            let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, i, c);
-            if ds::either(&hand(ds::tip_key(ui.add(IconKey::new(cam_glyph(i, &draw)).size(CAM_KEY)), &v.tips[spot as usize], ""))) {
+        for (i, spot) in [(ds::Icon::TopView, 1), (ds::Icon::SideView, 4)] {
+            if ds::either(&hand(ds::tip_key(ui.add(IconKey::icon(i).size(CAM_KEY)), &v.tips[spot as usize], ""))) {
                 acts.push(Act::View(spot));
             }
         }
     });
     acts.push(Act::Hold(held));
-}
-
-/// A camera key's icon: the kit's zoom lenses (the board's), the HUD's own for the rest.
-fn cam_glyph(i: Icon, draw: &dyn Fn(&egui::Painter, Rect, Color32)) -> ds::Glyph<'_> {
-    match i {
-        Icon::ZoomIn => ds::Glyph::Icon(ds::Icon::ZoomIn),
-        Icon::ZoomOut => ds::Glyph::Icon(ds::Icon::ZoomOut),
-        _ => ds::Glyph::Custom(draw),
-    }
 }
 
 /// The radar's well `r` ([`ds::radar`]): the planets and fleets, the view's outline; press or drag moves the camera
@@ -1193,13 +934,14 @@ pub fn radial_in(frame: i32) -> f32 {
 }
 
 /// The rop icon's drawn icon (`Starmap_RopIkonKonvert`'s picture, re/screens/starmap.md §14.5).
-fn rop_icon(n: i32) -> Icon {
+fn rop_icon(n: i32) -> ds::Icon {
+    use ds::Icon;
     match n {
         1 => Icon::Tanks,
         2 => Icon::Factory,
-        4 => Icon::Screen(3),
+        4 => Icon::Building,
         0xd => Icon::Split,
-        0xf => Icon::Details,
+        0xf => Icon::Info,
         n => Icon::Rop(n),
     }
 }
@@ -1407,7 +1149,7 @@ fn radial(ui: &egui::Ui, m: &Menus, r: &Radial, ink: &Ink) {
         }
         ds::vgrad(&f, face, 255, &[(0.0, Color32::from_black_alpha(160)), (0.25, Color32::TRANSPARENT), (1.0, Color32::TRANSPARENT)]);
         let fg = if hot { k.lcd_ink } else if armed { k.ink_silver } else { k.ink_muted };
-        icon(&f, face.shrink(d * 0.1), rop_icon(r.icons[n]), fg);
+        rop_icon(r.icons[n]).paint(&f, face.shrink(d * 0.1), fg);
         if hot && !r.names[n].is_empty() {
             label = Some((n, rect));
         }

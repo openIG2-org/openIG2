@@ -366,7 +366,7 @@ fn hull_bar(p: &egui::Painter, bar: Rect, f: f32) {
 /// The navigation plate: the radar sunk into cast metal (press or drag pans, hot-spot 0x1f), the camera keys under
 /// it (the original's cluster: top view, yaw left, yaw right, angled view, zoom, pitch; both mouse buttons as there).
 fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
-    use crate::starmap_modern::Icon;
+    use ds::Icon;
     let k = ds::tokens();
     let radar_h = (280.0 * 67.0 / 94.0f32).round();
     let key = vec2(34.0, 28.0);
@@ -410,8 +410,7 @@ fn nav(ui: &mut egui::Ui, v: &View, st: &mut State, screen: Rect) -> Rect {
         let kr = Rect::from_min_size(pos2(x, y + 2.0), key);
         let hot = pointer(ui).is_some_and(|q| kr.contains(q));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(kr));
-        let draw = move |p: &egui::Painter, r: Rect, c: Color32| crate::starmap_modern::icon(p, r, icon, c);
-        ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add(ds::IconKey::new(ds::Glyph::Custom(&draw)).size(key)));
+        ds::forced(hot, hot && ds::any_down(ui.ctx()), || child.add(ds::IconKey::icon(icon).size(key)));
         st.spots.push((kr, id, None));
         let _ = n;
         x += key.x + 2.0;

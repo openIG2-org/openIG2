@@ -376,6 +376,18 @@ pub enum Icon {
     Hammer,
     /// Production (`factory`).
     Factory,
+    /// The original console's camera keys: rotate, tilt, the top and side views.
+    RotateLeft,
+    RotateRight,
+    TiltUp,
+    TiltDown,
+    TopView,
+    SideView,
+    /// The vehicles (a tank), a fleet's split.
+    Tanks,
+    Split,
+    /// A radial menu's icon by its number (`StarmapRopIkonok`; the kit's own where it has one).
+    Rop(i32),
 }
 
 impl Icon {
@@ -552,6 +564,7 @@ impl Icon {
                 poly(&[(18.0, 15.0), (22.0, 11.0)]);
                 poly(&[(21.5, 11.5), (19.59, 9.59), (19.15, 8.9), (19.0, 8.17), (19.0, 7.0), (16.74, 4.74), (14.9, 3.4), (12.54, 2.98), (9.0, 2.96), (9.92, 3.78), (11.4, 5.8), (12.0, 8.4), (12.0, 10.0), (14.0, 12.0), (15.17, 12.0), (15.9, 12.15), (16.59, 12.59), (18.5, 14.5)]);
             }
+            Icon::RotateLeft | Icon::RotateRight | Icon::TiltUp | Icon::TiltDown | Icon::TopView | Icon::SideView | Icon::Tanks | Icon::Split | Icon::Rop(_) => hud_icon(p, rect, self, c),
             Icon::Factory => {
                 poly(&[(2.0, 20.0), (2.6, 21.4), (4.0, 22.0), (20.0, 22.0), (21.4, 21.4), (22.0, 20.0), (22.0, 8.0), (15.0, 13.0), (15.0, 8.0), (8.0, 13.0), (8.0, 4.0), (7.4, 2.6), (6.0, 2.0), (4.0, 2.0), (2.6, 2.6), (2.0, 4.0), (2.0, 20.0)]);
                 for x in [7.0, 12.0, 17.0] {
@@ -583,6 +596,144 @@ impl Icon {
         }
     }
 }
+
+/// `pts` (in `k` units around `m`) as one line, closed or not.
+fn path(p: &egui::Painter, m: Pos2, k: f32, pts: &[(f32, f32)], closed: bool, s: Stroke) {
+    let v: Vec<Pos2> = pts.iter().map(|&(x, y)| Pos2::new(m.x + x * k, m.y + y * k)).collect();
+    p.add(if closed { egui::Shape::closed_line(v, s) } else { egui::Shape::line(v, s) });
+}
+
+/// An arc around `c` from `a0` to `a1` (radians, y down), `rx` by `ry`.
+fn arc(c: Pos2, rx: f32, ry: f32, a0: f32, a1: f32) -> Vec<Pos2> {
+    (0..=20).map(|j| {
+        let a = a0 + (a1 - a0) * j as f32 / 20.0;
+        Pos2::new(c.x + a.cos() * rx, c.y + a.sin() * ry)
+    }).collect()
+}
+
+/// The HUD's own drawings (the original console's camera keys, the radial menus' icons) in `r`, in `c`.
+fn hud_icon(p: &egui::Painter, r: Rect, i: Icon, c: Color32) {
+    use egui::{pos2, vec2, Shape};
+    use std::f32::consts::{PI, TAU};
+    let s = Stroke::new(1.4f32, c);
+    let m = r.center();
+    let k = r.height().min(r.width()) * 0.3;
+    match i {
+        Icon::RotateLeft | Icon::RotateRight => {
+            let dir = if i == Icon::RotateLeft { -1.0 } else { 1.0 };
+            let pts: Vec<Pos2> = (0..=16).map(|j| {
+                let a = PI * (0.15 + 1.2 * j as f32 / 16.0);
+                pos2(m.x + dir * a.cos() * k, m.y - a.sin() * k * 0.9 + k * 0.25)
+            }).collect();
+            let end = pts[0];
+            p.add(Shape::line(pts, s));
+            p.add(Shape::convex_polygon(vec![pos2(end.x - dir * k * 0.45, end.y - k * 0.1), pos2(end.x + dir * k * 0.25, end.y - k * 0.15), pos2(end.x - dir * k * 0.05, end.y + k * 0.5)], c, Stroke::NONE));
+        }
+        Icon::TiltUp | Icon::TiltDown => {
+            let d = if i == Icon::TiltUp { -1.0 } else { 1.0 };
+            p.add(Shape::convex_polygon(vec![pos2(m.x, m.y + d * k), pos2(m.x - k, m.y - d * k * 0.2), pos2(m.x + k, m.y - d * k * 0.2)], Color32::TRANSPARENT, s));
+            p.line_segment([pos2(m.x - k * 1.1, m.y - d * k * 0.75), pos2(m.x + k * 1.1, m.y - d * k * 0.75)], s);
+        }
+        Icon::TopView => {
+            p.circle_stroke(m, k, s);
+            p.circle_filled(m, k * 0.3, c);
+        }
+        Icon::SideView => {
+            p.add(Shape::closed_line(arc(m, k * 1.1, k * 0.35, 0.0, TAU), s));
+            p.circle_filled(pos2(m.x, m.y - k * 0.1), k * 0.32, c);
+        }
+        Icon::Tanks => {
+            p.rect_stroke(Rect::from_center_size(pos2(m.x, m.y + k * 0.35), vec2(k * 2.0, k * 0.8)), k * 0.4, s, egui::StrokeKind::Middle);
+            p.rect_filled(Rect::from_center_size(pos2(m.x - k * 0.1, m.y - k * 0.3), vec2(k * 0.9, k * 0.55)), 1.0, c);
+            p.line_segment([pos2(m.x + k * 0.3, m.y - k * 0.35), pos2(m.x + k * 1.15, m.y - k * 0.55)], s);
+        }
+        Icon::Split => {
+            path(p, m, k, &[(0.0, 1.0), (0.0, 0.1), (-0.75, -0.8)], false, s);
+            p.line_segment([pos2(m.x, m.y + k * 0.1), pos2(m.x + k * 0.75, m.y - k * 0.8)], s);
+            path(p, m, k, &[(-0.75, -0.35), (-0.75, -0.8), (-0.3, -0.8)], false, s);
+            path(p, m, k, &[(0.75, -0.35), (0.75, -0.8), (0.3, -0.8)], false, s);
+        }
+        Icon::Rop(n) => match n {
+            // Redirect: a curved route ending on a ringed target.
+            3 => {
+                let mut v = arc(pos2(m.x + k * 0.5, m.y + k * 0.9), k * 1.4, k * 1.6, PI * 1.0, PI * 1.38);
+                v.push(pos2(m.x + k * 0.25, m.y - k * 0.62));
+                p.add(Shape::line(v, s));
+                p.circle_stroke(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.42, s);
+                p.circle_filled(pos2(m.x + k * 0.55, m.y - k * 0.55), k * 0.14, c);
+            }
+            // Satellite: a body between two panels; the spy satellite adds its lens.
+            5 | 6 => {
+                p.rect_stroke(Rect::from_center_size(m, vec2(k * 0.6, k * 0.6)), 0.0, s, egui::StrokeKind::Middle);
+                for d in [-1.0, 1.0] {
+                    p.line_segment([pos2(m.x + d * k * 0.3, m.y), pos2(m.x + d * k * 0.5, m.y)], s);
+                    p.rect_stroke(Rect::from_center_size(pos2(m.x + d * k * 0.8, m.y), vec2(k * 0.6, k * 0.95)), 0.0, s, egui::StrokeKind::Middle);
+                }
+                if n == 6 {
+                    p.circle_filled(pos2(m.x, m.y + k * 0.62), k * 0.2, c);
+                    p.line_segment([pos2(m.x, m.y + k * 0.3), pos2(m.x, m.y + k * 0.45)], s);
+                }
+            }
+            // Terraform: a globe with its parallels.
+            7 => {
+                p.circle_stroke(m, k, s);
+                p.add(Shape::line(arc(m, k, k * 0.35, 0.0, PI), s));
+                p.add(Shape::line(arc(pos2(m.x, m.y - k * 0.45), k * 0.88, k * 0.22, 0.0, PI), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
+                p.add(Shape::line(arc(m, k * 0.4, k, -PI * 0.5, PI * 0.5), Stroke::new(1.0f32, c.gamma_multiply(0.7))));
+            }
+            // Colonise: a flag planted on a world's rim.
+            8 => {
+                p.add(Shape::line(arc(pos2(m.x, m.y + k * 2.0), k * 1.3, k * 1.05, PI * 1.2, PI * 1.8), s));
+                p.line_segment([pos2(m.x - k * 0.3, m.y + k * 0.95), pos2(m.x - k * 0.3, m.y - k * 1.0)], s);
+                p.add(Shape::convex_polygon(vec![pos2(m.x - k * 0.3, m.y - k * 1.0), pos2(m.x + k * 0.75, m.y - k * 0.65), pos2(m.x - k * 0.3, m.y - k * 0.3)], c, Stroke::NONE));
+            }
+            // The vehicles' info: a tank over a list.
+            9 => {
+                hud_icon(p, Rect::from_center_size(pos2(m.x, m.y - k * 0.35), r.size() * 0.8), Icon::Tanks, c);
+                for (j, w) in [1.0, 0.6].iter().enumerate() {
+                    let y = m.y + k * (0.55 + 0.38 * j as f32);
+                    p.line_segment([pos2(m.x - k, y), pos2(m.x - k + 2.0 * k * w, y)], Stroke::new(1.2f32, c));
+                }
+            }
+            // Join: two routes merging into one.
+            0xe => {
+                path(p, m, k, &[(-0.8, -0.9), (0.0, 0.0), (0.8, -0.9)], false, s);
+                path(p, m, k, &[(0.0, 0.0), (0.0, 1.0)], false, s);
+                path(p, m, k, &[(-0.4, 0.6), (0.0, 1.0), (0.4, 0.6)], false, s);
+            }
+            // Wormhole: a spiral.
+            0x10 => {
+                let v: Vec<Pos2> = (0..=40).map(|j| {
+                    let t = j as f32 / 40.0;
+                    let a = t * TAU * 1.6;
+                    pos2(m.x + a.cos() * k * (0.15 + 0.85 * t), m.y + a.sin() * k * (0.15 + 0.85 * t))
+                }).collect();
+                p.add(Shape::line(v, s));
+            }
+            // Virus alert: a cell with its spikes.
+            0x11 => {
+                p.circle_stroke(m, k * 0.55, s);
+                for j in 0..8 {
+                    let a = TAU * j as f32 / 8.0 + PI / 8.0;
+                    let (x, y) = (a.cos(), a.sin());
+                    p.line_segment([pos2(m.x + x * k * 0.55, m.y + y * k * 0.55), pos2(m.x + x * k * 0.9, m.y + y * k * 0.9)], s);
+                    p.circle_filled(pos2(m.x + x * k * 1.0, m.y + y * k * 1.0), k * 0.12, c);
+                }
+            }
+            // The gigabomb: a sphere with a burst of rays.
+            0x12 => {
+                p.circle_filled(pos2(m.x - k * 0.15, m.y + k * 0.2), k * 0.6, c);
+                for j in 0..5 {
+                    let a = -PI * 0.15 - PI * 0.175 * j as f32;
+                    p.line_segment([pos2(m.x + k * 0.45 + a.cos() * k * 0.2, m.y - k * 0.45 + a.sin() * k * 0.2), pos2(m.x + k * 0.45 + a.cos() * k * 0.6, m.y - k * 0.45 + a.sin() * k * 0.6)], s);
+                }
+            }
+            _ => Icon::Info.paint(p, r, c),
+        },
+        _ => {}
+    }
+}
+
 
 /// What an [`IconKey`] shows: one of the kit's icons or the page's own drawing (`(painter, rect, colour)`).
 pub enum Glyph<'a> {
