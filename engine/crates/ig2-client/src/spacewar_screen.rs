@@ -1749,8 +1749,8 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
     [c.x, c.y, c.rotate, c.pitch, c.zoom] = cam;
     let mut live = crate::spacewar_live::Live::enter(world, 0, &view.camera, &l.install, 0).ok_or("no battle slot")?;
     live.ui.kering = kering;
-    // Ours (ADR 0077): `--modern-hud` draws the modern battle HUD.
-    let mut gui = o.modern_hud.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    // Ours (ADR 0077): `--modern` draws the modern battle HUD.
+    let mut gui = o.modern.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
     if gui.is_some() {
         live.modern = Some(Default::default());
     }

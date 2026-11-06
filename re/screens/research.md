@@ -364,7 +364,7 @@ the toggles show what was sent. Each has a tooltip (hot-spots 0x40..=0x42, Engli
 `MULTIGET_Research`: re/rules/production-research.md §2.4 (runtime report traces/2026-10-17-research-orders.md).
 
 ## 7. Client status
-With "Modern research screen" (`ModernResearch`, default on; ADR 0071 and its amendment: on the design kit with the original's turning wire models, `research_modern.rs`) the screen is egui console plates whose clicks run the screen's own code; the classic screen is unchanged when the option is off, in input scripts and in captures.
+With the Modern interface (`Interface`, default; ADR 0071 and its amendment: on the design kit with the original's turning wire models, `research_modern.rs`) the screen is egui console plates whose clicks run the screen's own code; the classic screen is unchanged when the option is off, in input scripts and in captures.
 `ig2-client::research` (scene, lists, labs, lasers, presses, button lines `Lines`/`draw_arrow`, tooltips
 `model_tip`, `ResearchModels::centres`/`models_under`, input `Research::{buttons, poll, edge, gy, mouse_old,
 ball_grip, model_grip}`, `Research::press(.., left)`, sounds per audio.md §6, keys `window.rs` `research_key`/`research_key_seen`); lights

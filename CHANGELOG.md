@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- One Interface setting (Options, Interface): Modern or Classic for every screen at once, switching at once during a game and on the main menu; old per-screen choices carry over (ADR 0082).
 - Play in the browser from a server: `deploy/web` runs the browser version with Docker Compose; a server can offer its own copy of the game files, which visitors download into their browser once they agree (only the files the game reads: 645 MB of the GOG install's 690 MB), and the main menu loads (ADR 0081).
 - Discord Rich Presence: your Discord profile shows the menu page, the multiplayer room, or the game's mode, race, difficulty, screen, date and empire numbers; a host's open room has a Join button that starts a friend's game and joins it (Options, Game: off, status, or with join; ADR 0080).
 - Modern production view: a second click on the same slot (or its "+ Design") closes the design list, a click on another slot switches the list to it, and a click on the bare starmap closes it too.

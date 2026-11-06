@@ -46,7 +46,7 @@ impl App {
         screen.battle = !load_only && (screen.from_battle || war);
         screen.debug = self.world.game.state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
         // Ours (ADR 0067): the in-game menu (and the main menu's Load game) as the modern page.
-        if self.display.modern_menu {
+        if self.display.modern {
             let name = self.settings.get("MultiplayerNev").filter(|n| !n.is_empty()).map_or_else(|| b"Player".to_vec(), |n| n.as_bytes().to_vec());
             screen.modern = Some(crate::options::modern::Modern::in_game(&screen, name, self.bindings.clone()));
         }
@@ -504,7 +504,7 @@ impl App {
         crate::render3d::set_lighting(d.lighting);
         crate::battle_fx::set_enhanced(d.battle_effects);
         crate::render::set_smooth_glows(d.smooth_glows);
-        crate::gui::ds::cursor::set_modern(d.modern_cursors);
+        crate::gui::ds::cursor::set_modern(d.modern);
         crate::gui::set_ui_scale(crate::display::ui_scale(&self.settings));
         self.bindings = crate::bindings::Bindings::from_settings(&self.settings);
         self.audio.voice_volume = crate::display::voice_volume(&self.settings);
@@ -519,6 +519,25 @@ impl App {
             f.s.settings = self.settings.int(crate::display::MENU_SETTINGS) != Some(0);
             f.s.flow = self.settings.int(crate::menu_flow::KEY) == Some(1);
             f.s.history = d.statistics;
+            // ADR 0082: the main menu follows the interface at once.
+            f.s.flow |= d.modern;
+            if d.modern != old.modern {
+                f.s.modern = d.modern;
+                f.s.continue_line = d.modern.then(crate::mainscr_modern::continue_line).flatten();
+            }
+        }
+        // ADR 0082: an open in-game menu turns into the other interface's, on the page with the Interface row.
+        if let Some(o) = self.options.as_mut().filter(|o| d.modern != old.modern && !o.s.settings_only) {
+            o.s.modern = d.modern.then(|| {
+                let name = self.settings.get("MultiplayerNev").filter(|n| !n.is_empty()).map_or_else(|| b"Player".to_vec(), |n| n.as_bytes().to_vec());
+                let mut m = crate::options::modern::Modern::in_game(&o.s, name, self.bindings.clone());
+                m.menu = false;
+                m.set_tab(crate::options::modern::Tab::Display);
+                m
+            });
+            if !d.modern {
+                o.s.set_page(crate::options::REMAKE_PAGE);
+            }
         }
         if d.one_language != old.one_language {
             self.one_language = d.one_language;

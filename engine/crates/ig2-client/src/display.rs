@@ -99,29 +99,22 @@ pub const BATTLE_EFFECTS: &str = "BattleEffects";
 /// ADR 0064: the starmap's and backgrounds' glows and particles drawn without a texel grid or square points (off by
 /// default).
 pub const SMOOTH_GLOWS: &str = "SmoothGlows";
-/// ADR 0065: the starmap's HUD drawn as the modern egui panels (on by default; 0 = the original's).
-pub const MODERN_STARMAP: &str = "ModernStarmapHud";
-/// ADR 0067: Esc's in-game menu (the Options screen) as the modern egui page (on by default; 0 = the original's).
-pub const MODERN_MENU: &str = "ModernGameMenu";
-/// ADR 0070: the colony screen's panels as the modern egui ones (on by default; 0 = the original's).
-pub const MODERN_COLONY: &str = "ModernColony";
-/// ADR 0072: the info screen as the modern egui panels (on by default; 0 = the original's).
-pub const MODERN_INFO: &str = "ModernInfo";
-/// Ours (ADR 0076): the messages screen as modern panels.
-pub const MODERN_MESSAGES: &str = "ModernMessages";
-/// Ours (ADR 0073 §5): the design kit's pointer set with a modern UI theme (on by default).
-pub const MODERN_CURSORS: &str = "ModernCursors";
-/// ADR 0071: the research screen and the starmap's production view as the modern egui panels (on by default; 0 = the
-/// original's).
-pub const MODERN_RESEARCH: &str = "ModernResearch";
-/// ADR 0078: the main menu as the design's grouped egui page (on by default; 0 = the original's rings).
-pub const MODERN_MAIN_MENU: &str = "ModernMainMenu";
-/// ADR 0075: the ship and vehicle design screen as the modern egui panels (on by default; 0 = the original's).
-pub const MODERN_DESIGN: &str = "ModernDesign";
-/// Ours (ADR 0076): the diplomacy, spy and trade screens as modern panels around their 3D scenes (on by default).
-pub const MODERN_DIPLOMACY: &str = "ModernDiplomacy";
-pub const MODERN_SPY: &str = "ModernSpy";
-pub const MODERN_TRADE: &str = "ModernTrade";
+/// ADR 0082: the interface, modern (1, the default: the egui pages and panels, ADR 0065–0078) or classic (0: the
+/// original's screens), for every screen at once.
+pub const INTERFACE: &str = "Interface";
+/// The per-screen keys [`INTERFACE`] replaced: a settings file without it is modern unless every one was off.
+const OLD_MODERN: [&str; 12] = [
+    "ModernStarmapHud", "ModernGameMenu", "ModernColony", "ModernInfo", "ModernMessages", "ModernCursors", "ModernResearch",
+    "ModernMainMenu", "ModernDesign", "ModernDiplomacy", "ModernSpy", "ModernTrade",
+];
+
+/// The interface the settings file chooses (ADR 0082): modern unless classic.
+pub fn modern(f: &File) -> bool {
+    match f.int(INTERFACE) {
+        Some(v) => v != 0,
+        None => OLD_MODERN.iter().any(|k| f.int(k) != Some(0)),
+    }
+}
 /// ADR 0062: the egui pages' and HUD's size, n = 50 + 10·n per cent (default 5 = 100 %).
 pub const UI_SCALE: &str = "UiScale";
 
@@ -180,18 +173,8 @@ pub struct Display {
     pub lighting: crate::render3d::Lighting,
     pub battle_effects: bool,
     pub smooth_glows: bool,
-    pub modern_starmap: bool,
-    pub modern_menu: bool,
-    pub modern_colony: bool,
-    pub modern_info: bool,
-    pub modern_messages: bool,
-    pub modern_cursors: bool,
-    pub modern_research: bool,
-    pub modern_main_menu: bool,
-    pub modern_design: bool,
-    pub modern_diplomacy: bool,
-    pub modern_spy: bool,
-    pub modern_trade: bool,
+    /// ADR 0082: the modern interface on every screen.
+    pub modern: bool,
 }
 
 /// Where W/A/S/D pan the camera (ADR 0030).
@@ -255,18 +238,7 @@ impl Display {
             },
             battle_effects: f.int(BATTLE_EFFECTS) == Some(1),
             smooth_glows: f.int(SMOOTH_GLOWS) != Some(0),
-            modern_starmap: f.int(MODERN_STARMAP) != Some(0),
-            modern_menu: f.int(MODERN_MENU) != Some(0),
-            modern_colony: f.int(MODERN_COLONY) != Some(0),
-            modern_info: f.int(MODERN_INFO) != Some(0),
-            modern_messages: f.int(MODERN_MESSAGES) != Some(0),
-            modern_cursors: f.int(MODERN_CURSORS) != Some(0),
-            modern_research: f.int(MODERN_RESEARCH) != Some(0),
-            modern_main_menu: f.int(MODERN_MAIN_MENU) != Some(0),
-            modern_design: f.int(MODERN_DESIGN) != Some(0),
-            modern_diplomacy: f.int(MODERN_DIPLOMACY) != Some(0),
-            modern_spy: f.int(MODERN_SPY) != Some(0),
-            modern_trade: f.int(MODERN_TRADE) != Some(0),
+            modern: modern(f),
         }
     }
 
@@ -379,18 +351,7 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
         row(36, Group::Game, "Extra game speeds", EXTRA_SPEEDS, (f.int(EXTRA_SPEEDS) == Some(1)) as i32, Vec::new(), 1),
         row(37, Group::Interface, "Menu navigation", crate::menu_flow::KEY, (f.int(crate::menu_flow::KEY) == Some(1)) as i32, ["Classic", "Enhanced"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(38, Group::Graphics, "Smooth glows", SMOOTH_GLOWS, d.smooth_glows as i32, Vec::new(), 1),
-        row(39, Group::Interface, "Modern starmap HUD", MODERN_STARMAP, d.modern_starmap as i32, Vec::new(), 1),
-        row(40, Group::Interface, "Modern in-game menu", MODERN_MENU, d.modern_menu as i32, Vec::new(), 1),
-        row(42, Group::Interface, "Modern colony screen", MODERN_COLONY, d.modern_colony as i32, Vec::new(), 1),
-        row(43, Group::Interface, "Modern research screen", MODERN_RESEARCH, d.modern_research as i32, Vec::new(), 1),
-        row(44, Group::Interface, "Modern info screen", MODERN_INFO, d.modern_info as i32, Vec::new(), 1),
-        row(50, Group::Interface, "Modern messages screen", MODERN_MESSAGES, d.modern_messages as i32, Vec::new(), 1),
-        row(51, Group::Interface, "Modern diplomacy screen", MODERN_DIPLOMACY, d.modern_diplomacy as i32, Vec::new(), 1),
-        row(52, Group::Interface, "Modern spy screen", MODERN_SPY, d.modern_spy as i32, Vec::new(), 1),
-        row(53, Group::Interface, "Modern trade screen", MODERN_TRADE, d.modern_trade as i32, Vec::new(), 1),
-        row(45, Group::Interface, "Modern cursors", MODERN_CURSORS, d.modern_cursors as i32, Vec::new(), 1),
-        row(46, Group::Interface, "Modern main menu", MODERN_MAIN_MENU, d.modern_main_menu as i32, Vec::new(), 1),
-        row(47, Group::Interface, "Modern design screen", MODERN_DESIGN, d.modern_design as i32, Vec::new(), 1),
+        row(39, Group::Interface, "Interface", INTERFACE, d.modern as i32, ["Classic", "Modern"].map(|s| s.as_bytes().to_vec()).to_vec(), 1),
         row(41, Group::Interface, "UI scale", UI_SCALE, (ui_scale(f) as i32 - 50) / 10, (0..=15).map(|n| format!("{}%", 50 + 10 * n).into_bytes()).collect(), 15),
         // ADR 0080: Discord Rich Presence (status and the Join button by default).
         row(54, Group::Multiplayer, "Discord status", crate::discord::KEY, f.int(crate::discord::KEY).unwrap_or(2).clamp(0, 2), ["Off", "Status", "With join"].map(|s| s.as_bytes().to_vec()).to_vec(), 2),
@@ -412,13 +373,30 @@ mod tests {
     #[test]
     fn settings_round_trip() {
         let mut f = File::default();
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true, modern_messages: true, modern_research: true, modern_cursors: true, modern_main_menu: true, modern_design: true, modern_diplomacy: true, modern_spy: true, modern_trade: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Window, size: None, vsync: true, letterbox: false, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern: true });
         f.set(MODE, "2");
         f.set(RESOLUTION, "1280x720");
         f.set(VSYNC, "0");
         f.set(LETTERBOX, "1");
-        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern_starmap: true, modern_menu: true, modern_colony: true, modern_info: true, modern_messages: true, modern_research: true, modern_cursors: true, modern_main_menu: true, modern_design: true, modern_diplomacy: true, modern_spy: true, modern_trade: true });
+        assert_eq!(Display::from_settings(&f), Display { mode: Mode::Fullscreen, size: Some((1280, 720)), vsync: false, letterbox: true, live_background: true, one_language: true, box_models: true, slider_under: true, articles: true, centred_exit: true, wasd: Wasd::Starmap, fleet_groups: true, statistics: true, event_log: true, subtitles: false, colour_blind: false, sharp_ui: false, sharp_text: false, starmap_mouse: true, high_scores: true, title_music: true, upscale: 1, lighting: Default::default(), battle_effects: false, smooth_glows: true, modern: true });
         assert_eq!(parse_size("12x7"), None);
+    }
+
+    /// ADR 0082: the old per-screen keys become the one Interface setting; any one on (or unset) is Modern.
+    #[test]
+    fn interface_from_old_settings() {
+        let mut f = File::default();
+        assert!(modern(&f), "modern by default");
+        for k in OLD_MODERN {
+            f.set(k, "0");
+        }
+        assert!(!modern(&f), "every old key off: classic");
+        f.set("ModernColony", "1");
+        assert!(modern(&f), "one old key on: modern");
+        f.set(INTERFACE, "0");
+        assert!(!modern(&f), "the new key wins");
+        f.set(INTERFACE, "1");
+        assert!(Display::from_settings(&f).modern);
     }
 
     #[test]
@@ -428,7 +406,7 @@ mod tests {
         f.set(ONE_LANGUAGE, "0");
         let sizes = [(1920, 1080), (1600, 900), (1280, 720)];
         let r = rows(&f, &sizes, (1600, 900));
-        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 5, 2]);
+        assert_eq!(r.iter().map(|r| r.value).collect::<Vec<_>>(), [0, 2, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 5, 2]);
         // The theme row: Classic first, Modern by its stored name.
         let theme = r.iter().find(|r| r.key == UI_THEME).unwrap();
         assert_eq!((theme.value, &theme.labels[..2]), (0, &[b"Classic".to_vec(), b"Modern".to_vec()][..]));

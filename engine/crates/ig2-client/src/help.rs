@@ -847,8 +847,8 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     };
     let mut pics = Pictures::default();
     let size = [o.size.0 as f32, o.size.1 as f32];
-    // Ours (ADR 0078): `--modern-menu` draws the modern page, driven by the script's pointer.
-    let mut gui = o.modern_menu.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    // Ours (ADR 0078): `--modern` draws the modern page, driven by the script's pointer.
+    let mut gui = o.modern.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
     let mut page = crate::help_modern::Page::default();
     let k = crate::gui::Gui::scale(o.size.1);
     let mut mouse = o.mouse.unwrap_or([320.0, 240.0]);

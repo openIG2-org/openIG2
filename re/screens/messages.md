@@ -172,11 +172,14 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
   every following `+`/`-` line (the text after the marker and a space) goes through `TordelveAttesz`.
 - `TordelveAttesz` 0x5a51a0 (src, `ParbeszPlace`, length, plus, other): a `-` line first takes back up to two line
   ends at the text's end (so it flows on, and an empty `+` line right before it goes too [obs: decompile only]); the
-  current line's visible width is counted back to the last `` (`~` −1, else +1; a line starting with `|C` −3); the
+  current line's visible width is counted back to the last `
+` (`~` −1, else +1; a line starting with `|C` −3); the
   source to its `
-` (the `` kept) gets `#k#` = the entry's parameter `k` (`+0x10 + 0x14·k`; "#=#" →
+` (the `
+` kept) gets `#k#` = the entry's parameter `k` (`+0x10 + 0x14·k`; "#=#" →
   "(~verror~s)"; in `~f…~s` when the other side speaks); `a2az` converts it for Hungarian (`Lang` 4; the client converts at display unless `HungarianArticles` is off, ADR 0028, row 437); then each word
-  follows a space if `width + strxlen(word) + 1 < 0x36`, else a `` and the word starts the line.
+  follows a space if `width + strxlen(word) + 1 < 0x36`, else a `
+` and the word starts the line.
 - Typing (`MessagesGfx2D_2`): `MsgElteltMp += (MsgActTime − MsgOldTime)/500` (`SDL_GetTicks`), one more byte per
   `ParbeszTyperPtrNovelo`, then `MsgOldTime = MsgActTime`. Only that pass (at `mesframe` 30) and the open
   (`KiertekelUjuzenet`) or `Messages_Belep` set `MsgOldTime` (the ELF's reset in `Messages3DUpdate` tests
@@ -186,10 +189,12 @@ Opening inbox entry `UAktUzenet = AktUzenet0to3 + AktUzenetPointer` loads `uzene
   `KiirtaMar`, `Novelo = 0.4`, a plain message's end-of-message clip, and a dialogue whose answer led to −1 is over
   (`ParbeszedVege`, the entry's `+4` set). Drawing from line `ParbeszKezdoSor` (its colour by
   `ScanLastParbeszedColor`): `|C` n sets colour n, `~c` a colour code (`SzinKarakter` "spkfzv " → `SzinTomb` 2, 6, 8,
-  3, 7, −1 = blinking 6/2 with `AktIdo200`, else 2; a digit indexes `SzinTomb`), a `` starts the next line; byte
+  3, 7, −1 = blinking 6/2 with `AktIdo200`, else 2; a digit indexes `SzinTomb`), a `
+` starts the next line; byte
   `MsgX` of line `MsgY` at `(220 + 6·MsgX, 22 + 11·MsgY)`, 13 lines, beyond line 12 the text scrolls a line; the
   typer's cell blinks in colour 8 while typing or waiting for an answer.
-- Answers (once typed, the entry not read): at `(220, 434 + 11k)` up to the ``, colour by state; one answer alone is
+- Answers (once typed, the entry not read): at `(220, 434 + 11k)` up to the `
+`, colour by state; one answer alone is
   taken as soon as the text is typed (`Melyikvalaszfolottvanazeger` 0x5a9920); taking one (`ValaszKivalasztva`
   0x5a97a0) calls `Story_MessageSelected(id, part)` (`ReszletValasztas`), records it, prints its part and evaluates
   its next block (−1: the dialogue ends with this text).
@@ -231,11 +236,11 @@ moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads
 `video.md` §6, `audio.md` §7. Open rows: 4 (the side strips wider than 4:3 stay black), 309 (speech stays English, as
 the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
 messages.
-Modern page: with "Modern messages screen" on (default) the screen is the design board's egui layout (ADR 0076,
+Modern page: with the Modern interface (default) the screen is the design board's egui layout (ADR 0076,
 `messages_modern.rs`): every message listed from the top of its panel, oldest first and the newest at the bottom, scrolling when longer
 (the newest kept in view; no arrows). A press on a row moves the four-row window to that message as the arrows would
 (`MessagesScreen::reach`) and opens it through spot 3; while an automatic message waits only the rows inside the window
-open. Text, answers and way out go through the hot-spots' code at their virtual points; the clip is drawn into the head's well; `--snapshot --modern-messages`.
+open. Text, answers and way out go through the hot-spots' code at their virtual points; the clip is drawn into the head's well; `--snapshot --modern`.
 
 ## 9. The event log (ours, enhanced; ADR 0040, row 454)
 Not in the original. With `EventLog` on (the default) the client records every scrolling line `Game::messages_for`

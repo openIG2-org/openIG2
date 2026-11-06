@@ -230,7 +230,7 @@ impl Front {
         s.history = settings.int(crate::display::STATISTICS) != Some(0);
         s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());
         // Ours (ADR 0078): the modern main menu brings the grouped panel with it.
-        s.modern = settings.int(crate::display::MODERN_MAIN_MENU) != Some(0);
+        s.modern = crate::display::modern(settings);
         s.flow |= s.modern;
         s.continue_line = s.modern.then(crate::mainscr_modern::continue_line).flatten();
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
@@ -631,7 +631,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     }
     crate::battle_fx::set_enhanced(o.battle_effects || app.display.battle_effects);
     crate::render::set_smooth_glows(o.smooth_glows || app.display.smooth_glows);
-    crate::gui::ds::cursor::set_modern(app.display.modern_cursors);
+    crate::gui::ds::cursor::set_modern(app.display.modern);
     crate::gui::set_ui_scale(o.ui_scale.unwrap_or(crate::display::ui_scale(&app.settings)));
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).
     if let Ok(p) = std::env::var("IG2_PROFILE_BATTLE") {
@@ -687,16 +687,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     app.pointer_seen = false;
     // The exe's controls: the scripts' right presses give their orders on the press (ADR 0049 off).
     app.display.starmap_mouse = false;
-    // The original's HUD: the scripts click its hot-spots (ADR 0065's panels need the window).
-    app.display.modern_starmap = false;
-    // The original's Options screen: the scripts click its hot-spots (ADR 0067's page needs a pointer of its own).
-    app.display.modern_menu = false;
-    // The original's colony panels: the scripts click their hot-spots (ADR 0070's need the window).
-    app.display.modern_colony = false;
-    // The original's research screen and production view: the scripts click their hot-spots (ADR 0071's need the window).
-    app.display.modern_research = false;
-    // The original's design screen: the scripts click its hot-spots (ADR 0075's need the window).
-    app.display.modern_design = false;
+    // The original's screens: the scripts click their hot-spots (ADR 0082's modern ones need the window).
+    app.display.modern = false;
     app.world.game.empire_names = hud.empire_names.clone();
     hud.set_one_language(&app.install, o.texts == Some(true));
     app.hud = Some(hud);
@@ -1277,7 +1269,7 @@ impl App {
         };
         if self.spacewar.is_some() {
             // Ours (ADR 0077): the modern battle HUD with the modern starmap HUD's option.
-            let modern = self.display.modern_starmap;
+            let modern = self.display.modern;
             if let Some(sw) = &mut self.spacewar {
                 match modern {
                     true => _ = sw.modern.get_or_insert_with(Default::default),

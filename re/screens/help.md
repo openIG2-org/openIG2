@@ -221,4 +221,4 @@ touch scroll. Capture: `run_screendiff.py … quick-1.sav help --script scripts/
 jump, drag, close match; the opening isn't compared: see §9); left differences are harness timing (the exe's pointer
 and tooltip a frame late, a drag one tick behind) and the faders' random shine.
 
-Modern page: `help_modern.rs` (with "Modern in-game menu"; ADR 0078 §9, deviations 534).
+Modern page: `help_modern.rs` (with the Modern interface; ADR 0078 §9, deviations 534).

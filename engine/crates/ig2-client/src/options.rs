@@ -773,7 +773,7 @@ impl OptionsScreen {
         self.entry = Some(Entry { cursor: text.len(), text, clear: true });
     }
 
-    fn set_page(&mut self, p: i32) {
+    pub(crate) fn set_page(&mut self, p: i32) {
         self.page = p;
         self.sub = 0;
         let g = self.sliders[2].enabled;
@@ -1397,7 +1397,7 @@ impl Headless {
 /// `ig2-client --snapshot OUT --screen options [--ui-frames N] [--mouse X,Y] [--script S]`: the Options screen
 /// opened on the save's game (black behind it, or with `--backdrop` the starmap's picture, the top bar over it) after
 /// N UI ticks of 10 ms, one drawn frame each; with a script one grab per `t` (re/screens/sound.md §3: the events at t,
-/// the tick, the frame). `--modern-menu`: the modern in-game menu (ADR 0067) instead, driven by the script's pointer
+/// the tick, the frame). `--modern`: the modern in-game menu (ADR 0067) instead, driven by the script's pointer
 /// and keys.
 pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     use crate::script::Input;
@@ -1407,7 +1407,7 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
     let mut h = Headless::load(&mut r, &l.install, &l.tables);
     let mut s = h.enter(&l.install, false);
     let size = [o.size.0 as f32, o.size.1 as f32];
-    let mut gui = o.modern_menu.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
+    let mut gui = o.modern.then(|| crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install));
     if gui.is_some() {
         let file = ig2_formats::options::Options::load();
         s.rows.extend(crate::display::rows(&file, &[], o.size));

@@ -162,7 +162,7 @@ impl App {
         }
         let place = self.research_place.unwrap_or_else(|| crate::research::Place::read(&self.world.game.state));
         // The modern screen (ADR 0071) has no 3D console to open.
-        let animated = opens_animated(from) && !self.display.modern_research;
+        let animated = opens_animated(from) && !self.display.modern;
         self.research = Some(crate::research::Research::open_at(&self.world.game.state, self.tables, animated, place));
         self.overlay = Some(crate::ui::Screen::Research);
     }
@@ -264,7 +264,7 @@ impl App {
             self.design_tips = crate::design::tips(&h.texts);
         }
         self.drop_research();
-        let mut d = crate::design::Design::open(&self.world.game.state, opens_animated(from) && !self.display.modern_design);
+        let mut d = crate::design::Design::open(&self.world.game.state, opens_animated(from) && !self.display.modern);
         if let Some(h) = &self.hud {
             d.names = crate::design_edit::Names::read(&h.texts);
         }

@@ -700,4 +700,4 @@ Scenario, Start) plus a row, a skirmish 3 plus its settings, Quick game 2, a sav
 Port status: `menu_flow.rs` (panel, Back label, `saves_newest_first`), `MainScr::flow`, the window's dispatch; tests
 `menu_flow::tests`, `mainscr::tests::{flow_panel_replaces_the_rings, flow_back_paths}`.
 
-Modern pages: `newgame_modern.rs` is the race choice of §9.2 with "Modern main menu" (ADR 0078 §8, deviations 533); the multiplayer name prompt is ADR 0078 §11.
+Modern pages: `newgame_modern.rs` is the race choice of §9.2 with the Modern interface (ADR 0078 §8, deviations 533); the multiplayer name prompt is ADR 0078 §11.

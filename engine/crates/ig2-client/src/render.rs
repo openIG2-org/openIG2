@@ -1128,8 +1128,8 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
     let state = &world.game.state;
     let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, state);
     d.scene.acttime = o.acttime;
-    d.scene.modern = o.modern_diplomacy;
-    hud.modern_bar = o.modern_diplomacy;
+    d.scene.modern = o.modern;
+    hud.modern_bar = o.modern;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     match o.spy_frame {
@@ -1154,7 +1154,7 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     d.draw(&mut frame, r, &l.install, &l.tables, hud, state, size, t);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Diplomacy, t);
-    let rgba = if o.modern_diplomacy {
+    let rgba = if o.modern {
         let v = crate::diplomacy_modern::view(hud, state, &l.tables, &world.ui, &d, None, t);
         let mut st = crate::diplomacy_modern::State::default();
         page_over(o, &l.install, r, &frame, hud, t, |ctx| {
@@ -1336,10 +1336,10 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     if let Some(gm) = l.rules.ground_maps.get(curr.map) {
         ui.war.project(&view, gm, &curr, &scene.unit_centres);
     }
-    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, pointer: false, info_model, now_ms, time: t, names: true, rename: None, modern: o.modern_colony };
+    let input = crate::ui::ColonyInput { ui: &ui, sim: &l.rules, panel, cursor, pointer: false, info_model, now_ms, time: t, names: true, rename: None, modern: o.modern };
     hud.draw_colony(&mut frame, &world.game.state, &l.tables, &l.rules.ground_maps, &view, &scene, &curr, &input);
-    // Ours (ADR 0070): `--modern-colony` draws the bar and the panels as egui ones over the 3D view.
-    hud.modern_bar = o.modern_colony;
+    // Ours (ADR 0070): `--modern` draws the bar and the panels as egui ones over the 3D view.
+    hud.modern_bar = o.modern;
     hud.draw(&mut frame, [o.size.0 as f32, o.size.1 as f32], &world.ui, &l.tables, crate::ui::Screen::Colony, t);
     // `UpdateFrame`'s last pass at `--mouse` (re/screens/input.md §8): the hot-spot's tooltip (the pointer at rest),
     // then the pointer of its type (colony.md §11.10).
@@ -1349,7 +1349,7 @@ fn colony_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
         let tip = ui.tip(&c, m).map(|(_, t)| t);
         hud.snapshot_tip_pointer(&mut frame, [o.size.0 as f32, o.size.1 as f32], m, tip.as_deref(), ui.cursor(&c, m), ui.mouse_phase().max(0) as u64);
     }
-    let rgba = if o.modern_colony {
+    let rgba = if o.modern {
         let size = [o.size.0 as f32, o.size.1 as f32];
         let mut cv = hud.colony_modern_view(&world.game.state, &l.tables, &world.ui, &l.rules.ground_maps, &view, &curr, &ui, &l.rules, None, t);
         cv.radar.picture = scene.radar.is_some();
@@ -1442,7 +1442,7 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
     }
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
-    if o.modern_research {
+    if o.modern {
         let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
         models.modern = true;
         let (tex, lines) = models.render(r, &l.install, &l.tables, &s, state, size);
@@ -1497,7 +1497,7 @@ fn design_ctx<'a>(state: &'a ig2_sim::save::SaveState, techs: &'a ig2_sim::colon
 fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     let state = &world.game.state;
     let techs = state.tech();
-    let mut s = crate::design::Design::open(state, !o.modern_design);
+    let mut s = crate::design::Design::open(state, !o.modern);
     s.hold_open();
     s.names = crate::design_edit::Names::read(&hud.texts);
     if let Some(m) = o.mouse {
@@ -1525,10 +1525,10 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let t = world.curr.tick as f32 * 0.05;
     let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
-    scene.modern = o.modern_design;
-    s.modern = o.modern_design;
+    scene.modern = o.modern;
+    s.modern = o.modern;
     scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
-    if o.modern_design {
+    if o.modern {
         hud.modern_bar = true;
         hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Design, t);
         let mut dv = hud.design_modern_view(state, &l.tables, &world.ui, &s, &tips, None, t);
@@ -1699,9 +1699,9 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     }
     let tips = crate::trade::tips(&hud.texts);
     let mut scene = crate::trade_scene::TradeScene::new(r);
-    scene.set_modern(o.modern_trade.then_some(crate::trade_modern::WELL_AT));
-    hud.modern_bar = o.modern_trade;
-    if o.modern_trade {
+    scene.set_modern(o.modern.then_some(crate::trade_modern::WELL_AT));
+    hud.modern_bar = o.modern;
+    if o.modern {
         // The modern page's first row picked, so the hull and its card show.
         s.modern_pick(state, 0, 0);
     }
@@ -1713,11 +1713,11 @@ fn trade_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, 
     let t = world.curr.tick as f32 * 0.05;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     scene.draw(&mut frame, r, &l.install, &l.tables, &s, size);
-    if !o.modern_trade {
+    if !o.modern {
         hud.draw_trade(&mut frame, &s, state, &l.tables, &tips, size, t);
     }
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Trade, t);
-    let rgba = if o.modern_trade {
+    let rgba = if o.modern {
         let v = crate::trade_modern::view(hud, state, &l.tables, &world.ui, &s, None, t);
         let mut st = crate::trade_modern::State::default();
         page_over(o, &l.install, r, &frame, hud, t, |ctx| {
@@ -1752,8 +1752,8 @@ fn trade_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     s.tip.moved([320.0, 240.0]);
     let tips = crate::trade::tips(&hud.texts);
     let mut scene = crate::trade_scene::TradeScene::new(r);
-    scene.set_modern(o.modern_trade.then_some(crate::trade_modern::WELL_AT));
-    hud.modern_bar = o.modern_trade;
+    scene.set_modern(o.modern.then_some(crate::trade_modern::WELL_AT));
+    hud.modern_bar = o.modern;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let t = world.curr.tick as f32 * 0.05;
     let mut heard: Vec<(Option<u32>, crate::audio::SoundId)> = s.sounds.drain(..).map(|id| (None, id)).collect();
@@ -2250,10 +2250,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         }
         // The screen at rest: the list (`mesframe` 15), or the message open (30).
         hud.messages.hold_open();
-        // Ours (ADR 0072): `--modern-info` draws the bar and the panels as egui ones.
-        let modern = o.modern_info && screen == crate::ui::Screen::Info;
-        // Ours (ADR 0076): `--modern-messages` the same for the messages screen.
-        let modern_messages = o.modern_messages && screen == crate::ui::Screen::Messages;
+        // Ours (ADR 0072): `--modern` draws the bar and the panels as egui ones.
+        let modern = o.modern && screen == crate::ui::Screen::Info;
+        // Ours (ADR 0076): `--modern` the same for the messages screen.
+        let modern_messages = o.modern && screen == crate::ui::Screen::Messages;
         (hud.modern_info, hud.modern_bar, hud.modern_messages) = (modern, modern || modern_messages, modern_messages);
         hud.frame_tex = match screen {
             _ if modern || modern_messages => None,
@@ -2391,10 +2391,10 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         depth[m] = 5.0;
         c.pose(&mut r, &l.install, &depth);
     }
-    // Ours (ADR 0065): `--modern-hud` draws the bar, the info box, the console, the minimap, the menus and the long info
+    // Ours (ADR 0065): `--modern` draws the bar, the info box, the console, the minimap, the menus and the long info
     // as egui panels.
-    hud.modern_bar = o.modern_hud;
-    if !o.modern_hud {
+    hud.modern_bar = o.modern;
+    if !o.modern {
         hud.draw_starmap_hud(&mut frame, &world.game.state, &l.tables, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels.faders.starf, o.planet_info, globe);
     }
     // An info panel at rest: its selection frame morphed in (re/screens/starmap.md §19.4).
@@ -2410,9 +2410,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if let Some(n) = o.spin_frames {
         panels.spin_frames = n;
     }
-    panels.modern = o.modern_hud && o.modern_research;
+    panels.modern = o.modern;
     // Ours (ADR 0077): under the modern HUD the fleet info and transfer panels are its own, the models cut into them.
-    let fleet_modern = o.modern_hud && (panels.transfer.is_some() || panels.info.is_some());
+    let fleet_modern = o.modern && (panels.transfer.is_some() || panels.info.is_some());
     let mut panel_tex = None;
     if o.panel.is_some() && !(panels.modern && panels.transfer.is_none() && panels.info.is_none()) {
         let size = [o.size.0 as f32, o.size.1 as f32];
@@ -2426,7 +2426,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let c = &view.camera;
         let (menus, _) = crate::starmap_menus::staged(&world.game.state, &sel, &panels, [c.x, c.y, c.zoom, c.rotate], o.planet_info, o.rop_menu, o.menu.as_deref(), o.mouse, t)?;
         let zoom = view.camera.zoom.max(if menus.info_on() { 599.0 } else { 0.0 });
-        hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], zoom, t, o.modern_hud);
+        hud.draw_starmap_menus(&mut frame, &menus, &panels, &world.game.state, &l.tables, [o.size.0 as f32, o.size.1 as f32], zoom, t, o.modern);
         staged = Some((menus, zoom));
     }
     if let Some(spec) = &o.top_menu {
@@ -2462,7 +2462,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let kind = if view_spot { crate::orders::view_pointer(&world.curr, &view.camera, m, &vc).unwrap_or(0) } else { 0 };
         hud.snapshot_tip_pointer(&mut frame, [o.size.0 as f32, o.size.1 as f32], m, tip.map(|t| t.text).as_deref(), kind, 0);
     }
-    let rgba = if o.modern_hud {
+    let rgba = if o.modern {
         let size = [o.size.0 as f32, o.size.1 as f32];
         let (menus, zoom) = staged.unwrap_or_default();
         let mut mv = hud.modern_view(&world.game.state, &l.tables, &world.ui, &view, &world.prev, &world.curr, &sel, o.alpha, t, &panels, &menus, None);

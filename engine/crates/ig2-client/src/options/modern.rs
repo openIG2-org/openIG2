@@ -270,18 +270,7 @@ pub fn describe(key: &str) -> &'static str {
         "SmoothGlows" => "Soft, round glows and stars on the starmap and the backgrounds at any resolution.",
         "BattleEffects" => "Sparks, shock waves, smoke and glowing shots on top of the battles' own effects.",
         "UiScale" => "The size of the remake's own pages and panels; they grow with the window.",
-        "ModernStarmapHud" => "The starmap's bar, info box, minimap and camera buttons as clear modern panels; off = the original's.",
-        "ModernGameMenu" => "Esc's in-game menu with saving, loading and every setting as a modern page; off = the original's.",
-        "ModernResearch" => "The research screen and the starmap's production view as modern panels; off = the original's.",
-        "ModernColony" => "The colony's build menu, info card, buttons, radar and ground war panels as modern panels; off = the original's.",
-        "ModernMessages" => "The messages screen's inbox, talking head, typed text and answers as modern panels; off = the original's.",
-        "ModernInfo" => "The info screen's empires, sortable planet and fleet list, details, money, charts and star log as modern panels; off = the original's.",
-        "ModernCursors" => "Sharp pointers in the design's colours, animated, with a modern UI theme; off = the original's.",
-        "ModernDesign" => "The ship and vehicle design screen as modern panels around the turning hull; off = the original's.",
-        "ModernDiplomacy" => "The diplomacy screen's contacts, empire card, proposal menus and dialogue as modern panels around the ring; off = the original's.",
-        "ModernSpy" => "The spy screen's agent card, skills, missions and buttons as modern panels under the agents; off = the original's.",
-        "ModernTrade" => "The trade screen's offers, order bar and shipments as modern panels around the turning model; off = the original's.",
-        "ModernMainMenu" => "The main menu as a modern grouped menu with Continue; off = the original's rings.",
+        "Interface" => "Every screen in the modern panels and pages, or in the original's look; switches at once.",
         "MenuNavigation" => "A grouped main menu with Continue; Back, Esc or right click on every menu screen.",
         _ => "",
     }
@@ -426,7 +415,7 @@ impl Modern {
         Self::set(o, k, v);
     }
 
-    fn set_tab(&mut self, t: Tab) {
+    pub(crate) fn set_tab(&mut self, t: Tab) {
         self.tab = t;
         self.focus = 0;
         self.capture = None;
@@ -1730,7 +1719,7 @@ mod tests {
         for t in ["Saving here overwrites the old save.", "just now", "{} minutes ago", "{} hours ago", "{} days ago", "Pause", "OPTIONS"] {
             assert!(crate::tr::has(t), "{t}");
         }
-        for t in ["Multiplayer: no loading; only the host saves.", "Quit to the main menu? Play since the last save is lost.", "Exit the game? Play since the last save is lost.", describe("ModernGameMenu")] {
+        for t in ["Multiplayer: no loading; only the host saves.", "Quit to the main menu? Play since the last save is lost.", "Exit the game? Play since the last save is lost.", describe("Interface")] {
             assert!(crate::tr::has(t), "{t}");
         }
         for g in [Game::Load, Game::Save, Game::Quit, Game::Exit, Game::Continue, Game::Options, Game::Help] {

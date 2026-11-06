@@ -11,13 +11,13 @@ impl App {
 
     /// Ours (ADR 0065): the modern starmap HUD is up (its option on, the starmap shown with nothing over it).
     pub(super) fn modern_up(&self) -> bool {
-        self.display.modern_starmap && self.nothing_over() && self.colony.is_none() && self.overlay.is_none() && self.view.is_some()
+        self.display.modern && self.nothing_over() && self.colony.is_none() && self.overlay.is_none() && self.view.is_some()
     }
 
     /// Ours (ADR 0070): the modern colony screen is up (its option on, the colony shown with nothing over it; the planet
     /// info mode's long info is its own panel, ADR 0074).
     pub(super) fn colony_modern_up(&self) -> bool {
-        self.display.modern_colony && self.nothing_over() && self.overlay.is_none() && self.world.colony_curr.is_some() && self.colony.is_some()
+        self.display.modern && self.nothing_over() && self.overlay.is_none() && self.world.colony_curr.is_some() && self.colony.is_some()
     }
 
     /// Ours (ADR 0078): the modern main menu's page is up (it sees the pointer; a press over its panel is its own).
@@ -27,7 +27,7 @@ impl App {
 
     /// Ours (ADR 0078): the help screen as the modern page (with the modern in-game menu).
     pub(super) fn help_modern_up(&self) -> bool {
-        self.display.modern_menu && self.help.is_some()
+        self.display.modern && self.help.is_some()
     }
 
     /// Ours (ADR 0078): the statistics screen as the modern page (with the modern main menu).
@@ -42,7 +42,7 @@ impl App {
 
     /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).
     pub(super) fn info_modern_up(&self) -> bool {
-        self.display.modern_info && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Info) && self.hud.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Info) && self.hud.is_some()
     }
 
     /// The modern info screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the classic
@@ -103,7 +103,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern messages screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn messages_modern_up(&self) -> bool {
-        self.display.modern_messages && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Messages) && self.hud.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Messages) && self.hud.is_some()
     }
 
     /// The modern messages screen's acts of its last frame: the bar's as the starmap HUD's, the rest as the original's
@@ -143,7 +143,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern diplomacy screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn diplomacy_modern_up(&self) -> bool {
-        self.display.modern_diplomacy && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Diplomacy) && self.diplomacy.is_some() && self.hud.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Diplomacy) && self.diplomacy.is_some() && self.hud.is_some()
     }
 
     /// Ours (ADR 0076): one of the modern diplomacy, spy or trade screens is up; their panels own the whole screen.
@@ -153,7 +153,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern trade screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn trade_modern_up(&self) -> bool {
-        self.display.modern_trade && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Trade) && self.trade.is_some() && self.hud.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Trade) && self.trade.is_some() && self.hud.is_some()
     }
 
     /// The modern trade screen's acts of its last frame: the bar's as the starmap HUD's, the rest through the
@@ -180,7 +180,7 @@ impl App {
 
     /// Ours (ADR 0076): the modern spy screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn spy_modern_up(&self) -> bool {
-        self.display.modern_spy && self.spy.is_some() && self.front.is_none() && self.spacewar.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
+        self.display.modern && self.spy.is_some() && self.front.is_none() && self.spacewar.is_none() && self.help.is_none() && self.options.is_none() && self.hud.is_some()
     }
 
     /// The modern spy screen's acts of its last frame: the bar's as the starmap HUD's, the arrows as the keys, the
@@ -253,17 +253,17 @@ impl App {
 
     /// Ours (ADR 0071): the modern research screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn research_modern_up(&self) -> bool {
-        self.display.modern_research && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Research) && self.research.is_some()
     }
 
     /// Ours (ADR 0075): the modern design screen is up (its option on, the screen shown with nothing over it).
     pub(super) fn design_modern_up(&self) -> bool {
-        self.display.modern_design && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Design) && self.design.is_some()
+        self.display.modern && self.nothing_over() && self.overlay == Some(crate::ui::Screen::Design) && self.design.is_some()
     }
 
     /// Ours (ADR 0071): the modern production view is up (under the modern starmap HUD).
     pub(super) fn production_modern_up(&self) -> bool {
-        self.modern_up() && self.display.modern_research && self.panels.production_open()
+        self.modern_up() && self.panels.production_open()
     }
 
     /// The pointer is over one of the modern HUD's panels (its last frame's).
@@ -313,7 +313,7 @@ impl App {
     pub(super) fn production_modern_apply(&mut self) {
         use crate::production_modern::Act;
         let up = self.production_modern_up();
-        self.panels.modern = self.modern_up() && self.display.modern_research;
+        self.panels.modern = self.modern_up();
         let sel = self.selection();
         if !up || self.starmap_locked() {
             self.production_acts.clear();
@@ -488,7 +488,7 @@ impl App {
 
     /// Ours (ADR 0077): the modern battle HUD is up (the battle shown with nothing over it, the modern HUD's option).
     pub(super) fn battle_modern_up(&self) -> bool {
-        self.display.modern_starmap && self.spacewar.is_some() && self.front.is_none() && self.options.is_none() && self.help.is_none()
+        self.display.modern && self.spacewar.is_some() && self.front.is_none() && self.options.is_none() && self.help.is_none()
     }
 
     /// Ours (ADR 0077, 0074): the modern fleet info, vehicles' or transfer panel is up (under the modern starmap HUD).

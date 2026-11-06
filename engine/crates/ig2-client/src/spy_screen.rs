@@ -1399,11 +1399,11 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, wo
     v.acttime = o.acttime;
     v.advance(r, &l.install, &d, o.ui_frames.max(1) as u64, t);
     let size = [o.size.0 as f32, o.size.1 as f32];
-    v.modern = o.modern_spy;
-    hud.modern_bar = o.modern_spy;
+    v.modern = o.modern;
+    hud.modern_bar = o.modern;
     let mut frame = v.build(hud, &d, size, l.install.lang() == ig2_formats::text::Lang::Hu);
     hud.draw(&mut frame, size, &world.ui, &l.tables, crate::ui::Screen::Spy, t);
-    let rgba = if o.modern_spy {
+    let rgba = if o.modern {
         let page = crate::spy_modern::view(hud, &world.game.state, &l.tables, &world.ui, &v, &d, size, None, t);
         let mut st = crate::spy_modern::State::default();
         crate::render::page_over(o, &l.install, r, &frame, hud, t, |ctx| {

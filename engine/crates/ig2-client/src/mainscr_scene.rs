@@ -668,8 +668,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let file = ig2_formats::options::Options::load();
     s.settings = file.int(crate::display::MENU_SETTINGS) != Some(0);
     s.flow = file.int(crate::menu_flow::KEY) == Some(1);
-    // Ours (ADR 0078): the modern main menu with `--modern-menu` (scripts compared with the exe keep the rings).
-    s.modern = o.modern_menu;
+    // Ours (ADR 0078): the modern main menu with `--modern` (scripts compared with the exe keep the rings).
+    s.modern = o.modern;
     s.flow |= s.modern;
     s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());
     s.continue_line = s.modern.then(crate::mainscr_modern::continue_line).flatten();

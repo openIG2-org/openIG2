@@ -7,7 +7,7 @@
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
-//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--ui-scale P] [--battle-effects] [--smooth-glows] [--modern-hud] [--modern-menu] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
+//!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--ui-scale P] [--battle-effects] [--smooth-glows] [--modern] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
 //!           `--reveal` draws the fleets the human doesn't see too; `--colony P` draws planet P's colony screen
 //!           (`--colony-cam X,Y,ZOOM,PITCH,ROTATE` moves its camera); `--screen info|messages|research [--chart C]
@@ -196,17 +196,9 @@ pub struct Options {
     pub battle_effects: bool,
     /// `--smooth-glows`: the glows and particles without a texel grid (ADR 0064; else the settings file's `SmoothGlows`).
     pub smooth_glows: bool,
-    /// `--modern-hud`: the starmap's modern egui HUD (ADR 0065; snapshots draw the original's without it).
-    pub modern_hud: bool,
-    /// `--modern-menu`: the Options screen as the modern in-game menu (ADR 0067; snapshots draw the original's without it).
-    pub modern_menu: bool,
-    /// `--modern-colony`: the colony snapshot with the modern panels (ADR 0070).
-    pub modern_colony: bool,
-    /// `--modern-info`: the info screen snapshot with the modern panels (ADR 0072).
-    pub modern_info: bool,
-    pub modern_messages: bool,
-    /// `--modern-research`: the research screen and the production view as ADR 0071's modern panels.
-    pub modern_research: bool,
+    /// `--modern` (or any old `--modern-<screen>`): the modern interface on every screen (ADR 0082; snapshots draw the
+    /// original's without it).
+    pub modern: bool,
     /// `--multiplayer`: the main menu opens on the multiplayer connection page (ADR 0041).
     pub multiplayer: bool,
     /// `--background classic|live`: the game behind the overlay screens (ADR 0015; else the settings file's
@@ -247,14 +239,8 @@ pub struct Options {
     pub stage_win: Option<u32>,
     /// `--stage-queue`: the snapshot's selected planet gets a production queue (`starmap_panels::stage_queue`).
     pub stage_queue: bool,
-    /// `--modern-design [--design-edit K]`: the design screen's modern panels (ADR 0075), modifying the chosen design
-    /// with pod K's tech list open.
-    pub modern_design: bool,
-    pub modern_diplomacy: bool,
     /// `--dip-pick M,R;M,R…`: the diplomacy snapshot picks this menu path first (the modern page's replayed press).
     pub dip_pick: Option<Vec<(usize, usize)>>,
-    pub modern_spy: bool,
-    pub modern_trade: bool,
     pub design_edit: Option<usize>,
     /// `--design-row N`: the list's row chosen first.
     pub design_row: Option<usize>,
@@ -383,12 +369,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         modern_lighting: false,
         battle_effects: false,
         smooth_glows: false,
-        modern_hud: false,
-        modern_menu: false,
-        modern_colony: false,
-        modern_info: false,
-        modern_messages: false,
-        modern_research: false,
+        modern: false,
         multiplayer: false,
         background: None,
         texts: None,
@@ -409,11 +390,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         trade_cheat: false,
         stage_win: None,
         stage_queue: false,
-        modern_design: false,
-        modern_diplomacy: false,
         dip_pick: None,
-        modern_spy: false,
-        modern_trade: false,
         design_edit: None,
         design_row: None,
         research_pick: None,
@@ -497,12 +474,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--sharp-ui" => o.sharp_ui = true,
             "--battle-effects" => o.battle_effects = true,
             "--smooth-glows" => o.smooth_glows = true,
-            "--modern-hud" => o.modern_hud = true,
-            "--modern-menu" => o.modern_menu = true,
-            "--modern-colony" => o.modern_colony = true,
-            "--modern-info" => o.modern_info = true,
-            "--modern-messages" => o.modern_messages = true,
-            "--modern-research" => o.modern_research = true,
+            "--modern" | "--modern-hud" | "--modern-menu" | "--modern-colony" | "--modern-info" | "--modern-messages" | "--modern-research" | "--modern-design" | "--modern-diplomacy" | "--modern-spy" | "--modern-trade" => o.modern = true,
             "--sharp-text" => o.sharp_text = true,
             "--theme" => o.theme = Some(val()?),
             "--upscale" => {
@@ -551,14 +523,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--trade-cheat" => o.trade_cheat = true,
             "--watch" => o.watch = Some(PathBuf::from(val()?)),
             "--stage-queue" => o.stage_queue = true,
-            "--modern-design" => o.modern_design = true,
-            "--modern-diplomacy" => o.modern_diplomacy = true,
             "--dip-pick" => {
                 let steps = val()?.split(';').map(|s| s.split_once(',').and_then(|(m, r)| Some((m.trim().parse().ok()?, r.trim().parse().ok()?)))).collect::<Option<Vec<_>>>();
                 o.dip_pick = Some(steps.ok_or("--dip-pick M,R;M,R")?);
             }
-            "--modern-spy" => o.modern_spy = true,
-            "--modern-trade" => o.modern_trade = true,
             "--design-row" => o.design_row = Some(val()?.parse().map_err(|e| format!("--design-row: {e}"))?),
             "--research-pick" => {
                 let (a, f) = val()?.split_once(',').and_then(|(a, f)| Some((a.trim().parse().ok()?, f.trim().parse().ok()?))).ok_or("--research-pick A,F")?;

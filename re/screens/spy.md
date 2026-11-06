@@ -308,7 +308,7 @@ then does `SpyEsemenyEllenoriz` pick the next report. The exe changes the queue 
 is unchanged; `spy_screen::tests::a_hire_in_flight_keeps_the_dialog_until_it_lands`).
 
 ## 8. Client status
-A modern page (`spy_modern.rs`, option `ModernSpy`, on by default) acts through this screen's code (ADR 0076); off = the classic screen described below.
+A modern page (`spy_modern.rs`, the Modern interface (`Interface`, default)) acts through this screen's code (ADR 0076); off = the classic screen described below.
 `ig2-client::spy_screen` (state, input, tooltips `SpyScreen::tooltip`; `spy_screen/draw.rs` the 2D pass) and
 `spy_scene` (the 3D pass; the engine's lit bytes mapped into the sRGB frame by `spy_scene::gamma`); orders
 `ig2_net::Command::Spy`; sounds per audio.md §6.4. Drawn, driven and compared: the carousel and both panels match the
