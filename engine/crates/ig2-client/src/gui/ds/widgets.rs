@@ -135,12 +135,13 @@ pub struct Plate<'a> {
     focused: bool,
     size: Vec2,
     font: Font,
+    pad: f32,
 }
 
 impl<'a> Plate<'a> {
     pub const FONT: Font = Font { size: 20.0, line: 24.0, weight: Weight::Medium, tracking: 0.16, upper: false, lcd: false };
     pub fn new(text: &'a str) -> Self {
-        Self { text, sub: None, primary: false, focused: false, size: Vec2::new(0.0, 44.0), font: Self::FONT }
+        Self { text, sub: None, primary: false, focused: false, size: Vec2::new(0.0, 44.0), font: Self::FONT, pad: SPACE[3] }
     }
     pub fn primary(mut self, on: bool) -> Self {
         self.primary = on;
@@ -167,11 +168,16 @@ impl<'a> Plate<'a> {
         self.font = f;
         self
     }
+    /// The room at each side of the label (24; a small plate's, the boards' lamps: 8).
+    pub fn pad(mut self, p: f32) -> Self {
+        self.pad = p;
+        self
+    }
 }
 
 impl Widget for Plate<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
-        let natural = Text::new(self.text, self.font).layout(ui.ctx(), f32::INFINITY).width + 2.0 * SPACE[3];
+        let natural = Text::new(self.text, self.font).layout(ui.ctx(), f32::INFINITY).width + 2.0 * self.pad;
         // At least the set width (CSS `min-width`), wider for the label while the row has room, then the label is cut.
         let w = natural.max(self.size.x).min(ui.available_width().max(self.size.x));
         let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, self.size.y), Sense::click());
@@ -183,7 +189,7 @@ impl Widget for Plate<'_> {
         if l.focus {
             focus_mark(p, rect, RADIUS_PANEL as f32, 2.0);
         }
-        let inner = rect.shrink2(Vec2::new(SPACE[2], 0.0));
+        let inner = rect.shrink2(Vec2::new(SPACE[2].min(self.pad), 0.0));
         let cut = match self.sub {
             None => Text::new(self.text, self.font).center().shrink(self.font.size * 0.75).color(ink(l.on, k.ink)).paint_only(ui, inner).cut,
             Some(sub) => {
