@@ -289,7 +289,11 @@ fn grab(ui: &Ui, resp: &egui::Response, held: &mut bool) -> Option<Press> {
 /// The money panel's and the limit's LCDs: their digits' size and the digits they make room for.
 const LCD_SIZE: f32 = 20.0;
 const LCD_CHARS: usize = 3;
-const RING: f32 = 112.0;
+const RING: f32 = 128.0;
+/// The ring's dark window: its radial stop (on the half-diagonal, as `ds::radial` measures) and its share of the
+/// ring's diameter; the leader is clipped round to a hair inside it.
+const WINDOW_STOP: f32 = 0.58;
+const WINDOW: f32 = WINDOW_STOP * std::f32::consts::SQRT_2 - 0.03;
 const RING_GAP: f32 = 22.0;
 const MONEY_W: f32 = 400.0;
 const EMPIRE_W: f32 = 960.0;
@@ -366,20 +370,20 @@ fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, ac
             let fade = if row.is_some() { 1.0 } else { 0.45 };
             let p = ui.painter();
             ds::shadow(p, ring.translate(vec2(0.0, 3.0)), 255, 0, 10, 0, Color32::from_black_alpha((180.0 * fade) as u8));
-            let stops = [(0.0, Color32::BLACK), (0.58, Color32::BLACK), (0.59, k.metal_shadow), (0.65, k.metal_light), (0.74, k.metal), (1.0, k.metal_dark)].map(|(t, c)| (t, c.gamma_multiply(fade)));
+            let stops = [(0.0, Color32::BLACK), (WINDOW_STOP, Color32::BLACK), (WINDOW_STOP + 0.01, k.metal_shadow), (WINDOW_STOP + 0.07, k.metal_light), (WINDOW_STOP + 0.16, k.metal), (1.0, k.metal_dark)].map(|(t, c)| (t, c.gamma_multiply(fade)));
             ds::radial(p, ring, 255, [0.5, 0.5], &stops);
             ds::relief(p, ring, 255);
             if let Some(r) = row {
                 // The leader in the ring's dark window, lit up a little under the pointer.
                 if let Some(t) = st.pics.as_ref().and_then(|p| p.head(r.head)) {
-                    // The board's head over the ring, a little above the centre (its chin on the ring's dark window).
-                    let face = Rect::from_center_size(ring.center() - vec2(0.0, d * 0.04), vec2(d * 0.94, d * 0.94));
+                    // The head clipped round to the ring's dark window: nothing of it over the metal.
+                    let face = Rect::from_center_size(ring.center(), vec2(d * WINDOW, d * WINDOW));
                     let c = Color32::from_gray((215.0 + 40.0 * hot.max(on as u8 as f32)) as u8);
-                    p.add(egui::epaint::RectShape::filled(face, d * 0.12, c).with_texture(t.id(), HEAD_UV));
+                    p.add(egui::epaint::RectShape::filled(face, 255, c).with_texture(t.id(), HEAD_UV));
                 } else {
                     p.circle_filled(ring.center(), d * 0.22, r.race);
                 }
-                p.circle_stroke(ring.center(), d * 0.41, Stroke::new(2.0f32, r.race.gamma_multiply(0.35 + 0.4 * hot)));
+                p.circle_stroke(ring.center(), d * WINDOW / 2.0 + 1.0, Stroke::new(2.0f32, r.race.gamma_multiply(0.35 + 0.4 * hot)));
             }
             if on {
                 p.circle_stroke(ring.center(), d / 2.0 + 1.0, Stroke::new(2.0f32, k.ink_silver));
