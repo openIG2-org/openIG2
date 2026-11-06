@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern colony, production, research and ship design screens line up with their design boards: the colony's planet info settings use the shared drop-downs and its plates are equal, the production lamps and research switches are the shared small plates, research's category groups and tables sit on the boards' columns, and the ship name field is the shared text field (issue #75).
 - Modern starmap and colony screens share one radar look (cast-metal plate, black well, keys centred under it); the starmap's eight camera keys sit in one even row (issue #67).
 - Modern starmap: Production is its own round button with its label under it, right of the selection card, instead of a small key squeezed into the card's button row (issue #66).
 - Modern starmap's selection card (bottom left) matches its design board: solid navy glass, board-sized plates, the globe and its two ratios centred on the text, richness shown with a hammer and habitability with people (issue #64).
