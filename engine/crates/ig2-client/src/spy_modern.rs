@@ -108,6 +108,9 @@ pub struct State {
 /// The board's measures (1920 × 1080).
 const PANEL_TOP: f32 = 520.0;
 const PANEL_W: f32 = 600.0;
+/// The panels' insides, the card's label column.
+const PAD: egui::Vec2 = egui::Vec2::new(28.0, 20.0);
+const LABEL_W: f32 = 136.0;
 
 /// A point of the original's 640 × 480 screen in this page's points.
 fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
@@ -161,17 +164,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
     }
     let top = PANEL_TOP * g;
-    let left = Rect::from_min_size(pos2(ds::BOARD_EDGE, top), vec2(PANEL_W.min(w * 0.32), h - 40.0 * g - top));
+    let bottom = ds::board_bottom(ctx);
+    let left = Rect::from_min_max(pos2(ds::BOARD_EDGE, top), pos2(ds::BOARD_EDGE + PANEL_W.min(w * 0.32), bottom));
     ds::place(ctx, "ksh-agent", left, |ui| agent_panel(ui, v, left.size(), &mut acts));
     let right_w = PANEL_W.min(w * 0.32);
-    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 52.0), vec2(ds::EXIT_W, 52.0));
-    let right = Rect::from_min_max(pos2(w - ds::BOARD_EDGE - right_w, top), pos2(w - ds::BOARD_EDGE, exit.top() - 28.0 * g));
+    let right = Rect::from_min_max(pos2(w - ds::BOARD_EDGE - right_w, top), pos2(w - ds::BOARD_EDGE, bottom - ds::FOOT_H - 28.0 * g));
     ds::place(ctx, "ksh-plan", right, |ui| plan_panel(ui, v, st, right.size(), &mut acts));
-    ds::place(ctx, "ksh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(52.0)).clicked() {
-            acts.push(Act::Bar(sm::Act::Screen(2)));
-        }
-    });
+    if ds::exit_plate(ctx, "ksh-exit", &v.labels.exit, true) {
+        acts.push(Act::Bar(sm::Act::Screen(2)));
+    }
     // The kill list's question (hot-spot 3) as a confirm box: row 1 yes, row 2 no.
     if st.kill {
         let rows = v.fields.iter().find(|f| f.0 == 3).map(|f| &f.1[..]).unwrap_or(&[]);
@@ -191,19 +192,18 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
 /// The agent's card: name, race, experience and rank, the skills with their + buttons, the points, the count.
 fn agent_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
-    let inner = rect.shrink2(vec2(28.0, 20.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
     if let Some(a) = &v.agent {
-        let mut y = inner.top();
+        let mut rows = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+        rows.spacing_mut().item_spacing.y = 6.0;
         for (i, (l, val)) in a.rows.iter().enumerate() {
-            let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), 26.0));
-            let base = ds::fit::baseline(r, Font::BODY.sized(19.0));
-            Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 130.0));
-            let f = if i == 0 { Font::BODY.sized(19.0) } else { Font::DATA.sized(17.0) };
-            Text::new(val, f).shrink(12.0).baseline(base).color(if i == 0 { k.ink } else { k.info }).paint(ui, r.with_min_x(r.left() + 136.0));
-            y += 26.0;
+            // The name in the body face, on the table's baseline.
+            let r = ds::kv(&mut rows, l, if i == 0 { "" } else { val }, ds::Tone::Info, LABEL_W).rect;
+            if i == 0 {
+                Text::new(val, Font::BODY.sized(19.0)).shrink(12.0).baseline(ds::fit::baseline(r, Font::DATA)).color(k.ink).paint(ui, r.with_min_x(r.left() + LABEL_W));
+            }
         }
+        let mut y = inner.top() + a.rows.len() as f32 * 26.0;
         y += 10.0;
         ui.painter().hline(inner.x_range(), y, egui::Stroke::new(1.0f32, k.rim));
         y += 10.0;
@@ -226,11 +226,10 @@ fn agent_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
         if let Some(p) = &a.points {
             y += 6.0;
             let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), 30.0));
-            let base = ds::fit::baseline(r, Font::READOUT.sized(20.0));
-            Text::new(&v.labels.points, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 150.0));
-            let lcd = Rect::from_min_size(pos2(r.left() + 154.0, r.top()), vec2(48.0, 30.0));
-            ds::lcd_window(ui.painter(), lcd);
-            Text::new(p, Font::READOUT.sized(20.0)).center().color(k.lcd_ink).paint(ui, lcd);
+            let base = ds::fit::baseline(r, Font::LABEL);
+            Text::new(&v.labels.points, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + LABEL_W - 8.0));
+            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r.with_min_x(r.left() + LABEL_W)));
+            ds::lcd(&mut c, p, 20.0, 2);
         }
     }
     let foot = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 24.0), inner.max);
@@ -242,9 +241,7 @@ fn agent_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
 /// stacked, the buttons along the foot.
 fn plan_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
-    let inner = rect.shrink2(vec2(28.0, 20.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
     let foot = if v.buttons.is_empty() { 0.0 } else { 56.0 };
     let body = Rect::from_min_max(inner.min, pos2(inner.right(), inner.bottom() - foot));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
@@ -273,10 +270,7 @@ fn plan_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mu
                     Text::new(&l.label, Font::LABEL).shrink(10.0).color(k.ink_muted).show(ui, vec2(wdt, 20.0));
                 }
                 (false, None) => {
-                    let (r, _) = ui.allocate_exact_size(vec2(wdt, 26.0), Sense::hover());
-                    let base = ds::fit::baseline(r, Font::DATA.sized(17.0));
-                    Text::new(&l.label, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + wdt * 0.45));
-                    Text::new(&l.value, Font::DATA.sized(17.0)).shrink(12.0).baseline(base).color(k.info).paint(ui, r.with_min_x(r.left() + wdt * 0.47));
+                    ds::kv(ui, &l.label, &l.value, ds::Tone::Info, wdt * 0.47);
                 }
             }
         }
