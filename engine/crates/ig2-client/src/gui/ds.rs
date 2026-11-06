@@ -9,6 +9,7 @@
 pub mod cursor;
 pub mod fit;
 pub mod gallery;
+pub mod svg;
 pub mod widgets;
 
 pub use fit::{baseline, text, Text};

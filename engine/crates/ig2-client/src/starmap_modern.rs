@@ -1009,7 +1009,7 @@ fn rop_icon(n: i32) -> ds::Icon {
     match n {
         1 => Icon::Tanks,
         2 => Icon::Factory,
-        4 => Icon::Building,
+        4 => Icon::Colony,
         0xd => Icon::Split,
         0xf => Icon::Info,
         n => Icon::Rop(n),

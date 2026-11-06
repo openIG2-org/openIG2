@@ -45,7 +45,8 @@ with all their states, so that every screen built on it looks the same and fits 
    focus (`focused(true)` for a page with its own navigation, ADR 0062 §4): `Plate` (the command plate; `primary`,
    `sub`), `menu` with `MenuStyle::MENU` / `RAIL` (main menu items, a page's tab rail; the selected plate glides),
    `tabs` (a tab strip; too many share the width), `IconKey` with `Icon` or `Glyph` and `key_group` (the metal keys,
-   speed keys lit in LCD ink), `round_button`, `ListRow` and `row_back` (list rows, a page's own rows), `option_row`
+   speed keys lit in LCD ink; `Icon` draws from `gui/icons/*.svg` where it has a file: Lucide's icons, ISC, and ours in
+   its style, a 24 grid stroked 2 wide, read and stroked by `ds::svg` in the key's tint), `round_button`, `ListRow` and `row_back` (list rows, a page's own rows), `option_row`
    (a settings row: label left, control right, the label cut to the room left), `toggle` (two words), `segmented`,
    `stepper`, `slider`, `key_cap`, `lcd`, `bar` (progress and charge), `badge` with `Tone`, `kv` (a data table line),
    `title_plate`, `separator`, `heading_label`, `panel` / `paint_panel` with `PanelKind` (glass, deep, raised, frame),

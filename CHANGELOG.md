@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern interface: one simple line-icon look on the round buttons, the starmap's radial menu and the camera keys (Lucide's icons, with a tank, a colony dome and a side view drawn to match).
 - Modern production screen: hovering a slot or its Design button no longer shows a "change product" tooltip (issue #101).
 - Start: the window stays hidden until it is black, so no white empty window shows while the game loads.
 - Modern colony screen: the planet's card at the bottom left is the starmap's selection card (same size and layout) with a round planet instead of a squashed one (issue #87).
