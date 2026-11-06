@@ -152,7 +152,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 240.0).max(26.0 * 4.0), &mut acts));
     });
-    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(ds::EDGE, list.response.rect.bottom() + 16.0)).fade_in(false).show(ctx, |ui| {
+    let auto_top = (list.response.rect.bottom() + 16.0).max(top + 272.0);
+    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(ds::EDGE, auto_top)).fade_in(false).show(ctx, |ui| {
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
     });
     egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
@@ -224,9 +225,9 @@ fn auto(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
         ds::rim(p, r, ds::RADIUS_PLATE, k.rim);
         let f = Font::DATA.tracking(0.08);
         Text::new(name, f).baseline(ds::fit::baseline(r, f)).paint(ui, r.shrink2(vec2(10.0, 0.0)).with_max_x(r.right() - 90.0));
-        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.right() - 10.0 - 64.0, r.top() + 6.0), pos2(r.right() - 10.0, r.bottom() - 6.0))));
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.right() - 10.0 - 90.0, r.top() + 6.0), pos2(r.right() - 10.0, r.bottom() - 6.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
         let label = if *on { &v.labels.on } else { &v.labels.off };
-        let b = c.add(Plate::new(label).width(64.0).height(28.0).primary(*on).font(Plate::FONT.sized(13.0).tracking(0.12)));
+        let b = c.add(Plate::new(label).width(56.0).pad(10.0).height(28.0).primary(*on).font(Plate::FONT.sized(13.0).tracking(0.12)));
         if ds::tip(b, &v.tips[3 + i]).clicked() {
             acts.push(Act::Auto(i));
         }
@@ -252,14 +253,14 @@ fn info(ui: &mut Ui, v: &View, room: f32, acts: &mut Vec<Act>) {
                 ds::tip(resp, &body);
             }
         }
-        // The table (`.ig-table`, 120 for the labels, 6 between rows).
+        // The table (`.ig-table`, 120 for the labels and 16 before the values, 6 between rows).
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let row = |ui: &mut Ui, label: &str, h: f32| {
                 let (r, _) = ui.allocate_exact_size(vec2(w, h), Sense::hover());
                 let first = Rect::from_min_size(r.min, vec2(w, 20.0));
-                Text::new(label, Font::LABEL).shrink(9.0).color(k.ink_muted).baseline(ds::fit::baseline(first, Font::DATA)).paint(ui, first.with_max_x(r.left() + 112.0));
-                r.with_min_x(r.left() + 120.0)
+                Text::new(label, Font::LABEL).shrink(9.0).color(k.ink_muted).baseline(ds::fit::baseline(first, Font::DATA)).paint(ui, first.with_max_x(r.left() + 120.0));
+                r.with_min_x(r.left() + 136.0)
             };
             for (label, value) in &stats {
                 let r = row(ui, label, 22.0);
@@ -377,9 +378,14 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
         ui.spacing_mut().item_spacing.x = 12.0;
         let room = width - ds::EXIT_W - 3.0 * 12.0;
         let h = 8.0 + 16.0 + 6.0 + 2.0 * TILE_H + 6.0 + 10.0;
+        let flex: Vec<f32> = GROUPS.iter().map(|ns| ns.len().div_ceil(2) as f32).collect();
+        let least: Vec<f32> = GROUPS.iter().map(|ns| {
+            let need = needs(ui.ctx(), v, ns);
+            need.iter().sum::<f32>() + 6.0 * (need.len() - 1) as f32 + 20.0
+        }).collect();
+        let widths = flex_widths(&flex, &least, room);
         for (g, ns) in GROUPS.iter().enumerate() {
-            let cols = ns.len().div_ceil(2);
-            let gw = room * cols as f32 / 6.0;
+            let gw = widths[g];
             let (r, _) = ui.allocate_exact_size(vec2(gw, h), Sense::hover());
             let p = ui.painter();
             p.rect_filled(r, ds::RADIUS_PANEL, k.glass_frame);
@@ -413,8 +419,15 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
 /// A group's column widths (`.cats`: auto columns, two rows): each its widest tile's content, the room left shared
 /// out evenly; short of room, shrunk in proportion (the names then fit by shrinking).
 fn columns(ctx: &egui::Context, v: &View, ns: &[usize], width: f32) -> Vec<f32> {
+    let need = needs(ctx, v, ns);
+    let cols = need.len();
+    share(&need, width - 6.0 * (cols - 1) as f32)
+}
+
+/// A group's columns' natural widths: each its widest tile's padding, name, gap and count (and the running dot).
+fn needs(ctx: &egui::Context, v: &View, ns: &[usize]) -> Vec<f32> {
     let cols = ns.len().div_ceil(2);
-    let need: Vec<f32> = (0..cols)
+    (0..cols)
         .map(|c| {
             ns[2 * c..(2 * c + 2).min(ns.len())]
                 .iter()
@@ -426,8 +439,22 @@ fn columns(ctx: &egui::Context, v: &View, ns: &[usize], width: f32) -> Vec<f32> 
                 })
                 .fold(0.0, f32::max)
         })
-        .collect();
-    share(&need, width - 6.0 * (cols - 1) as f32)
+        .collect()
+}
+
+/// `room` shared by `flex` (CSS `flex: n`, basis 0), none under its `least`: the floored ones keep it, the rest share
+/// what is left by their flex.
+fn flex_widths(flex: &[f32], least: &[f32], room: f32) -> Vec<f32> {
+    let mut fixed = vec![false; flex.len()];
+    loop {
+        let left = room - least.iter().zip(&fixed).filter(|(_, f)| **f).map(|(l, _)| l).sum::<f32>();
+        let total: f32 = flex.iter().zip(&fixed).filter(|(_, f)| !**f).map(|(x, _)| x).sum();
+        let w: Vec<f32> = (0..flex.len()).map(|i| if fixed[i] { least[i] } else { left * flex[i] / total.max(1e-3) }).collect();
+        match (0..flex.len()).find(|&i| !fixed[i] && w[i] < least[i]) {
+            Some(i) => fixed[i] = true,
+            None => return w,
+        }
+    }
 }
 
 /// Widths `need` in `room`: the room left shared out evenly; short of room, the narrow ones keep their width and the
@@ -522,6 +549,9 @@ mod tests {
     #[test]
     fn narrow_columns_keep_their_width() {
         assert_eq!(share(&[100.0, 200.0, 300.0], 660.0), vec![120.0, 220.0, 320.0]);
+        // 1616 by 3 : 2 : 1 with the third group floored at 277: 803.4 and 535.6 for the others.
+        let w = flex_widths(&[3.0, 2.0, 1.0], &[600.0, 400.0, 277.0], 1616.0);
+        assert!((w[2] - 277.0).abs() < 0.01 && (w[0] - 803.4).abs() < 0.01 && (w[1] - 535.6).abs() < 0.01, "{w:?}");
         assert_eq!(share(&[100.0, 200.0, 300.0], 450.0), vec![100.0, 175.0, 175.0]);
         assert_eq!(share(&[100.0, 100.0], 100.0), vec![50.0, 50.0]);
     }
