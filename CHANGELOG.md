@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern main menu: back from Settings or Load game the menu carries on where it was (its scene and music keep running) instead of starting over (issue #93).
 - Modern main menu: the mouse pointer is drawn over the menu panels and pages instead of behind them (issue #92).
 - Modern starmap: the selection card's tooltip lists its mouse actions one per row, each with a small left, right or both-buttons mouse, instead of one dense line; the shared look has this tooltip for any control with several mouse actions (issue #80).
 - Modern starmap: renaming a planet or fleet types into the selection card's own text field, without the classic rename text drawn behind and beside the card (issue #79).

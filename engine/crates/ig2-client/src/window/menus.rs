@@ -416,6 +416,9 @@ impl App {
                     }
                 }
             }
+            // Ours (ADR 0078): back from the modern menu's Settings or Load page the menu goes on where it was (its
+            // scene and music running), with only the page's transition; the classic one starts over as the original's.
+            Act::MainMenu if self.front.is_some() && self.display.modern => {}
             Act::MainMenu => {
                 // `Options_Kilep` under the tutorial: `TutorialStop(1)` (the music's duck back) before `ExitToMainScreen`.
                 if o.s.tutorial {
