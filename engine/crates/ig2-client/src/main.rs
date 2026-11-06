@@ -5,7 +5,9 @@
 //!           (re/screens/mainscr.md; its load ring opens the Options screen's slots, re/screens/options.md), the game of
 //!           `--save` at once, or a replay watched (ADR 0038 §6).
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
-//! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options [--ui-frames N] [--mouse X,Y] [--script S]`.
+//! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options|saves [--ui-frames N] [--mouse X,Y] [--script S]`
+//!           (`saves`: the modern save and load page on slot 1); `--screen lobby|lobby-room` the multiplayer pages
+//!           with sample rooms or a hosted room (offline).
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
 //!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--ui-scale P] [--battle-effects] [--smooth-glows] [--modern] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`
 //!           runs N sim ticks (default 0) and renders the frame `A` (0..1) of the way from tick N−1 to N;
