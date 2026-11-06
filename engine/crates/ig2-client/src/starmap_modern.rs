@@ -1091,18 +1091,13 @@ fn planet_list(ui: &egui::Ui, s: &Select, plate: Rect, current: &str) -> Vec<Lis
     let panel = Rect::from_min_size(pos2(plate.center().x - w / 2.0, plate.bottom() + 10.0), vec2(w, row_h * n + 12.0));
     let p = ui.painter();
     ds::shadow(p, panel, ds::RADIUS_PANEL, 8, 24, 0, Color32::from_black_alpha(204));
-    p.rect_filled(panel, ds::RADIUS_PANEL, k.void);
-    ds::paint_panel(p, panel, ds::PanelKind::Deep, 0.97);
+    ds::menu_back(p, panel);
     let font = Font::DATA.sized(16.0).tracking(0.08);
     let mut rows = Vec::new();
     for (i, r) in s.rows.iter().enumerate() {
         let row = Rect::from_min_size(panel.min + vec2(6.0, 6.0 + i as f32 * row_h), vec2(w - 12.0, row_h)).shrink2(vec2(0.0, 2.0));
         let hot = ds::hover_t(ui.ctx(), egui::Id::new(("smh-planets", i)), r.hovered);
-        if r.text == current {
-            ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
-            ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
-        }
-        ds::hover_rim(p, row.shrink(1.0), ds::RADIUS_PLATE, hot);
+        ds::row_back(ui, row, hot, r.text == current);
         Text::new(&r.text, font).color(k.ink).shrink(12.0).paint_only(ui, row.shrink2(vec2(16.0, 0.0)));
         // The drawn row reaches its whole height (the margins included).
         rows.push((row.expand2(vec2(6.0, 2.0)), [r.rect[0] + r.rect[2] / 2.0, r.rect[1] + r.rect[3] / 2.0]));
@@ -1194,23 +1189,15 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option
         None => b.max.x.max(b.min.x + widest + 16.0),
     };
     let panel = b.expand2(vec2(if width.is_some() { 4.0 } else { 8.0 }, 6.0));
-    // Opaque: the field and the plates under the list don't show through (the boards' menus).
-    p.rect_filled(panel, ds::RADIUS_PANEL, k.void);
-    ds::paint_panel(p, panel, ds::PanelKind::Deep, 0.97);
+    ds::menu_back(p, panel);
     for r in &s.rows {
         let mut row = rect(r.rect);
         row.max.x = b.max.x;
         let row = row.expand2(vec2(4.0, 0.0));
         // The field's value in the list's selected look, the row under the pointer with the bright rim (the boards'
         // menus); a menu without a value (the planet list) lights the pointer's row.
-        let hot = ds::hover_t(ui.ctx(), egui::Id::new(("smh-select", r.text.as_str())), r.hovered);
-        if current == Some(r.text.as_str()) || (current.is_none() && r.hovered) {
-            ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(46)), (1.0, Color32::from_white_alpha(5))]);
-            ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
-        }
-        if current.is_some() && hot > 0.0 {
-            ds::hover_rim(p, row.shrink(1.0), ds::RADIUS_PLATE, hot);
-        }
+        let hot = ds::hover_t(ui.ctx(), egui::Id::new(("smh-select", r.text.as_str())), r.hovered && current.is_some());
+        ds::row_back(ui, row, hot, current == Some(r.text.as_str()) || (current.is_none() && r.hovered));
         let inner = row.shrink2(vec2(6.0, 0.0));
         let base = crate::gui::ds::fit::baseline(inner, font);
         let w = Text::new(&r.text, font).color(k.ink).baseline(base).paint_only(ui, inner).width;

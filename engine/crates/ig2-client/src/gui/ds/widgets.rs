@@ -936,6 +936,13 @@ pub fn row_back(ui: &Ui, rect: Rect, hover: f32, selected: bool) {
     }
 }
 
+/// A drop-down list's or a menu's back: deep glass, opaque (the field and the plates under it don't show through,
+/// the boards' menus).
+pub fn menu_back(p: &egui::Painter, rect: Rect) {
+    p.rect_filled(rect, RADIUS_PANEL, tokens().void);
+    super::paint_panel(p, rect, super::PanelKind::Deep, 0.97);
+}
+
 /// A list row (`.ig-list li`: 26 high, 17-point text 8 from the edge), a value at its right (data style, info blue).
 pub struct ListRow<'a> {
     text: &'a str,
@@ -1632,7 +1639,7 @@ pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, 
     let list = egui::Area::new(id.with("rows")).order(egui::Order::Foreground).fixed_pos(r.left_bottom() + egui::vec2(0.0, 4.0)).show(ui.ctx(), |ui| {
         let hgt = (rows.len().max(1) as f32 * rh + 12.0).min(420.0);
         let (frame, _) = ui.allocate_exact_size(egui::vec2(size.x, hgt), Sense::hover());
-        super::paint_panel(ui.painter(), frame, super::PanelKind::Deep, 0.97);
+        menu_back(ui.painter(), frame);
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(frame.shrink(6.0)).layout(egui::Layout::top_down(Align::Min)));
         egui::ScrollArea::vertical().id_salt(id.with("scroll")).auto_shrink([false; 2]).show(&mut c, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
