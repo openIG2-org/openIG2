@@ -94,6 +94,9 @@ const CARD_PAD: egui::Vec2 = egui::Vec2::new(24.0, 20.0);
 const TEXT_PAD: egui::Vec2 = egui::Vec2::new(32.0, 24.0);
 /// The card's label column.
 const LABEL_W: f32 = 76.0;
+/// The inbox's title row and the gap under it (the board's first row 63 under the panel's top).
+const HEAD_H: f32 = 36.0;
+const LIST_GAP: f32 = 11.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
@@ -140,11 +143,11 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
 fn inbox_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let inner = ds::board_panel(ui, size, PanelKind::Deep, INBOX_PAD);
-    let head = Rect::from_min_size(inner.min, vec2(inner.width(), 40.0));
+    let head = Rect::from_min_size(inner.min, vec2(inner.width(), HEAD_H));
     let count_w = 130.0;
     Text::new(&v.labels.title, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, head.with_max_x(head.right() - count_w - 8.0));
     Text::new(&v.labels.count, Font::LABEL).right().shrink(10.0).color(k.ink_muted).paint(ui, head.with_min_x(head.right() - count_w));
-    let list = Rect::from_min_max(pos2(inner.left(), head.bottom() + 12.0), pos2(inner.right(), inner.bottom() - 30.0));
+    let list = Rect::from_min_max(pos2(inner.left(), head.bottom() + LIST_GAP), pos2(inner.right(), inner.bottom() - 30.0));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(egui::Layout::top_down(egui::Align::Min)));
     egui::ScrollArea::vertical().id_salt("mmh-rows").auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {
         ui.spacing_mut().item_spacing.y = ROW_GAP;
@@ -182,8 +185,11 @@ fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let inner = ds::board_panel(ui, size, PanelKind::Glass, CARD_PAD);
     let Some(o) = &v.open else { return };
-    Text::new(&o.subject, Font::HEADING).lines(2).color(k.ink).paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 52.0)));
-    let mut lines = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(inner.left(), inner.top() + 58.0), inner.max)).layout(egui::Layout::top_down(egui::Align::Min)));
+    // The subject (one or two lines), the table's lines 12 under it as the board's.
+    let subject = Text::new(&o.subject, Font::HEADING).lines(2).color(k.ink);
+    let sh = subject.layout(ui.ctx(), inner.width()).galley.size().y.max(Font::HEADING.line);
+    subject.paint(ui, Rect::from_min_size(inner.min, vec2(inner.width(), sh)));
+    let mut lines = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(inner.left(), inner.top() + sh + 12.0), inner.max)).layout(egui::Layout::top_down(egui::Align::Min)));
     lines.spacing_mut().item_spacing.y = 8.0;
     for (l, val) in [(&v.labels.sender, &o.sender), (&v.labels.date, &o.date)] {
         ds::kv(&mut lines, l, val, ds::Tone::Info, LABEL_W);
@@ -342,7 +348,7 @@ mod tests {
         let inbox = short[0];
         let (_, a) = run(&view("Tra"), Some(short[4].center()));
         assert!(a.contains(&Act::Leave), "{a:?}");
-        let (_, a) = run(&view("Tra"), Some(pos2(inbox.left() + 100.0, inbox.top() + 16.0 + 40.0 + 12.0 + 40.0)));
+        let (_, a) = run(&view("Tra"), Some(pos2(inbox.left() + 100.0, inbox.top() + INBOX_PAD.y + HEAD_H + LIST_GAP + 40.0)));
         assert!(a.contains(&Act::Row(0)), "{a:?}");
         let (_, a) = run(&view("Tra"), Some(short[3].center()));
         assert!(a.contains(&Act::Hurry), "{a:?}");
@@ -360,7 +366,7 @@ mod tests {
     fn rows_from_the_top_newest_at_the_bottom() {
         let (rects, _) = run(&with_rows("Tra", 2), None);
         let inbox = rects[0];
-        let list_top = inbox.top() + 16.0 + 40.0 + 12.0;
+        let list_top = inbox.top() + INBOX_PAD.y + HEAD_H + LIST_GAP;
         for (i, y) in [(0, list_top + 4.0), (1, list_top + ROW_H + ROW_GAP + 4.0)] {
             let (_, a) = run(&with_rows("Tra", 2), Some(pos2(inbox.left() + 100.0, y)));
             assert_eq!(a, [Act::Row(i)]);
