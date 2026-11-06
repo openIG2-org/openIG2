@@ -596,8 +596,11 @@ fn seat_saved(lobby: &mut LobbyHost, save: &MpSave, seated: &mut Vec<u8>) {
 
 /// The multiplayer screens while they are up.
 pub struct MpScreen {
-    /// Opened from the "inet" ring (the same screen: no internet matchmaking, ADR 0014 §4).
+    /// Opened from Internet: the browser lists the public rooms (the relay's list) and asks for it at once; from
+    /// Local network it lists the LAN's sessions. Saved games is the other tab of either.
     pub inet: bool,
+    /// The public list is to be asked for at the next tick (opened from Internet).
+    ask: bool,
     pub name: String,
     rules: [u8; 32],
     /// The enabled mods' fingerprint (zero without mods), to name a mods mismatch (ADR 0044 §4).
@@ -800,6 +803,7 @@ impl MpScreen {
     pub fn open(inet: bool, name: &str, rules: [u8; 32]) -> Self {
         Self {
             inet,
+            ask: inet,
             name: name.to_string(),
             rules,
             mods: [0; 32],
@@ -810,11 +814,11 @@ impl MpScreen {
             address: Field::new(MAX_ADDRESS),
             password: Field::new(MAX_FIELD),
             relay: Field::new(MAX_ADDRESS),
-            internet: None,
+            internet: inet.then(Vec::new),
             browsing: None,
             public: false,
             focus: Focus::Address,
-            line: if inet { words::INET.to_vec() } else { Vec::new() },
+            line: Vec::new(),
             lost: false,
             connecting: None,
             role: None,
@@ -1096,6 +1100,9 @@ impl MpScreen {
     /// back as [`Out::Start`].
     pub fn tick(&mut self, net: &mut dyn Net) -> Option<Out> {
         self.open = (self.open + 4.0).min(100.0);
+        if std::mem::take(&mut self.ask) {
+            self.refresh(net);
+        }
         if let Some(rx) = &self.browsing {
             match rx.try_recv() {
                 Ok(Ok(mut rooms)) => {
@@ -3062,8 +3069,8 @@ mod tests {
         let (mut host_net, mut net) = (QuicNet::default(), QuicNet::default());
         let mut host = open("Host");
         let mut guest = open("Guest");
-        // Without a relay the list asks for one.
-        click_on(&mut guest, spot::BROWSE, &mut net);
+        // Opened from Internet the list is asked for at the first tick; without a relay it asks for one.
+        guest.tick(&mut net);
         assert_eq!((guest.line.as_slice(), guest.focus), (words::NEED_RELAY, Focus::Relay));
         guest.paste(&relay);
         let t = web_time::Instant::now();
@@ -3106,7 +3113,7 @@ mod tests {
         let mut other = open("Other");
         click_on(&mut other, spot::RELAY, &mut net);
         other.paste(&relay);
-        click_on(&mut other, spot::BROWSE, &mut net);
+        other.tick(&mut net);
         wait(&mut host, &mut host_net, &mut other, &mut net, "unlisted", &|_, o| o.browsing.is_none());
         assert_eq!(other.rows(), 0);
         stop.store(true, std::sync::atomic::Ordering::Relaxed);

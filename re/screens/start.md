@@ -132,9 +132,10 @@ Reached from the main menu's multiplayer rings (`mainscr.md` §6.5: "local" 0x23
 entry). Lists the LAN sessions (`ig2_net::discovery::Browser`), hosts a session (`quic::QuicHost` + the LAN
 `Announcer`), or joins one from the list or by address (`quic::connect_pinned`, `Pin::Fingerprint` from the
 announcement, `Pin::Any` by address). A password field serves both: hosting with one makes a password session;
-joining sends it to the SPAKE2 check. "inet" opens the same screen: no public matchmaking server ships (ADR 0005, 0018); a direct address join works across
-the internet where the host's port is reachable. The status line (y 377) reads "No internet matchmaking: join by
-address or join code".
+joining sends it to the SPAKE2 check. The two entries open the same page with different lists: "local" lists the LAN sessions, "inet" the relay's public
+rooms (asked for at once; without a relay server the list asks for one) with Refresh. Each has two tabs, its own list
+(titled Local network or Internet) and Saved games; the other entry's list is not offered there. A direct address or
+join code works from either.
 
 **Relay server** (ADR 0018, `ig2_net::rendezvous`, `quic::{RelaySocket, QuicHost::bind_relayed, connect_via}`): the
 optional field "Relay server (optional): " (box 130, 354, 380 × 18; kept in `relay.txt` in the save folder). Hosting

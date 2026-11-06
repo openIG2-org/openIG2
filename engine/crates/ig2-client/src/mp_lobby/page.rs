@@ -236,23 +236,15 @@ impl MpScreen {
         heading(ctx, st, op, &s(texts.get(15, 1, if self.inet { 30 } else { 29 })), &format!("{} {}", w(words::PLAYING_AS), self.name));
         // The game lists.
         place(ctx, "mp-list", st.left(st.r.top() + 216.0), ds::PanelKind::Deep, 0.86, [24.0, 24.0], op, |ui| {
-            let tab = match (&self.saves, &self.internet) {
-                (Some(_), _) => 2,
-                (None, Some(_)) => 1,
-                _ => 0,
-            };
+            // The list the page was opened for (Local network or Internet) and the saved games.
+            let tab = self.saves.is_some() as usize;
             ui.horizontal(|ui| {
-                let labels = [w(words::LAN), w(words::INTERNET), w(words::SAVED_GAMES)];
+                let labels = [w(if self.inet { words::INTERNET } else { words::LAN }), w(words::SAVED_GAMES)];
                 let mut n = tab;
                 if ds::segmented_plates(ui, &mut n, &labels.each_ref().map(String::as_str), None, 44.0, TAB_FONT).changed() {
-                    match (tab, n) {
-                        (2, 1) => acts.extend([Act::Spot(spot::SAVED, false), Act::Spot(spot::BROWSE, false)]),
-                        (2, _) => acts.push(Act::Spot(spot::SAVED, false)),
-                        (_, 2) => acts.push(Act::Spot(spot::SAVED, false)),
-                        _ => acts.push(Act::Spot(spot::BROWSE, false)),
-                    }
+                    acts.push(Act::Spot(spot::SAVED, false));
                 }
-                if tab == 1 {
+                if tab == 0 && self.internet.is_some() {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.browsing.is_some() {
                             ui.spinner();
@@ -765,15 +757,16 @@ impl MpScreen {
     }
 }
 
-/// `ig2-client --snapshot OUT --screen lobby|lobby-room [--size WxH] [--mouse X,Y]`: the connection page with sample
-/// internet rooms, or a hosted room with a computer seat and chat lines (offline), over black.
+/// `ig2-client --snapshot OUT --screen lobby|lobby-lan|lobby-room [--size WxH] [--mouse X,Y]`: the connection page with
+/// sample internet rooms (`lobby-lan`: opened from Local network, no LAN game found), or a hosted room with a computer seat and chat lines (offline), over black.
 pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String> {
     use ig2_net::discovery::Announcement;
     let l = crate::load(o)?;
     let mut r = crate::render::Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
     let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
-    let mut s = MpScreen::open(true, "Dawee", [0; 32]);
+    let lan = o.screen.as_deref() == Some("lobby-lan");
+    let mut s = MpScreen::open(!lan, "Dawee", [0; 32]);
     s.open = 100.0;
     s.load_heads(&gui.ctx, &l.install);
     let mut net = super::OfflineNet;
@@ -782,7 +775,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         s.set_slot(3, SlotKind::Ai);
         s.set_slot(7, SlotKind::Closed);
         s.chat = vec![("Alice".into(), "hi all, starting in 5 minutes".into()), ("Dawee".into(), "one moment, picking a race".into())];
-    } else {
+    } else if !lan {
         let room = |name: &str, scenario: &str, humans: u8, slots: u8, password: bool, started: bool, rules: u8| ig2_net::rendezvous::Listing {
             announcement: Announcement { session: 1, name: name.into(), port: 1, fingerprint: [0; 32], password, version: ig2_net::lobby::LOBBY_VERSION, rules: [rules; 32], scenario: scenario.into(), humans, slots, started },
             mods: [0; 32],
