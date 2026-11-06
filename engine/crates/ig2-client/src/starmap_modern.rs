@@ -129,6 +129,9 @@ pub struct Info {
     /// Richness and habitability (planet mode): label, value.
     pub stats: Vec<(String, String)>,
     pub planet: bool,
+    /// A special fleet's mark in place of the model (`StarmapGfx2D_3` ELF 0x6d4a30: `StarmapBrushok` 11 for flag
+    /// 0x4000, else 3 for 0x400): the brush and its frame.
+    pub mark: Option<(usize, i32)>,
     pub tanks: bool,
     pub product: bool,
     pub redirect: bool,
@@ -231,6 +234,8 @@ pub struct State {
     placed: Option<Placed>,
     /// The game's turning globe cut into the card's and the long info's planet ([`crate::fleet_modern::pictures`]).
     pub wells: Vec<([f32; 4], Rect, f32)>,
+    /// A special fleet's mark ([`Info::mark`]) in the card's picture place, in pixels, and its opacity.
+    pub mark: Option<((usize, i32), Rect, f32)>,
     /// The planet list moved under the production view's title plate: its bounds and each drawn row with the
     /// middle of the original's (virtual), for the pointer's remap.
     list: Option<([f32; 3], Vec<ListRow>)>,
@@ -246,6 +251,9 @@ pub const PLATE_ID: &str = "pmh-plate";
 const GLOBE_SRC: [f32; 4] = [6.0, 433.5, 34.0, 34.0];
 /// How much of [`GLOBE_SRC`] the globe fills across.
 const GLOBE_FILL: f32 = 30.5 / 34.0;
+/// The fleet picture's source (`StarmapLoadInfoFlottak`: at x −535 against the globe's −545, both at z −1100: about
+/// 5.5 virtual pixels to the right).
+const FLAG_SRC: [f32; 4] = [GLOBE_SRC[0] + 5.5, GLOBE_SRC[1], GLOBE_SRC[2], GLOBE_SRC[3]];
 
 /// The HUD's colours this frame.
 #[derive(Debug, Clone, Copy)]
@@ -575,9 +583,10 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     st.placed = None;
     st.list = None;
     st.wells.clear();
+    st.mark = None;
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
-        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, &mut st.wells));
+        egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &ink, &mut acts, st));
     }
     // The radar with the camera's keys under it, bottom right.
     if let Some(mini) = &v.mini {
@@ -597,6 +606,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     // The pictures are drawn in pixels.
     let ppp = ctx.pixels_per_point();
     ds::wells_in_pixels(&mut st.wells, ppp);
+    if let Some(m) = &mut st.mark {
+        m.1 = Rect::from_min_max((m.1.min.to_vec2() * ppp).to_pos2(), (m.1.max.to_vec2() * ppp).to_pos2());
+    }
     acts
 }
 
@@ -882,14 +894,14 @@ fn globe(p: &egui::Painter, r: Rect, colour: Color32, planet: bool) {
     }
 }
 
-/// The card's and the long info's planet: the game's turning globe cut into `r` (a shadow under it), else the
-/// shaded globe.
-fn planet(ui: &egui::Ui, r: Rect, colour: Color32, picture: bool, is_planet: bool, wells: &mut Vec<([f32; 4], Rect, f32)>) {
-    if !picture {
+/// The card's and the long info's picture: the game's turning globe or fleet model (`src`) cut into `r` (a shadow
+/// under it), else the shaded globe or the fleet's mark.
+fn planet(ui: &egui::Ui, r: Rect, colour: Color32, src: Option<[f32; 4]>, is_planet: bool, wells: &mut Vec<([f32; 4], Rect, f32)>) {
+    let Some(src) = src else {
         return globe(ui.painter(), r, colour, is_planet);
-    }
+    };
     ds::shadow(ui.painter(), r.shrink(r.width() * 0.08), 255, 0, 14, 0, Color32::from_black_alpha(200));
-    wells.push((GLOBE_SRC, Rect::from_center_size(r.center(), r.size() / GLOBE_FILL), ui.opacity()));
+    wells.push((src, Rect::from_center_size(r.center(), r.size() / GLOBE_FILL), ui.opacity()));
 }
 
 /// A side ratio of the card (`.ratio`: an icon and the value, muted): the richness (a crystal) or the habitability
@@ -913,7 +925,7 @@ fn ratio(ui: &mut egui::Ui, label: &str, value: &str, habitability: bool) {
 
 /// The selection card (`.ig-panel.deep` with `.ig-card`): the globe between its ratios, the name, the original's
 /// lines, the buttons as plates (the colony or split, the details) and keys (tanks, production).
-fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>, wells: &mut Vec<([f32; 4], Rect, f32)>) {
+fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec<Act>, st: &mut State) {
     let k = ds::tokens();
     let at = ui.painter().add(Shape::Noop);
     let frame = egui::Frame::new().inner_margin(Margin { left: 16, right: 16, top: 14, bottom: 14 }).show(ui, |ui| {
@@ -928,7 +940,12 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, ink: &Ink, acts: &mut Vec
                     ratio(ui, l, val, false);
                 }
                 let (g, _) = ui.allocate_exact_size(vec2(CARD_SIDE, 84.0), Sense::hover());
-                planet(ui, Rect::from_center_size(g.center(), vec2(84.0, 84.0)), info.colour, info.planet && v.globe, info.planet, wells);
+                let r = Rect::from_center_size(g.center(), vec2(84.0, 84.0));
+                match info.mark.filter(|_| !v.globe) {
+                    // The original's mark: a brush, drawn by the window into `st.mark`.
+                    Some(m) => st.mark = Some((m, r.shrink(r.width() * 0.2), ui.opacity())),
+                    None => planet(ui, r, info.colour, v.globe.then_some(if info.planet { GLOBE_SRC } else { FLAG_SRC }), info.planet, &mut st.wells),
+                }
                 if let Some((l, val)) = info.stats.get(1) {
                     ratio(ui, l, val, true);
                 }
@@ -1498,7 +1515,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
         let (h, _) = ui.allocate_exact_size(vec2(LI_W, LI_HEAD), Sense::hover());
         let p = ui.painter();
         ds::vgrad(p, h, CornerRadius { nw: ds::RADIUS_PANEL, ne: ds::RADIUS_PANEL, sw: 0, se: 0 }, &[(0.0, k.rim_bright.gamma_multiply(0.25)), (1.0, Color32::TRANSPARENT)]);
-        planet(ui, Rect::from_min_size(h.min + vec2(LI_PAD, 16.0), vec2(LI_GLOBE, LI_GLOBE)), i.colour, v.globe, true, &mut st.wells);
+        planet(ui, Rect::from_min_size(h.min + vec2(LI_PAD, 16.0), vec2(LI_GLOBE, LI_GLOBE)), i.colour, v.globe.then_some(GLOBE_SRC), true, &mut st.wells);
         let tx = h.left() + LI_PAD + LI_GLOBE + 16.0;
         let tw = h.right() - LI_PAD - tx;
         // The board's header: the empire and the surface lines move up from the table.
@@ -1710,6 +1727,30 @@ mod tests {
         assert_eq!(left, vec![Act::Info(false)]);
         let right = drive(&view(), &[(None, None), (None, Some((1, true))), (None, Some((1, false)))], at);
         assert_eq!(right, vec![Act::Info(true)]);
+    }
+
+    /// The card's picture: the globe for a planet, the fleet model's own place for a fleet, the original's mark for
+    /// a special fleet (no model), the drawn symbol with no picture rendered.
+    #[test]
+    fn info_card_picture() {
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let mut pick = |planet: bool, globe: bool, mark: Option<(usize, i32)>| {
+            let mut v = view();
+            v.globe = globe;
+            if let Some(i) = &mut v.info {
+                (i.planet, i.mark) = (planet, mark);
+            }
+            let mut st = State::default();
+            g.run(SIZE, &style, |ctx| {
+                show(ctx, &v, &mut st);
+            });
+            (st.wells.first().map(|w| w.0), st.mark.map(|m| m.0))
+        };
+        assert_eq!(pick(true, true, None), (Some(GLOBE_SRC), None));
+        assert_eq!(pick(false, true, None), (Some(FLAG_SRC), None));
+        assert_eq!(pick(false, false, Some((11, 1))), (None, Some((11, 1))));
+        assert_eq!(pick(false, false, None), (None, None));
     }
 
     /// The menus and the long info are drawn only: no panel under the pointer over them and no act for a click (the

@@ -57,17 +57,32 @@ impl Pictures {
     /// `BrushToScreenMelyikXY(b, n, at)` → `DDBrushToScreen3d` (§1): frame `n` (1-based) of the brush at `at` (else
     /// its own place), `|w| × |h|` virtual pixels, alpha-blended; a negative size reads the source at 2×.
     pub fn brush(&self, f: &mut Frame, v: &Virtual, b: &Brush, n: i32, at: Option<[f32; 2]>, tint: [f32; 4]) {
-        let Some(&(tex, [tw, th])) = self.loaded.get(&b.kep) else { return };
+        let Some((tex, uv, [w, h])) = self.brush_uv(b, n) else { return };
+        let [x, y] = at.unwrap_or([b.dst[0] as f32, b.dst[1] as f32]);
+        let mut i = Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], tint);
+        i.uv = uv;
+        f.push(tex, Blend::GammaAlpha, i);
+    }
+
+    /// Frame `n` of brush `b` fitted into the pixel rectangle `centre` ± `half` in its own shape, at `alpha`.
+    pub fn brush_in(&self, f: &mut Frame, b: &Brush, n: i32, centre: [f32; 2], half: [f32; 2], alpha: f32) {
+        let Some((tex, uv, [w, h])) = self.brush_uv(b, n) else { return };
+        let s = (half[0] / w).min(half[1] / h);
+        let mut i = Instance::new(kind::SPRITE, centre, [w * s, h * s], [1.0, 1.0, 1.0, alpha]);
+        i.uv = uv;
+        f.push(tex, Blend::GammaAlpha, i);
+    }
+
+    /// Frame `n` (1-based) of `b`: its picture, the UV rectangle and the size in virtual pixels.
+    fn brush_uv(&self, b: &Brush, n: i32) -> Option<(TexId, [f32; 4], [f32; 2])> {
+        let &(tex, [tw, th]) = self.loaded.get(&b.kep)?;
         let per_row = b.per_row.max(1);
         let n = n.max(1) - 1;
         let src = [b.src[0] + b.step[0] * (n % per_row), b.src[1] + b.step[1] * (n / per_row)];
         let k = |s: i32| if s < 0 { 2.0 } else { 1.0 };
         let (kx, ky) = (k(b.size[0]), k(b.size[1]));
         let (w, h) = (b.size[0].abs() as f32, b.size[1].abs() as f32);
-        let [x, y] = at.unwrap_or([b.dst[0] as f32, b.dst[1] as f32]);
-        let mut i = Instance::new(kind::SPRITE, v.px(x + w / 2.0, y + h / 2.0), [w * v.k / 2.0, h * v.k / 2.0], tint);
-        i.uv = [src[0] as f32 * kx / tw, src[1] as f32 * ky / th, w * kx / tw, h * ky / th];
-        f.push(tex, Blend::GammaAlpha, i);
+        Some((tex, [src[0] as f32 * kx / tw, src[1] as f32 * ky / th, w * kx / tw, h * ky / th], [w, h]))
     }
 }
 

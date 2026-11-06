@@ -590,6 +590,12 @@ Drawn in the original's order: the 3D pass with the control panel, then the 2D p
     `PlayerFaj[owner]`, so a new fleet restarts the turn; `SFlottaMatrix` turns only while drawn in fleet mode, so the
     phase counts from the selection [obs, light probe: flags 0x200000F, ambient 0x404040 + parallel 0x808080, turning
     −0.05 a frame about y like the globe].
+  - Port status, modern card (`starmap_modern.rs`): a selected fleet shows the same turning model as the classic box,
+    cut from the classic render target at `FLAG_SRC` (the model sits at x −535, the globe at −545: ≈ 5.5 virtual px
+    right); traders (owner 9) are ordinary fleets with `flag<race>0.xvb`. Special fleets (`fSpec`, flags 0x4400) have no
+    model: `StarmapGfx2D_3` draws a brush instead (`StarmapBrushok` 11 at (6, 430) for 0x4000, else 3 at (6, 429)),
+    shown in the card's picture place. Test `starmap_modern::tests::info_card_picture`; `--snapshot --select-fleet N`
+    selects the fleet without `--panel`.
 
 ### 11.1 Reference captures
 `run_screen.py <install> quick-1.sav <out> --kep 2 --planet 71` (the tool sets `AktPlanetKell`, so `--planet` picks

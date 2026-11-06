@@ -2366,8 +2366,8 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let mut sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
-    // `--select-fleet` with `--panel`: the panels' fleet.
-    if let (Some(f), Some(_)) = (o.select_fleet, &o.panel) {
+    // `--select-fleet`: the info box's (and with `--panel` the panels') fleet.
+    if let Some(f) = o.select_fleet {
         (sel.mode, sel.fleet) = (2, f);
     }
     let mut panels = match &o.panel {
@@ -2498,6 +2498,7 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         let mut top = crate::render::Frame::new([0.0; 4]);
         crate::fleet_modern::pictures(&mut top, &fst.wells, panel_tex, &crate::font::Virtual::new(size));
         crate::fleet_modern::pictures(&mut top, &st.wells, globe, &crate::font::Virtual::new(size));
+        hud.modern_mark(&mut top, st.mark);
         if pv.is_some() {
             let thumbs = models.render_thumbs(&mut r, &l.install, &l.tables, &world.game.state, &sel, &view.camera.matrix(), size, o.ui_frames as f32);
             crate::production_modern::pictures(&mut top, &pst.wells, thumbs, &crate::font::Virtual::new(size));

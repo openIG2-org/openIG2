@@ -1612,6 +1612,7 @@ impl App {
             let mut f = crate::render::Frame::new([0.0; 4]);
             crate::fleet_modern::pictures(&mut f, &self.fleet_modern.wells, panel_tex, &crate::font::Virtual::new(size));
             crate::fleet_modern::pictures(&mut f, &self.modern.wells, globe, &crate::font::Virtual::new(size));
+            h.modern_mark(&mut f, self.modern.mark);
             if pmv.is_some() {
                 crate::production_modern::pictures(&mut f, &pst.wells, thumbs, &crate::font::Virtual::new(size));
             }

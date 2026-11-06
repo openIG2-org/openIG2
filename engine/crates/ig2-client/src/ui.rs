@@ -824,6 +824,15 @@ impl Hud {
         crate::starmap_hud::minimap(f, self.white, &v, &self.palette, &mini, time, fade);
     }
 
+    /// The modern card's special-fleet mark ([`crate::starmap_modern::State::mark`]) in its place (pixels).
+    pub fn modern_mark(&self, f: &mut Frame, mark: Option<((usize, i32), egui::Rect, f32)>) {
+        if let Some(((b, n), r, alpha)) = mark {
+            if let Some(b) = self.starmap_brushes.get(b) {
+                self.pics.brush_in(f, b, n, [r.center().x, r.center().y], [r.width() / 2.0, r.height() / 2.0], alpha);
+            }
+        }
+    }
+
     /// The starmap's HUD under the top bar (re/screens/starmap.md §11) for the local selection.
     #[allow(clippy::too_many_arguments)]
     /// `starf` is `faders`; `info_box`: the long info's box took fader 0; `globe`: the info box's planet picture
@@ -876,6 +885,7 @@ impl Hud {
                 lines: main.iter().skip(1).map(|l| (dec(&crate::diplomacy::articles(&l.0, hu)), col(l.4))).collect(),
                 stats,
                 planet: sel.mode == 1,
+                mark: ib.brushes.iter().find(|b| b.2 == 6.0).map(|b| (b.0, b.1)),
                 tanks,
                 product: product || (debug && sel.mode == 1),
                 redirect: menus.redirect,
