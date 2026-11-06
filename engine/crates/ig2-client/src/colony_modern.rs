@@ -236,8 +236,6 @@ pub struct State {
     tab: Option<usize>,
     /// The zoom key held last frame.
     pub zoom: Option<bool>,
-    /// The info mode's open menu (its hot-spot).
-    menu: Option<u32>,
     /// This frame's picture wells in pixels and their opacity ([`pictures`]).
     pub wells: Vec<(Pic, Rect, f32)>,
 }
@@ -250,6 +248,8 @@ const RADAR_W: f32 = 300.0;
 const ROUND: f32 = 60.0;
 const ROW_H: f32 = 34.0;
 const INFO_W: f32 = 760.0;
+/// The war strip's middle column (the retreat and its label).
+const RETREAT_W: f32 = 150.0;
 
 // ---- The screen's own glyphs ----
 
@@ -391,11 +391,10 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let t = ds::open_t(ctx, egui::Id::new("cmh-info"), true);
         egui::Area::new(egui::Id::new("cmh-info")).fixed_pos(pos2(x, top + 20.0 + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
-            info_panel(ui, i, st, &mut acts);
+            info_panel(ui, i, &mut acts);
         });
     } else {
         ds::open_t(ctx, egui::Id::new("cmh-info"), false);
-        st.menu = None;
     }
     egui::Area::new(egui::Id::new("cmh-radar")).anchor(Align2::RIGHT_BOTTOM, vec2(-ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| radar(ui, &v.radar, v.info.is_none(), st, &mut acts));
     ds::wells_in_pixels(&mut st.wells, ppp);
@@ -580,6 +579,8 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                         acts.push(Act::Spot(0x11));
                     }
                 });
+                // The lines and the `ig-table` rows 2 apart under the title row's 6.
+                ui.spacing_mut().item_spacing.y = 2.0;
                 for (i, (l, col)) in c.lines.iter().enumerate() {
                     // The units' empire as the board's empire label; the planet's lines upper case (`.ig-card .line`).
                     let f = if c.planet { Font::DATA.tracking(0.12).upper(true) } else if i == 0 { Font::LABEL.tracking(0.16) } else { Font::DATA };
@@ -588,7 +589,8 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                 for r in &c.rows {
                     let (rect, _) = ui.allocate_exact_size(vec2(w, 20.0), Sense::hover());
                     let base = ds::fit::baseline(rect, Font::DATA);
-                    let (a, b) = rect.split_left_right_at_x(rect.left() + 110.0);
+                    // The board's 110 label column and the table's 16 gap.
+                    let (a, b) = rect.split_left_right_at_x(rect.left() + 126.0);
                     Text::new(&r.label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
                     if let Some(part) = r.bar {
                         let bar = Rect::from_min_size(pos2(b.left(), rect.center().y - 3.0), vec2(b.width(), 6.0));
@@ -695,7 +697,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                 ui.set_width(width - 36.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 16.0;
-                    let side_w = (width - 36.0 - 96.0 - 32.0) / 2.0;
+                    let side_w = (width - 36.0 - RETREAT_W - 32.0) / 2.0;
                     let side = |ui: &mut Ui, s: Option<&Side>, right: bool| {
                         // As tall as the retreat's column, the side's lines centred in it (one row, one baseline).
                         let (r, _) = ui.allocate_exact_size(vec2(side_w, 90.0), Sense::hover());
@@ -724,7 +726,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                     };
                     side(ui, w.sides.first(), false);
                     let retreat = w.buttons.iter().find(|b| b.0 == 0x10);
-                    ui.allocate_ui(vec2(96.0, 90.0), |ui| {
+                    ui.allocate_ui(vec2(RETREAT_W, 90.0), |ui| {
                         ui.vertical_centered(|ui| {
                             if let Some((id, frame, t)) = retreat {
                                 let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
@@ -732,7 +734,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                                     acts.push(Act::Spot(*id));
                                 }
                             } else {
-                                ui.allocate_exact_size(vec2(96.0, 66.0), Sense::hover());
+                                ui.allocate_exact_size(vec2(RETREAT_W, 66.0), Sense::hover());
                             }
                         });
                     });
@@ -784,7 +786,7 @@ fn notices(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
 /// The planet info mode's long info (the PlanetInfo board): the name and the owner, the table, the workers' and
 /// energy's NEEDED blocks and the problems, the settings with their menus, "ALL" and −/+; the plates back to the
 /// colony and to the starmap.
-fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
+fn info_panel(ui: &mut Ui, i: &Info, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let at = ui.painter().add(Shape::Noop);
     ui.set_width(INFO_W);
@@ -809,10 +811,10 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
             ui.set_width(cw);
             ui.spacing_mut().item_spacing.y = 10.0;
             for (l, val, short) in &i.rows {
-                let (r, _) = ui.allocate_exact_size(vec2(cw, 22.0), Sense::hover());
+                let (r, _) = ui.allocate_exact_size(vec2(cw, 24.0), Sense::hover());
                 let f = Font::DATA.sized(17.0);
                 let base = ds::fit::baseline(r, f);
-                let (a, b) = r.split_left_right_at_x(r.left() + 130.0);
+                let (a, b) = r.split_left_right_at_x(r.left() + 146.0);
                 Text::new(l, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, a.with_max_x(a.right() - 8.0));
                 Text::new(val, f).shrink(12.0).color(if *short { k.enemy } else { k.info }).baseline(base).paint(ui, b);
             }
@@ -854,43 +856,32 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
         ui.painter().hline(line.x_range(), line.center().y, Stroke::new(1.0f32, k.rim));
         ui.add_space(20.0);
         for s in &i.settings {
-            ui.horizontal(|ui| {
-                ui.add_space(28.0);
-                ui.spacing_mut().item_spacing.x = 10.0;
-                let (l, _) = ui.allocate_exact_size(vec2(160.0, 40.0), Sense::hover());
-                Text::new(&s.label, Font::LABEL).color(k.ink_muted).paint(ui, l);
-                let field_w = INFO_W - 56.0 - 160.0 - 80.0 - 2.0 * 44.0 - 40.0;
-                let open = st.menu == Some(s.menu);
-                let (f, resp) = ui.allocate_exact_size(vec2(field_w, 40.0), Sense::click());
-                let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-                ui.painter().rect_filled(f, ds::RADIUS_PLATE, k.glass_deep);
-                ds::rim(ui.painter(), f, ds::RADIUS_PLATE, if open { k.focus } else { k.rim_bright.lerp_to_gamma(k.focus, hot * 0.6) });
-                Text::new(&s.value, Font::DATA.sized(16.0).tracking(0.08)).color(k.ink).shrink(12.0).paint(ui, f.shrink2(vec2(12.0, 0.0)).with_max_x(f.right() - 34.0));
-                ds::Icon::ChevronDown.paint(ui.painter(), Rect::from_center_size(pos2(f.right() - 18.0, f.center().y), vec2(16.0, 16.0)), k.ink_silver);
-                if resp.clicked() {
-                    st.menu = if open { None } else { Some(s.menu) };
-                }
-                if open {
-                    let picked = menu_list(ui, f, s, st);
-                    if let Some(item) = picked {
-                        acts.push(Act::InfoPick(s.menu, item));
-                        st.menu = None;
+            let (row, _) = ui.allocate_exact_size(vec2(INFO_W, 40.0), Sense::hover());
+            let field_w = INFO_W - 56.0 - 160.0 - 80.0 - 2.0 * 44.0 - 40.0;
+            let mut x = row.left() + 28.0;
+            let mut slot = |w: f32| {
+                let r = Rect::from_min_size(pos2(x, row.top()), vec2(w, 40.0));
+                x += w + 10.0;
+                r
+            };
+            Text::new(&s.label, Font::LABEL).color(k.ink_muted).paint(ui, slot(160.0));
+            let field = slot(field_w);
+            let rows: Vec<(i32, &str, bool)> = s.items.iter().map(|(v, t)| (*v, t.as_str(), false)).collect();
+            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(field));
+            if let (_, Some(Some(item))) = ds::select(&mut c, ("cmh-setting", s.menu), &s.value, &rows, field.size(), Font::DATA.sized(16.0).tracking(0.08), k.ink) {
+                acts.push(Act::InfoPick(s.menu, item));
+            }
+            if ds::pressed(&ui.put(slot(80.0), ds::Plate::new(&i.all).font(ds::Plate::FONT.sized(13.0)).height(40.0).width(80.0))) {
+                acts.push(Act::Info(s.all));
+            }
+            if let Some((minus, plus)) = s.steps {
+                for (id, icon) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
+                    let mut c = ui.new_child(egui::UiBuilder::new().max_rect(slot(44.0)).layout(egui::Layout::left_to_right(egui::Align::Center)));
+                    if ds::pressed(&ds::round_button(&mut c, Glyph::Icon(icon), true, false)) {
+                        acts.push(Act::Info(id));
                     }
                 }
-                let r = ui.add(ds::Plate::new(&i.all).font(ds::Plate::FONT.sized(13.0)).height(40.0).width(80.0));
-                if ds::pressed(&r) {
-                    acts.push(Act::Info(s.all));
-                }
-                if let Some((minus, plus)) = s.steps {
-                    for (id, icon) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
-                        ui.allocate_ui(vec2(44.0, 40.0), |ui| {
-                            if ds::pressed(&ds::round_button(ui, Glyph::Icon(icon), true, false)) {
-                                acts.push(Act::Info(id));
-                            }
-                        });
-                    }
-                }
-            });
+            }
             ui.add_space(10.0);
         }
         ui.add_space(10.0);
@@ -899,37 +890,14 @@ fn info_panel(ui: &mut Ui, i: &Info, st: &mut State, acts: &mut Vec<Act>) {
     ds::behind(ui, at, |p| ds::paint_panel(p, rect, PanelKind::Glass, 0.9));
     // The board's plates 12 under the panel.
     ui.add_space(12.0);
-    ui.allocate_ui_with_layout(vec2(INFO_W, 44.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        if ui.add(ds::Plate::new(&i.starmap).width(220.0)).clicked() {
-            acts.push(Act::Card(true));
-        }
-        if ds::pressed(&ui.add(ds::Plate::new(&i.back).width(220.0))) {
-            acts.push(Act::Info(0x20));
-        }
-    });
-}
-
-/// An info menu's open list under its field `f`: the items, the current one selected; a click picks one, a click
-/// elsewhere closes it.
-fn menu_list(ui: &Ui, f: Rect, s: &Setting, st: &mut State) -> Option<i32> {
-    let mut picked = None;
-    let id = egui::Id::new(("cmh-menu", s.menu));
-    let area = egui::Area::new(id).fixed_pos(f.left_bottom() + vec2(0.0, 4.0)).order(egui::Order::Foreground).fade_in(false).show(ui.ctx(), |ui| {
-        ds::panel(ui, PanelKind::Deep, 0.97, 6.0, |ui| {
-            ui.set_width(f.width() - 12.0);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for (v, t) in &s.items {
-                if ui.add(ds::ListRow::new(t).selected(*t == s.value).height(30.0).font(Font::DATA.sized(16.0))).clicked() {
-                    picked = Some(*v);
-                }
-            }
-        });
-    });
-    if picked.is_none() && ui.input(|i| i.pointer.any_pressed()) && !area.response.rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO)) && !f.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or(Pos2::ZERO)) {
-        st.menu = None;
+    let (row, _) = ui.allocate_exact_size(vec2(INFO_W, 44.0), Sense::hover());
+    let back = Rect::from_min_size(pos2(row.right() - 2.0 * 220.0 - 12.0, row.top()), vec2(220.0, 44.0));
+    if ds::pressed(&ui.put(back, ds::Plate::new(&i.back).width(220.0))) {
+        acts.push(Act::Info(0x20));
     }
-    picked
+    if ui.put(back.translate(vec2(232.0, 0.0)), ds::Plate::new(&i.starmap).width(220.0)).clicked() {
+        acts.push(Act::Card(true));
+    }
 }
 
 /// The radar in its metal frame (`DrawRadar`): the buildings, the units (own green, the rest red), the view's
