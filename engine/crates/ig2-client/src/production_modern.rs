@@ -104,6 +104,8 @@ pub struct State {
     seen: Option<(u64, f64)>,
     /// The count button pressed and still held (`Mouse_Megfogva` keeps it, also with the pointer off it).
     count: Option<(usize, usize, bool)>,
+    /// A press the window kept from the HUD (off its panels, on the map): it closes the list too.
+    pub outside: bool,
 }
 
 /// A line panel's width, a slot's height and the gap between slots.
@@ -249,7 +251,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     }
     let head = s == 0 && slot.is_some();
     ds::rim(p, rect, ds::RADIUS_PLATE, if open { k.ink_silver } else if head { k.rim_bright } else { k.rim.lerp_to_gamma(k.rim_bright, hot) });
-    if ds::tip(resp, &v.tips[6]).clicked() {
+    if ds::pressed(&ds::tip(resp, &v.tips[6])) {
         toggle_list(ui.ctx(), st, l, s);
     }
     let inner = rect.shrink2(vec2(0.0, 8.0));
@@ -272,7 +274,7 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
         let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(rect.right() - 10.0 - 110.0, rect.center().y - 17.0), pos2(rect.right() - 10.0, rect.center().y + 17.0))));
         let label = format!("+ {}", v.labels.design);
         let b = c.add(Plate::new(&label).width(110.0).height(34.0).font(Plate::FONT.sized(14.0).tracking(0.10)));
-        if ds::tip(b, &v.tips[6]).clicked() {
+        if ds::pressed(&ds::tip(b, &v.tips[6])) {
             toggle_list(ui.ctx(), st, l, s);
         }
         let texts = Rect::from_min_max(pos2(text_l, inner.top()), pos2(rect.right() - 10.0 - 110.0 - 12.0, inner.bottom()));
@@ -323,7 +325,8 @@ fn slot_row(ui: &mut Ui, l: usize, s: usize, slot: Option<&Slot>, line: &Line, v
     }
 }
 
-/// Open line `l`'s list for slot `s`, or close it when it is open there.
+/// Open line `l`'s list for slot `s`, or close it when it is open there. On the press, before [`design_list`] runs,
+/// so its outside-press close doesn't undo it.
 fn toggle_list(ctx: &egui::Context, st: &mut State, l: usize, s: usize) {
     st.list = if st.list == Some((l, s)) { None } else { Some((l, s)) };
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("pmh-opened"), true));
@@ -349,12 +352,13 @@ fn lamp(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
 }
 
 /// The open design list under its slot: the title ("Slot n"), design 0 and the line's designs with their price, the
-/// slot's own design selected, a ninth station muted; a pick sends it, a press elsewhere closes it.
+/// slot's own design selected, a ninth station muted; a pick sends it, a press elsewhere (also on the map) closes it.
 fn design_list(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<Act>) {
+    let outside = std::mem::take(&mut st.outside);
     let Some((l, s)) = st.list else { return };
     let line = &v.lines[l];
     let anchor = ctx.memory(|m| m.area_rect(egui::Id::new(("pmh-line", l))));
-    let mut close = line.slots[s].is_none() && line.designs.is_empty();
+    let mut close = outside || line.slots[s].is_none() && line.designs.is_empty();
     if let Some(a) = anchor {
         // The slot's rectangle inside its panel: 16 + 30 + 10 down, then the slots.
         let slot_bottom = a.top() + 16.0 + 30.0 + SLOT_GAP + (s as f32 + 1.0) * (SLOT_H + SLOT_GAP) - SLOT_GAP;

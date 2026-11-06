@@ -68,6 +68,7 @@ impl ApplicationHandler for App {
         let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
+        let production = self.production_modern_up();
         if !page && (self.modern_up() || self.battle_modern_up() || self.main_menu_modern_up() || self.new_game_modern_up() || self.help_modern_up() || self.stats_modern_up() || self.colony_modern_up() || self.info_modern_up() || self.messages_modern_up() || self.pages_modern_up() || self.research_modern_up() || self.design_modern_up() || self.gui_held != 0) && let Some(g) = &mut self.gpu {
             let k = crate::gui::Gui::scale(g.band().1);
             let top = g.layout().frame[1] as f32;
@@ -85,6 +86,8 @@ impl ApplicationHandler for App {
                     // A release always reaches it, a press only over its panels.
                     if over || *state == ElementState::Released {
                         g.gui.button(b, *state == ElementState::Pressed);
+                    } else if production {
+                        self.production_modern.outside = true;
                     }
                 }
                 WindowEvent::MouseWheel { delta, .. } if over => {
