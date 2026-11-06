@@ -24,7 +24,7 @@ pub fn load_heads(ctx: &egui::Context, install: &ig2_formats::Install) -> Vec<Op
 
 /// The board's places (points at 1920 × 1080): the margin, the title's top, the table's top, the graph's height.
 const MARGIN: f32 = 140.0;
-const TITLE_Y: f32 = 64.0;
+const TITLE_Y: f32 = 61.0;
 const TABLE_Y: f32 = 196.0;
 const GRAPH_H: f32 = 372.0;
 /// The table's value columns: 96 wide, 12 apart.
@@ -125,27 +125,22 @@ impl StatsScreen {
             let inner = Rect::from_min_max(panel.min + Vec2::new(24.0, 16.0), panel.max - Vec2::new(24.0, 20.0));
             // The value columns from the right; a narrow window narrows them.
             let cw = COL_W.min((inner.width() - 300.0) / 9.0 - COL_GAP).max(40.0);
-            let col_x = |c: usize| inner.right() - 12.0 - (9 - c) as f32 * (cw + COL_GAP) + COL_GAP;
+            let col_x = |c: usize| inner.right() - 15.0 - (9 - c) as f32 * (cw + COL_GAP) + COL_GAP;
             let name_x = inner.left() + 6.0 + 12.0 + 40.0 + 12.0;
-            let label = Font::LABEL.sized(15.0).weight(Weight::Medium);
-            let head = Rect::from_min_size(inner.min, Vec2::new(inner.width(), 32.0));
-            Text::new(&tr("Empire"), label).color(k.ink_muted).paint(ui, Rect::from_min_max(Pos2::new(name_x, head.top()), Pos2::new(col_x(0) - COL_GAP, head.bottom())));
-            for (c, name) in cols.iter().enumerate() {
-                Text::new(&tr(name), label).color(k.ink_muted).right().shrink(11.0).paint(ui, Rect::from_min_size(Pos2::new(col_x(c), head.top()), Vec2::new(cw, 32.0)));
-            }
+            let head = Rect::from_min_size(inner.min - Vec2::new(0.0, 2.0), Vec2::new(inner.width(), 32.0));
+            let cells = |r: Rect| std::iter::once(Rect::from_min_max(Pos2::new(name_x, r.top()), Pos2::new(col_x(0) - COL_GAP, r.bottom()))).chain((0..9).map(|c| Rect::from_min_size(Pos2::new(col_x(c), r.top()), Vec2::new(cw, r.height())))).collect::<Vec<_>>();
+            let names: Vec<String> = std::iter::once("Empire").chain(cols).map(tr).collect();
+            ds::table_head(ui, &cells(head), &names.iter().map(String::as_str).collect::<Vec<_>>(), &[false, true, true, true, true, true, true, true, true, true]);
             let num = Font { size: 18.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: true };
             let pts = Font { size: 20.0, line: 22.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: true };
             for (n, e) in m.empires.iter().enumerate() {
                 let i = e.empire as usize - 1;
                 let r = &last.rows[i];
-                let row = Rect::from_min_size(Pos2::new(inner.left(), head.bottom() + 4.0 + n as f32 * pitch), Vec2::new(inner.width(), pitch - 4.0));
+                let row = Rect::from_min_size(Pos2::new(inner.left(), inner.top() + 36.0 + n as f32 * pitch), Vec2::new(inner.width(), pitch - 4.0));
                 let me = e.empire == m.empire;
                 let out = r.planets == 0 && r.ships == 0;
                 let p = ui.painter();
-                if me {
-                    ds::hgrad(p, row, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(36)), (1.0, Color32::from_white_alpha(5))]);
-                    ds::rim(p, row, ds::RADIUS_PLATE, k.ink_silver);
-                }
+                ds::row_back(ui, row, 0.0, me);
                 let c = palette.get(15 + e.empire as usize).map_or(k.ink, |c| crate::gui::ink(*c));
                 p.rect_filled(Rect::from_min_size(row.min, Vec2::new(6.0, row.height())), egui::CornerRadius { nw: 3, sw: 3, ne: 0, se: 0 }, c);
                 if let Some(Some(t)) = heads.get(e.race.wrapping_sub(1) as usize) {
@@ -161,13 +156,15 @@ impl StatsScreen {
                     name.push_str(&tr(" (you)"));
                 }
                 let ink = if out { k.ink_muted } else { k.ink };
-                Text::new(&name, Font::BODY.weight(Weight::Medium)).color(ink).paint(ui, Rect::from_min_max(Pos2::new(name_x, row.top()), Pos2::new(col_x(0) - COL_GAP, row.bottom())));
+                let c = cells(row);
+                let base = ds::baseline(row, Font::BODY);
+                Text::new(&name, Font::BODY.weight(Weight::Medium)).color(ink).baseline(base).paint(ui, c[0]);
                 let vals = [r.planets as i64, r.population as i64, r.credits, r.ships as i64, e.built as i64, e.lost as i64, r.techs as i64, r.battles as i64];
-                for (c, v) in vals.iter().enumerate() {
-                    let s = if c == 2 { format!("${}", short(*v)) } else { short(*v) };
-                    mono(ui, Rect::from_min_size(Pos2::new(col_x(c), row.top()), Vec2::new(cw, row.height())), &s, num, if out { k.ink_muted } else { k.info });
+                for (i, v) in vals.iter().enumerate() {
+                    let s = if i == 2 { format!("${}", short(*v)) } else { short(*v) };
+                    Text::new(&s, num).upright().right().baseline(base).color(if out { k.ink_muted } else { k.info }).paint(ui, c[i + 1]);
                 }
-                Text::new(&short(r.score as i64), pts).color(k.lcd_ink).right().shrink(13.0).paint(ui, Rect::from_min_size(Pos2::new(col_x(8), row.top()), Vec2::new(cw, row.height())));
+                Text::new(&short(r.score as i64), pts).color(k.lcd_ink).right().shrink(13.0).baseline(base).paint(ui, c[9]);
             }
         });
         h
@@ -184,7 +181,7 @@ impl StatsScreen {
         egui::Area::new(egui::Id::new("st-graph")).fixed_pos(r.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), r, ds::PanelKind::Glass, 0.90);
-            let inner = r.shrink2(Vec2::new(24.0, 20.0));
+            let inner = Rect::from_min_max(r.min + Vec2::new(24.0, 17.0), r.max - Vec2::new(24.0, 20.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
             let labels: Vec<String> = tabs.iter().map(|t| tr(t)).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -195,23 +192,23 @@ impl StatsScreen {
                     self.metric = metric_of(t);
                 }
             });
-            let plot_top = child.min_rect().bottom() + 12.0;
+            let plot_top = child.min_rect().bottom() + 25.0;
             let value = METRICS[self.metric].1;
             let max = m.samples.iter().flat_map(|s| m.empires.iter().map(move |e| value(&s.rows[e.empire as usize - 1]))).fold(0.0f64, f64::max);
             // A round top: 1, 2 or 5 times a power of ten, in three steps.
             let step = nice(max / 3.0);
             let top = (step * 3.0).max(1.0);
-            let plot = Rect::from_min_max(Pos2::new(inner.left() + 60.0, plot_top + 8.0), Pos2::new(inner.right() - 116.0, inner.bottom() - 26.0));
+            let plot = Rect::from_min_max(Pos2::new(inner.left() + 60.0, plot_top + 8.0), Pos2::new(inner.right() - 116.0, inner.bottom() - 56.0));
             let p = ui.painter();
             let lcd14 = Font { size: 14.0, line: 16.0, weight: Weight::Regular, tracking: 0.0, upper: false, lcd: true };
             for g in 0..=3 {
                 let y = plot.bottom() - plot.height() * g as f32 / 3.0;
                 p.hline(plot.x_range(), y, egui::Stroke::new(1.0f32, k.rim.gamma_multiply(0.6)));
-                mono(ui, Rect::from_min_max(Pos2::new(inner.left(), y - 10.0), Pos2::new(plot.left() - 10.0, y + 10.0)), &format!("{:.0}", step * g as f64), lcd14, k.ink_muted);
+                Text::new(&format!("{:.0}", step * g as f64), lcd14).upright().right().color(k.ink_muted).paint(ui, Rect::from_min_max(Pos2::new(inner.left(), y - 10.0), Pos2::new(plot.left() - 10.0, y + 10.0)));
             }
             let day = |d: u32| game_text(texts, &crate::tr::fill(texts.lang, "day {}", &[d.to_string().as_bytes()]));
             let marks = Font { size: 13.0, line: 18.0, weight: Weight::Regular, tracking: 0.08, upper: false, lcd: false };
-            let my = Rect::from_min_max(Pos2::new(plot.left(), plot.bottom() + 6.0), Pos2::new(plot.right(), plot.bottom() + 24.0));
+            let my = Rect::from_min_max(Pos2::new(plot.left(), plot.bottom() + 18.0), Pos2::new(plot.right(), plot.bottom() + 36.0));
             Text::new(&day(0), marks).color(k.ink_muted).paint(ui, my);
             Text::new(&day(m.days / 2), marks).color(k.ink_muted).center().paint(ui, my);
             Text::new(&day(m.days), marks).color(k.ink_muted).right().paint(ui, my);
@@ -259,11 +256,9 @@ impl StatsScreen {
             let inner = Rect::from_min_max(r.min + Vec2::new(24.0, 16.0), r.max - Vec2::new(24.0, 20.0));
             let xs = [0.0, 0.16, 0.32, 0.46, 0.56];
             let heads = ["Date", "Mode", "Result", "Days", "Empires"];
-            let label = Font::LABEL.sized(15.0).weight(Weight::Medium);
             let col = |c: usize, top: f32, h: f32| Rect::from_min_max(Pos2::new(inner.left() + 18.0 + xs[c] * inner.width(), top), Pos2::new(if c + 1 < xs.len() { inner.left() + 6.0 + xs[c + 1] * inner.width() } else { inner.right() - 12.0 }, top + h));
-            for (c, h) in heads.iter().enumerate() {
-                Text::new(&tr(h), label).color(k.ink_muted).paint(ui, col(c, inner.top(), 32.0));
-            }
+            let names: Vec<String> = heads.iter().map(|h| tr(h)).collect();
+            ds::table_head(ui, &(0..heads.len()).map(|c| col(c, inner.top(), 32.0)).collect::<Vec<_>>(), &names.iter().map(String::as_str).collect::<Vec<_>>(), &[]);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(Pos2::new(inner.left(), inner.top() + 36.0), inner.max)));
             egui::ScrollArea::vertical().id_salt("st-list-scroll").auto_shrink([false; 2]).show(&mut child, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
@@ -281,10 +276,10 @@ impl StatsScreen {
                         Outcome::Ended => k.ink_silver,
                     };
                     let num = Font { size: 18.0, line: 20.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: true };
-                    Text::new(&day_of(m.when), num).color(k.info).paint(ui, cell(0));
+                    Text::new(&day_of(m.when), num).upright().color(k.info).paint(ui, cell(0));
                     Text::new(&tr(mode_name(m.mode)), Font::BODY).color(k.ink).paint(ui, cell(1));
                     Text::new(&tr(m.title()), Font::BODY.weight(Weight::SemiBold)).color(result).paint(ui, cell(2));
-                    Text::new(&m.days.to_string(), num).color(k.info).paint(ui, cell(3));
+                    Text::new(&m.days.to_string(), num).upright().color(k.info).paint(ui, cell(3));
                     let names: Vec<String> = m.empires.iter().map(|e| game_name(texts, &e.name)).collect();
                     Text::new(&names.join(", "), Font::BODY).color(k.ink_silver).paint(ui, cell(4));
                     if resp.clicked() {
@@ -343,6 +338,9 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         if buttons.is_empty() || t == 0 {
             run(&mut gui);
         }
+        if t == 0 {
+            run(&mut gui);
+        }
         for down in buttons {
             gui.button(0, down);
             run(&mut gui);
@@ -356,13 +354,6 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         }
     }
     Ok(())
-}
-
-/// `s` upright in the LCD face, right-aligned and centred in `r` (the board's `.num`; the kit's LCD text slants).
-fn mono(ui: &egui::Ui, r: Rect, s: &str, f: Font, c: Color32) {
-    let g = ui.fonts(|x| x.layout_job(f.job(s, c)));
-    let at = Pos2::new(r.right() - g.size().x, r.center().y - g.size().y / 2.0);
-    ui.painter().with_clip_rect(r).galley(at, g, c);
 }
 
 /// An empire's name in the game's encoding.
