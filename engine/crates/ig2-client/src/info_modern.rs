@@ -286,6 +286,9 @@ fn grab(ui: &Ui, resp: &egui::Response, held: &mut bool) -> Option<Press> {
 
 /// The board's measures (1920 × 1080, one pixel one point): the race rings, the money panel, the selected empire's
 /// panel, the list's and the charts' tops.
+/// The money panel's and the limit's LCDs: their digits' size and the digits they make room for.
+const LCD_SIZE: f32 = 20.0;
+const LCD_CHARS: usize = 3;
 const RING: f32 = 112.0;
 const RING_GAP: f32 = 22.0;
 const MONEY_W: f32 = 400.0;
@@ -340,12 +343,9 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     }
     let charts = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
     ds::place(ctx, "imh-charts", charts, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
-    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - ds::EXIT_W, h - 40.0 * g - 48.0), vec2(ds::EXIT_W, 48.0));
-    ds::place(ctx, "imh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(ds::EXIT_W).height(48.0)).clicked() {
-            acts.push(Act::Bar(sm::Act::Screen(2)));
-        }
-    });
+    if ds::exit_plate(ctx, "imh-exit", &v.labels.exit, true) {
+        acts.push(Act::Bar(sm::Act::Screen(2)));
+    }
     acts
 }
 
@@ -410,22 +410,24 @@ fn money_panel(ui: &mut Ui, m: &Money, st: &mut State, acts: &mut Vec<Act>) {
     let tri = Rect::from_min_size(pos2(inner.center().x - 75.0, inner.top()), vec2(150.0, 130.0));
     // B (top left, `corners[1]`) and C (top right, `corners[2]`) at the sides, A (`corners[0]`) under the triangle.
     let side_w = (inner.width() - 150.0) / 2.0 - 8.0;
-    let lcd = Font::READOUT.sized(20.0);
     let blink = k.lcd_ink.gamma_multiply(m.blink);
+    // The kit's LCDs, as wide as their digits: B's under its label at the left, C's at the right, A's after its label.
     for (i, x, right) in [(1usize, inner.left(), false), (2, inner.right() - side_w, true)] {
         let col = Rect::from_min_size(pos2(x, inner.top() + 28.0), vec2(side_w, 18.0));
         let t = Text::new(&m.corners[i], Font::LABEL).shrink(10.0).color(k.ink_muted);
         if right { t.right() } else { t }.paint(ui, col);
         let well = Rect::from_min_size(pos2(x, col.bottom() + 6.0), vec2(side_w, 28.0));
-        ds::lcd_window(ui.painter(), well);
-        Text::new(&m.shares[i], lcd).center().color(blink).paint(ui, well.shrink2(vec2(6.0, 0.0)));
+        let layout = egui::Layout::top_down(if right { egui::Align::Max } else { egui::Align::Min });
+        ds::lcd_ink(&mut ui.new_child(egui::UiBuilder::new().max_rect(well).layout(layout)), &m.shares[i], LCD_SIZE, LCD_CHARS, blink);
     }
     let base = Rect::from_min_size(pos2(inner.left(), tri.bottom() + 8.0), vec2(inner.width(), 28.0));
-    let lw = Text::new(&m.corners[0], Font::LABEL).layout(ui.ctx(), f32::INFINITY).width.min(base.width() - 110.0);
-    let (lab, well) = (Rect::from_min_size(pos2(base.center().x - (lw + 106.0) / 2.0, base.top()), vec2(lw, 28.0)), Rect::from_min_size(pos2(base.center().x - (lw + 106.0) / 2.0 + lw + 10.0, base.top()), vec2(96.0, 28.0)));
-    Text::new(&m.corners[0], Font::LABEL).color(k.ink_muted).paint(ui, lab);
-    ds::lcd_window(ui.painter(), well);
-    Text::new(&m.shares[0], lcd).center().color(blink).paint(ui, well.shrink2(vec2(6.0, 0.0)));
+    let mut row = ui.new_child(egui::UiBuilder::new().max_rect(base).layout(egui::Layout::left_to_right(egui::Align::Center).with_main_justify(false)));
+    row.spacing_mut().item_spacing.x = 10.0;
+    let lw = Text::new(&m.corners[0], Font::LABEL).layout(row.ctx(), f32::INFINITY).width.min(base.width() - 110.0);
+    let lcd_w = Text::new("0", Font::READOUT.sized(LCD_SIZE)).layout(row.ctx(), f32::INFINITY).width * LCD_CHARS as f32 + 24.0;
+    row.add_space(((base.width() - lw - 10.0 - lcd_w) / 2.0).max(0.0));
+    Text::new(&m.corners[0], Font::LABEL).color(k.ink_muted).show(&mut row, vec2(lw, 28.0));
+    ds::lcd_ink(&mut row, &m.shares[0], LCD_SIZE, LCD_CHARS, blink);
     // The triangle: the virtual box's corners on the board's 10..140 × 10..122.
     let box_ = Rect::from_min_max(tri.min + vec2(10.0, 10.0), tri.min + vec2(140.0, 122.0));
     let resp = ui.interact(tri, ui.id().with("imh-tri"), Sense::click_and_drag());
@@ -489,11 +491,11 @@ fn empire_panel(ui: &mut Ui, v: &View, st: &mut State, w: f32, acts: &mut Vec<Ac
 fn limit_row(ui: &mut Ui, m: &Money, st: &mut State, acts: &mut Vec<Act>, k: ds::Tokens) {
     let (label, text, part) = &m.limit;
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    let lw = 150.0;
+    // The bar starts 20 after its label, as the board's.
+    let lw = Text::new(label, Font::LABEL).layout(ui.ctx(), f32::INFINITY).width.min(200.0) + 4.0;
     Text::new(label, Font::LABEL).shrink(10.0).color(k.ink_muted).paint(ui, row.with_max_x(row.left() + lw));
-    let lcd = Rect::from_min_size(pos2(row.right() - 120.0, row.top()), vec2(120.0, 28.0));
-    ds::lcd_window(ui.painter(), lcd);
-    Text::new(text, Font::READOUT.sized(20.0)).right().shrink(14.0).color(k.lcd_ink).paint(ui, lcd.shrink2(vec2(8.0, 0.0)));
+    let well = row.with_min_x(row.right() - 120.0);
+    let lcd = ds::lcd(&mut ui.new_child(egui::UiBuilder::new().max_rect(well).layout(egui::Layout::top_down(egui::Align::Max))), text, LCD_SIZE, LCD_CHARS).rect;
     let track = Rect::from_min_max(pos2(row.left() + lw + 16.0, row.top()), pos2(lcd.left() - 16.0, row.bottom()));
     let resp = ui.interact(track, ui.id().with("imh-limit"), Sense::click_and_drag());
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered() || st.limit);
@@ -537,9 +539,7 @@ fn sort_head(ui: &Ui, rect: Rect, label: &str, on: bool, descending: bool, id: e
 /// column heads (sortable), the rows, and under them the range shown, a scroll bar and the row's hint.
 fn list_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
-    let inner = rect.shrink2(vec2(16.0, 12.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, vec2(16.0, 12.0));
     let planets = v.rows.iter().filter(|r| !r.fleet).count();
     let fleets = v.rows.len() - planets;
     let tabs = [format!("{}  {planets}", v.labels.planets), format!("{}  {fleets}", v.labels.fleets), format!("{}  {}", v.labels.empires, v.empires.len())];
@@ -708,9 +708,7 @@ fn empire_list(ui: &mut Ui, v: &View, st: &State, head: Rect, body: Rect, acts: 
 /// planet settings as drop-downs.
 fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.88);
-    let inner = rect.shrink2(vec2(24.0, 18.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, vec2(24.0, 18.0));
     let left = Rect::from_min_size(inner.min, vec2(236.0, inner.height()));
     // Back (the board's "‹ List") over the column, the globe under it.
     let back = Rect::from_min_size(left.min, vec2(left.width(), 34.0));
@@ -742,7 +740,7 @@ fn detail_panel(ui: &mut Ui, v: &View, d: &Detail, st: &mut State, size: egui::V
 /// One detail row: the label (150 wide) and the values on one baseline, or the setting's drop-down.
 fn detail_row(ui: &mut Ui, r: &DetailRow, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    const LABEL_W: f32 = 150.0;
+    const LABEL_W: f32 = 166.0;
     let h = if r.setting.is_some() { 26.0 } else { 22.0 };
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
     let base = ds::fit::baseline(rect, Font::DATA);
