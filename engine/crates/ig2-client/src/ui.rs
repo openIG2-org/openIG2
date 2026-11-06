@@ -1246,8 +1246,10 @@ impl Hud {
             crate::design_edit::Popup::PodRow { items } => m::Popup { button: 0x54, rows: items.iter().map(|&t| (t as i32, if t == 0 { empty.clone() } else { tech(t as i32) })).collect() },
         });
         let on = |id: u32| d.sub_zoom == 0.0 && d.spot_state(state, &techs, rules, id);
-        let names = if d.mode != 0 { [(5, "OK"), (6, "Cancel"), (7, "Auto"), (8, "Clear")] } else { [(1, "New"), (2, "Redesign"), (3, "Modify"), (4, "Delete")] };
-        v.buttons = names.map(|(id, l)| (id, ours(l), on(id)));
+        // Ours (deviation 544): Redesign is the exe's modify (spot 3, in place); the numbered copy (spot 2) has no button.
+        let names: &[(u32, &str)] = if d.mode != 0 { &[(5, "OK"), (6, "Cancel"), (7, "Auto"), (8, "Clear")] } else { &[(1, "New"), (3, "Redesign"), (4, "Delete")] };
+        v.buttons = names.iter().map(|&(id, l)| (id, ours(l), on(id))).collect();
+        v.taken = d.entry.as_ref().filter(|e| e.taken).map(|_| ours("Name in use"));
         v.labels = m::Labels { designs: ours("Blueprints"), parts: ours("Parts"), pods: ours("POD"), empty, choose: ours("Choose"), exit: ours("Exit"), name: label(1) };
         v.tips = tips.iter().map(|t| dec(t)).collect();
         v.bar = self.bar_view(state, rules, s, en as u8, gates, time, 5);

@@ -127,6 +127,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 533 | new game page, modern | one click on a race picks it and Start runs the campaign; Esc, Back and the right button close the page at once; it opens with race 0 and Normal preselected; the exe's race choice has the 3D heads and hot-spots | yes | mainscr.md §9.2, ADR 0078 |
 | 534 | help page, modern | the search field takes the keys while it is focused (pause, speed, O and M do not act while typing; the F-keys still pass); the wheel scrolls the topic (the original ignores it); the original's tooltips on its spots are gone | yes | help.md §10, ADR 0078 |
 | 535 | match history, modern | the history table scrolls; the classic screen pages with Newer and Older | yes | game-end.md §11, ADR 0034, ADR 0078 |
+| 544 | design, modern screen | Redesign edits the chosen design in place (the exe's modify, spot 3: OK keeps or refits the units) and only New makes a design; the exe's Redesign (spot 2, a numbered copy) has no modern button and `r` acts as Enter. A name another listed design has is refused: OK keeps the edit open, a typed name is not written while it matches. The exe takes any name; the classic screen keeps all of it | yes | design.md §14, ADR 0075 |
 
 ## Enhanced
 

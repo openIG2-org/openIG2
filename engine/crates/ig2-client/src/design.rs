@@ -288,6 +288,8 @@ pub struct Design {
     pub laser_glow: Option<crate::render::TexId>,
     /// `TutorialPaused` (delete is off).
     pub tutorial_paused: bool,
+    /// Ours: the modern panels are up (Redesign edits in place, names stay unique; deviation 544).
+    pub modern: bool,
     /// Order events for the next frame (`MultiSendPackets` before its `Design3DUpdate`: the tick's `Design_Main`
     /// sent them).
     pub(crate) events: Vec<ig2_sim::game::OrderEvent>,
@@ -370,6 +372,7 @@ impl Design {
             lasers: crate::kit::Lasers::default(),
             laser_glow: None,
             tutorial_paused: false,
+            modern: false,
             events: Vec::new(),
         };
         s.scroll_to_pointer();
@@ -1139,18 +1142,18 @@ mod tests {
     #[test]
     fn a_full_name_takes_a_key_at_the_cursor_and_drops_its_last() {
         use crate::design_edit::{EntryKey, NameEntry};
-        let entry = |text: &[u8], cursor, clear| Some(NameEntry { text: text.to_vec(), cursor, clear, stored: Some(4) });
+        let entry = |text: &[u8], cursor, clear| Some(NameEntry { text: text.to_vec(), cursor, clear, stored: Some(4), taken: false });
         let mut s = Design { entry: entry(b"ABCDEFGHIJKLMNOP", 3, false), ..blank() };
-        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"ABCxDEFGHIJKLMNO".to_vec())));
+        assert_eq!(s.entry_key(&[], EntryKey::Char(b'x')), Some((4, b"ABCxDEFGHIJKLMNO".to_vec())));
         // The cursor at `IOMaxLen`: nothing goes in.
         s.entry = entry(b"ABCDEFGHIJKLMNOP", 16, false);
-        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"ABCDEFGHIJKLMNOP".to_vec())));
+        assert_eq!(s.entry_key(&[], EntryKey::Char(b'x')), Some((4, b"ABCDEFGHIJKLMNOP".to_vec())));
         // The first key replaces the text, the cursor keys only drop the flag.
         s.entry = entry(b"ABCDEFGHIJKLMNOP", 16, true);
-        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"x".to_vec())));
+        assert_eq!(s.entry_key(&[], EntryKey::Char(b'x')), Some((4, b"x".to_vec())));
         s.entry = entry(b"Hawk", 4, true);
-        s.entry_key(EntryKey::Home);
-        assert_eq!(s.entry_key(EntryKey::Char(b'x')), Some((4, b"xHawk".to_vec())));
+        s.entry_key(&[], EntryKey::Home);
+        assert_eq!(s.entry_key(&[], EntryKey::Char(b'x')), Some((4, b"xHawk".to_vec())));
     }
 
     #[test]
@@ -1346,6 +1349,7 @@ mod tests {
             lasers: crate::kit::Lasers::default(),
             laser_glow: None,
             tutorial_paused: false,
+            modern: false,
             events: Vec::new(),
         }
     }

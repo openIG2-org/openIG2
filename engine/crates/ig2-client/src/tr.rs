@@ -265,7 +265,7 @@ const TABLE: &[(&str, &str)] = &[
     ("POD", "POD"),
     ("Choose", "Választás"),
     ("New", "Új"),
-    ("Modify", "Módosítás"),
+    ("Name in use", "A név már foglalt"),
     ("Delete", "Törlés"),
     ("OK", "Rendben"),
     ("Auto", "Automatikus"),

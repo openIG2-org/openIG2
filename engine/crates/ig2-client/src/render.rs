@@ -1526,6 +1526,7 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
     let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
     let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
     scene.modern = o.modern_design;
+    s.modern = o.modern_design;
     scene.draw(&mut frame, r, &l.install, &l.tables, &mut s, state, &techs, en, size);
     if o.modern_design {
         hud.modern_bar = true;
@@ -1632,7 +1633,7 @@ fn design_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::sc
                             n if n.len() == 1 => Some(EntryKey::Char(n.as_bytes()[0])),
                             _ => None,
                         };
-                        rename = k.and_then(|k| s.entry_key(k));
+                        rename = k.and_then(|k| s.entry_key(&world.game.state.designs[en], k));
                     }
                     Input::Key { name, down: true } => match name.as_str() {
                         "up" => s.key(Key::Up),

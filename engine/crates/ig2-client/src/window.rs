@@ -1533,6 +1533,7 @@ impl App {
                         let en = state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
                         let sc = self.design_scene.get_or_insert_with(|| crate::design_scene::DesignScene::new(&mut g.renderer, &self.install));
                         sc.modern = design_modern;
+                        d.modern = design_modern;
                         sc.draw(&mut frame, &mut g.renderer, &self.install, self.tables, d, state, &techs, en, size);
                         if design_modern {
                             let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);

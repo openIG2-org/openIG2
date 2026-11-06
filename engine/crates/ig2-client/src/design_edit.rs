@@ -92,6 +92,8 @@ pub struct NameEntry {
     pub clear: bool,
     /// The stored design it edits (`None` = the scratch).
     pub stored: Option<usize>,
+    /// Ours (modern, deviation 544): the text is another listed design's name.
+    pub taken: bool,
 }
 
 /// A key of the name input.
@@ -146,6 +148,13 @@ pub fn numbered_name(designs: &[[u8; 0x84]], base: &[u8]) -> Vec<u8> {
     let mut out = stem[..stem.len().min(12)].to_vec();
     out.extend_from_slice(n.to_string().as_bytes());
     out
+}
+
+/// Ours (modern, deviation 544): `name` is the name of a listed live design of `designs` other than `except`.
+pub fn name_taken(designs: &[[u8; 0x84]], name: &[u8], except: Option<usize>) -> bool {
+    designs.iter().enumerate().skip(1).any(|(i, r)| {
+        Some(i) != except && i16_at(&r[..], field::DELETED) >= 0 && r[field::LISTED] & 1 != 0 && self::name(r) == name
+    })
 }
 
 /// `ModifyPlan` (exe 0x4b5f40)'s version bump: a non-zero trailing number after a `v` or `V` (not the first
@@ -263,7 +272,7 @@ impl Design {
 
     /// The name input on `stored` (the viewing mode's design) or the scratch.
     fn start_entry(&mut self, text: Vec<u8>, stored: Option<usize>) {
-        self.entry = Some(NameEntry { cursor: text.len(), text, clear: true, stored });
+        self.entry = Some(NameEntry { cursor: text.len(), text, clear: true, stored, taken: false });
     }
 
     /// `RedesignPlan` (ELF 0x508a60 / exe 0x4b6940): a copy of the chosen design, renamed, as a new design.
@@ -306,6 +315,15 @@ impl Design {
     /// `DesignTervezesOk(keepOld)` (ELF 0x50b310 / exe 0x4b1b20): the scratch goes to the sim as order 0x33 unless
     /// a redesign left it equal to its original (`TervEqual`).
     fn store(&mut self, c: &Ctx, keep_old: bool) {
+        // Ours (modern, deviation 544): a name another design has keeps the edit open, the name input started.
+        let except = e_except(self.mode, self.current());
+        if self.modern && name_taken(&c.state.designs[c.en()], name(&self.scratch), except) {
+            self.start_entry(name(&self.scratch).to_vec(), None);
+            if let Some(e) = &mut self.entry {
+                e.taken = true;
+            }
+            return;
+        }
         self.can_modify = false;
         self.recompute(c);
         let mode = self.mode;
@@ -626,7 +644,10 @@ impl Design {
     /// character clears the text first while `IOGombnyomasraTorles` holds, then goes in at the cursor while it is
     /// before `IOMaxLen`; a full text loses its last character to it. Backspace and Delete clear the flagged text;
     /// the cursor keys only drop the flag.
-    pub fn entry_key(&mut self, k: EntryKey) -> Option<(usize, Vec<u8>)> {
+    /// Modern (deviation 544): a stored design's name is not written while it is another listed design's (`designs`).
+    pub fn entry_key(&mut self, designs: &[[u8; 0x84]], k: EntryKey) -> Option<(usize, Vec<u8>)> {
+        let except = e_except(self.mode, self.current());
+        let modern = self.modern;
         let e = self.entry.as_mut()?;
         let clear = std::mem::take(&mut e.clear);
         if clear && matches!(k, EntryKey::Char(_) | EntryKey::Back | EntryKey::Delete) {
@@ -652,12 +673,14 @@ impl Design {
             EntryKey::End => e.cursor = e.text.len(),
             _ => {}
         }
-        let (text, stored) = (e.text.clone(), e.stored);
+        e.taken = modern && name_taken(designs, &e.text, e.stored.or(except));
+        let (text, stored, taken) = (e.text.clone(), e.stored, e.taken);
         match stored {
             None => {
                 set_name(&mut self.scratch, &text);
                 None
             }
+            Some(_) if taken => None,
             Some(d) => Some((d, text)),
         }
     }
@@ -678,7 +701,8 @@ impl Design {
         if self.mode != 0 || self.count() == 0 || !self.spot_state(c.state, c.techs, c.rules, 2) {
             return;
         }
-        if redesign {
+        // Modern (deviation 544): `r` edits in place like Enter; only New makes a design.
+        if redesign && !self.modern {
             self.redesign(c);
         } else {
             self.modify(c);
@@ -741,6 +765,11 @@ impl Design {
 
 /// `TervEqual(EN, AktTerv, −1)` (exe 0x542260 → `TervEqual2` 0x5421e0): the same class, owner race, hull, hull tech
 /// and slot count, and the same tech and count in every slot (the name and the price aside).
+/// The design the scratch replaces when stored (`ModifyPlan`'s mode 3), not a clash with its own name.
+fn e_except(mode: u8, current: usize) -> Option<usize> {
+    (mode == 3).then_some(current)
+}
+
 fn design_equal(a: &[u8; 0x84], b: &[u8; 0x84]) -> bool {
     let n = i32_at(a, 0x4c).clamp(0, 12) as usize;
     i16_at(a, 0x16) == i16_at(b, 0x16)
@@ -779,5 +808,72 @@ mod tests {
         assert_eq!(bumped_name(b"Hawk2"), b"Hawk2");
         assert_eq!(bumped_name(b"v3"), b"v3");
         assert_eq!(bumped_name(b"Hawk v0"), b"Hawk v0");
+    }
+
+    #[test]
+    fn a_name_is_taken_by_another_listed_live_design() {
+        let mut t = vec![[0u8; 0x84]; 4];
+        for (i, n) in [(1, &b"Hawk"[..]), (2, b"Romb"), (3, b"Gone")] {
+            set_name(&mut t[i], n);
+            t[i][field::LISTED] = 1;
+        }
+        t[3][field::DELETED..field::DELETED + 2].copy_from_slice(&(-1i16).to_le_bytes());
+        assert!(name_taken(&t, b"Hawk", None));
+        assert!(!name_taken(&t, b"Hawk", Some(1)), "its own name");
+        assert!(!name_taken(&t, b"Gone", None), "deleted");
+        assert!(!name_taken(&t, b"Haw", None));
+        t[2][field::LISTED] = 0;
+        assert!(!name_taken(&t, b"Romb", None), "out of the list (an upgraded design's old record)");
+    }
+
+    /// quick-1.sav (skips without the install and save): the modern Redesign (spot 3) stores over the chosen design,
+    /// a name another design has keeps the edit open, and a typed stored name equal to another's isn't written.
+    #[test]
+    fn the_modern_redesign_saves_over_the_design_under_a_unique_name() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let volatile = crate::rules::scenario_globals(&install).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let mut w = crate::world::World::load(&save, &rules, &defaults, &volatile);
+        let en = w.game.state.mem.i32(va::EN).clamp(0, 18) as usize;
+        let listed = |s: &SaveState| s.designs[en].iter().skip(1).filter(|r| i16_at(&r[..], field::DELETED) >= 0 && r[field::LISTED] & 1 != 0).count();
+        let before = listed(&w.game.state);
+        let order = {
+            let techs = w.game.state.tech();
+            let c = Ctx { install: &install, state: &w.game.state, techs: &techs, rules: &tables, sim: &rules.ai, debug: false, texts: None };
+            let mut s = Design::open(&w.game.state, false);
+            s.modern = true;
+            assert!(s.count() >= 2, "two designs to clash");
+            s.pointer = (1..=s.count()).find(|&m| { s.pointer = m; s.spot_state(c.state, c.techs, c.rules, 3) }).expect("an editable design");
+            let d = s.current();
+            let other = (1..=s.count()).map(|k| s.order[k]).find(|&k| k != d).unwrap();
+            let other_name = name(c.stored(other).unwrap()).to_vec();
+            // `r` edits in place like Enter.
+            s.edit_key(&c, true);
+            assert_eq!(s.mode, 3);
+            set_name(&mut s.scratch, &other_name);
+            s.store(&c, false);
+            assert!(s.orders.is_empty() && s.mode == 3 && s.entry.as_ref().is_some_and(|e| e.taken), "refused");
+            set_name(&mut s.scratch, b"Unique Name");
+            s.store(&c, false);
+            assert_eq!(s.mode, 0);
+            // A stored design's name typed into another's isn't written.
+            s.start_entry(Vec::new(), Some(d));
+            let mut last = None;
+            for &ch in &other_name {
+                last = s.entry_key(&c.state.designs[en], EntryKey::Char(ch));
+            }
+            assert_eq!(last, None);
+            assert!(s.entry.as_ref().is_some_and(|e| e.taken));
+            (s.orders.pop().unwrap(), d)
+        };
+        let (o, d) = order;
+        assert!(matches!(o, DesignOrder::Store { mode: 3, design, .. } if design as usize == d), "{o:?}");
+        w.game.design_order(en as u8, o);
+        assert_eq!(listed(&w.game.state), before, "no new design");
+        assert_eq!(name(&w.game.state.designs[en][d]), b"Unique Name");
     }
 }

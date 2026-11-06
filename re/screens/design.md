@@ -420,6 +420,7 @@ seeing press and release a frame late), every sound in order and tick.
 Missing: the 3D pass's one-frame-late pointer (the hover marker may start a tick early); the first marked frame's
 part-tint (the client tints the whole model).
 With "Modern design screen" (`ModernDesign`, default on; ADR 0075) the screen is design-kit panels around the turning hull acting through the hot-spots' own code; classic stays when off.
+The modern screen's buttons (ours, deviation 544): New (spot 1), Redesign (spot 3, `ModifyPlan`: the chosen design edited in place, its `v<n>` version bumped as the exe's modify does; OK keeps or refits the units, order 0x33 mode 3) and Delete (spot 4); the exe's spot 2 (`RedesignPlan`, a numbered copy stored as a new design, mode 2) has no modern button, and `r` acts as Enter there. A name (the scratch's on OK, a stored design's while typed) equal byte for byte to another listed design's (`+0x16 >= 0`, `+0x18` bit 0; not the edited one) is refused: OK keeps the edit open with the name input started, and a typed stored name is not written while it matches (the input marks it). The exe takes any name (`DesignEntertNyomott`, `DesignTervezesOk` check none).
 Open `re/deviations.md` rows: 66 (hull turn phase), 84, 114 (first marked
 frame tint), 229 (one frame of 2D latency, found here), 359.
 Captures: `run_screendiff.py <install> quick-1.sav design` (still after 600 UI ticks), with `--script

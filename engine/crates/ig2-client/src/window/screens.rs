@@ -240,7 +240,8 @@ impl App {
             _ => return,
         };
         let Some(d) = &mut self.design else { return };
-        if let Some((k, name)) = d.entry_key(key) {
+        let en = self.world.game.state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
+        if let Some((k, name)) = d.entry_key(self.world.game.state.designs.get(en).map_or(&[][..], |t| &t[..]), key) {
             // Multiplayer: the shared state changes only through the lockstep (deviation 96).
             if self.world.net.is_some() {
                 let n = name.iter().take_while(|&&c| c != 0).take(0x15).copied().collect();
