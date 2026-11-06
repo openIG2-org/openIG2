@@ -780,18 +780,18 @@ impl Hud {
 
     /// The starmap's radial menu, the planet's long info and the select menus (re/screens/starmap.md §14–§17) at the
     /// camera's zoom.
-    /// Under the modern HUD (`modern`) only the rename: its own [`Self::modern_menus`] show the rest.
+    /// Nothing under the modern HUD (`modern`): its own [`Self::modern_menus`] and the card's field show them.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_starmap_menus(&self, f: &mut Frame, m: &crate::starmap_menus::Menus, p: &crate::starmap_panels::Panels, state: &SaveState, rules: &ig2_rules::Rules, size: [f32; 2], zoom: f32, time: f32, modern: bool) {
         let Some(font) = &self.font else { return };
         let d = crate::starmap_panels::Draw2d { font, white: self.white, v: Virtual::new(size), palette: &self.palette, texts: &self.texts, time };
         let t = crate::starmap_menus::MenuTexts { texts: &self.texts, txt17: &self.txt17, empire_names: &self.empire_names, infostr: &self.infostr };
-        // `StarmapGfx2D_3`'s rename entry, over the short info.
-        if let Some(r) = &m.rename {
-            r.draw(f, &d, time * 1000.0);
-        }
         if modern {
             return;
+        }
+        // `StarmapGfx2D_3`'s rename entry, over the short info (the modern card has its own field).
+        if let Some(r) = &m.rename {
+            r.draw(f, &d, time * 1000.0);
         }
         m.draw(f, &d, &t, state, rules, &self.pics, &self.starmap_brushes, zoom, crate::starmap_hud::counter(time), &p.faders.starf, p.exit_fader());
     }
@@ -889,6 +889,7 @@ impl Hud {
                 tanks,
                 product: product || (debug && sel.mode == 1),
                 redirect: menus.redirect,
+                caret: None,
                 tip: crate::starmap_tip::tip(&c, [1.0, 470.0]).filter(|t| t.id == 8).map(|t| dec(&t.text)).unwrap_or_default(),
                 left: dec(&self.texts.ours("Details")),
                 right: match sel.mode {
@@ -897,10 +898,11 @@ impl Hud {
                 },
             }
         });
-        // The rename (both buttons on the info box) types into the title.
+        // The rename (both buttons on the info box) types into the title, a text field then.
         let mut info = info;
         if let (Some(i), Some(r)) = (&mut info, &menus.rename) {
-            i.title = format!("{}_", dec(&r.text));
+            i.title = dec(&r.text);
+            i.caret = Some(r.cursor);
         }
         out.info = info;
         out.menus = self.modern_menus(state, rules, menus, view.camera.zoom, view.camera.size, time);

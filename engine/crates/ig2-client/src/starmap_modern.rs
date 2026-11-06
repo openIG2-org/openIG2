@@ -112,6 +112,9 @@ pub struct Research {
 #[derive(Debug, Clone, Default)]
 pub struct Info {
     pub title: String,
+    /// While the title is renamed (both buttons on the card): the caret before this character; the title is then a
+    /// text field.
+    pub caret: Option<usize>,
     pub colour: Color32,
     pub lines: Vec<(String, Color32)>,
     /// Richness and habitability (planet mode): label, value.
@@ -714,7 +717,10 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
             ui.vertical(|ui| {
                 ui.set_width(main_w);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                Text::new(&info.title, Font::CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0));
+                match info.caret {
+                    Some(c) => _ = ds::text_field(ui, &info.title, Some(c), "", vec2(main_w, 28.0)),
+                    None => _ = Text::new(&info.title, Font::CARD_NAME).color(k.ink).show(ui, vec2(main_w, 28.0)),
+                }
                 for (l, c) in info.lines.iter().take(6) {
                     Text::new(l, Font::CARD_LINE).color(*c).show(ui, vec2(main_w, 20.0));
                 }

@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern starmap: renaming a planet or fleet types into the selection card's own text field, without the classic rename text drawn behind and beside the card (issue #79).
 - Modern starmap: the selection card no longer draws a black disc behind a turning ship, fleet or trader; the model turns on the card itself (planets keep their globe) (issue #84).
 - Modern starmap, fleet and space battle screens on the shared look: the tooltips with their key, the camera and radial menu icons, the settings lists and the planet list from the shared parts; the long info's settings row, the lists, the fleet headers, the battle's radar and info box on their design boards (issue #75).
 - Modern multiplayer (connection page and room), statistics and save/load screens use the shared look for tables, tags, text fields and drop-downs (the room's race and seat choices are the shared drop-downs), with upright table numbers and titles, panels and rows aligned on their design boards; the relay panel has its "Address" label (issue #75).
