@@ -160,7 +160,8 @@ impl App {
     /// original's hot-spots' code (`Trade::modern_*`); OK's order leaves with the screen's next step.
     pub(super) fn trade_modern_apply(&mut self) {
         use crate::trade_modern::Act;
-        if !self.trade_modern_up() {
+        // Ours (ADR 0084): nothing more while the screen closes.
+        if !self.trade_modern_up() || self.trade.as_ref().is_some_and(|t| t.modern.is_some_and(|m| m.closing())) {
             self.trade_acts.clear();
             return;
         }
@@ -187,7 +188,7 @@ impl App {
     /// rest as the original's presses (`SpyView::modern_press`, `modern_select`).
     pub(super) fn spy_modern_apply(&mut self) {
         use crate::spy_modern::Act;
-        if !self.spy_modern_up() {
+        if !self.spy_modern_up() || self.spy.as_ref().is_some_and(|s| s.screen.modern.is_some_and(|m| m.closing())) {
             self.spy_acts.clear();
             return;
         }
@@ -227,7 +228,7 @@ impl App {
     /// path as the original's presses on them (`diplomacy::Open::select`, `pick`).
     pub(super) fn diplomacy_modern_apply(&mut self) {
         use crate::diplomacy_modern::Act;
-        if !self.diplomacy_modern_up() {
+        if !self.diplomacy_modern_up() || self.diplomacy.as_ref().is_some_and(|d| d.screen.modern.is_some_and(|m| m.closing())) {
             self.diplomacy_acts.clear();
             return;
         }

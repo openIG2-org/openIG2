@@ -1236,6 +1236,10 @@ impl App {
         let spy_modern = self.spy_modern_up();
         let trade_modern = self.trade_modern_up();
         let mut tmv = None;
+        // Ours (ADR 0084): the modern diplomacy, spy and trade screens' own opening and closing.
+        let dip_in = self.diplomacy.as_ref().and_then(|d| d.screen.modern).unwrap_or(crate::gui::Transition::open());
+        let spy_in = self.spy.as_ref().and_then(|s| s.screen.modern).unwrap_or(crate::gui::Transition::open());
+        let trade_in = self.trade.as_ref().and_then(|t| t.modern).unwrap_or(crate::gui::Transition::open());
         // Ours (ADR 0071): the production view's and the research screen's modern panels; the original's production
         // view (its 3D buttons, faders and texts) is not drawn under them.
         let production_modern = self.production_modern_up();
@@ -1352,6 +1356,9 @@ impl App {
             h.modern_bar = spy_modern;
             let mut frame = spy.build(h, &d, size, self.install.lang() == ig2_formats::text::Lang::Hu);
             frame.backdrop = backdrop;
+            if spy_modern {
+                spy_in.veil(&mut frame, backdrop, h.white, size);
+            }
             h.draw(&mut frame, size, &self.world.ui, self.tables, crate::ui::Screen::Spy, t);
             if let Some(tu) = &self.tutorial {
                 h.draw_tutorial(&mut frame, tu, size, 7);
@@ -1363,7 +1370,7 @@ impl App {
                 v.bar.bind_keys(&self.bindings);
                 let style = crate::starmap_modern::style(h, size);
                 let (st, acts, band) = (&mut self.spy_modern, &mut self.spy_acts, g.band());
-                g.gui.run(band, &style, |ctx| acts.extend(crate::spy_modern::show(ctx, &v, st)));
+                g.gui.run(band, &style, |ctx| acts.extend(crate::gui::ds::entering(spy_in.panels(), || crate::spy_modern::show(ctx, &v, st))));
                 let mut f = crate::render::Frame::new([0.0; 4]);
                 ov.draw(&mut f, h, size);
                 top = Some(f);
@@ -1426,6 +1433,9 @@ impl App {
                 let mut f = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
                 if let (Some(d), Some(h)) = (&mut self.diplomacy, &self.hud) {
                     d.draw(&mut f, &mut g.renderer, &self.install, self.tables, h, &self.world.game.state, size, t);
+                    if dip_modern {
+                        dip_in.veil(&mut f, backdrop, h.white, size);
+                    }
                 }
                 (f, crate::ui::Screen::Diplomacy)
             }
@@ -1542,6 +1552,7 @@ impl App {
                         sc.set_modern(trade_modern.then_some(crate::trade_modern::WELL_AT));
                         sc.draw(&mut frame, &mut g.renderer, &self.install, self.tables, tr, size);
                         if trade_modern {
+                            trade_in.veil(&mut frame, backdrop, h.white, size);
                             let gates = self.tutorial.as_ref().map(|t| &t.t.gates.screens);
                             let mut m = crate::trade_modern::view(h, &self.world.game.state, self.tables, &self.world.ui, tr, gates, t);
                             m.bar.bind_keys(&self.bindings);
@@ -1635,7 +1646,7 @@ impl App {
         if let (Some(tv), Some(h)) = (&tmv, &self.hud) {
             let style = crate::starmap_modern::style(h, size);
             let (st, acts, band) = (&mut self.trade_modern, &mut self.trade_acts, g.band());
-            g.gui.run(band, &style, |ctx| acts.extend(crate::trade_modern::show(ctx, tv, st)));
+            g.gui.run(band, &style, |ctx| acts.extend(crate::gui::ds::entering(trade_in.panels(), || crate::trade_modern::show(ctx, tv, st))));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -1645,7 +1656,7 @@ impl App {
             let (st, acts, band, install) = (&mut self.diplomacy_modern, &mut self.diplomacy_acts, g.band(), &self.install);
             g.gui.run(band, &style, |ctx| {
                 st.pics.get_or_insert_with(|| crate::info_modern::Pics::load(ctx, install));
-                acts.extend(crate::diplomacy_modern::show(ctx, dv, st));
+                acts.extend(crate::gui::ds::entering(dip_in.panels(), || crate::diplomacy_modern::show(ctx, dv, st)));
             });
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);

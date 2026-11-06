@@ -5,6 +5,9 @@
 //! ([`style`]); the shared widgets for the pages are below it.
 
 pub mod ds;
+pub mod transition;
+
+pub use transition::Transition;
 
 use crate::theme::Theme;
 use egui::{Color32, CornerRadius, Margin, Shadow, Stroke, Vec2};

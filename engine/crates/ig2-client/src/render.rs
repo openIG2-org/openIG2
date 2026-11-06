@@ -1178,7 +1178,7 @@ fn diplomacy_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Load
 fn diplomacy_sequence(o: &crate::Options, out: &std::path::Path, script: &crate::script::Script, l: &crate::Loaded, world: &mut crate::world::World, r: &mut Renderer, hud: &mut crate::ui::Hud) -> Result<(), String> {
     use crate::script::Input;
     let mut d = crate::diplomacy::Open::new(r, &l.install, &l.tables, &hud.texts, &world.game.state);
-    d.enter(&l.tables, &hud.texts, &world.game.state, true);
+    d.enter(&l.tables, &hud.texts, &world.game.state, true, false);
     d.scene.acttime = o.acttime;
     let size = [o.size.0 as f32, o.size.1 as f32];
     let mut inp = crate::diplomacy::Input::default();

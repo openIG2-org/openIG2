@@ -262,7 +262,7 @@ the `SaveScreen` picture: [`overlay-background.md`](overlay-background.md)). Wit
 `dipframe`, the opening's grabs read 17.14, 42.86, 65.71, 80.
 
 ## 9. Client status
-A modern page (`diplomacy_modern.rs`, the Modern interface (`Interface`, default)) acts through this screen's code (ADR 0076); off = the classic screen described below.
+A modern page (`diplomacy_modern.rs`, the Modern interface (`Interface`, default)) acts through this screen's code (ADR 0076); off = the classic screen described below. The modern page opens and closes with its own short transitions instead of the original's animation and sounds (ADR 0084); Classic keeps the original's.
 `ig2-client::diplomacy` (`diplomacy.rs`, the 3D frame in `diplomacy_scene.rs`): drawn from the sim's state each frame,
 the dialogue state the client's own. Done: §2–§7 (opening/closing, menus as press-and-hold cascades rebuilt each
 frame, composing, sending, answering, counter-proposals, `GetSzoveg`, the special menu, sounds). The cages' wires are

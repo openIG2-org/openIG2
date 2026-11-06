@@ -14,8 +14,13 @@ impl App {
         }
         let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) else { return };
         let d = crate::spy_screen::SpyData::read(&self.world.game.state, self.world.curr.human as usize, self.world.game.rules, self.tables);
-        match crate::spy_screen::SpyView::open(&mut g.renderer, &self.install, h, &d, true, &mut self.spy_scene) {
-            Ok(v) => self.spy = Some(v),
+        // Ours (ADR 0084): the modern screen opens with its own transition instead of the telescopes.
+        let modern = self.display.modern;
+        match crate::spy_screen::SpyView::open(&mut g.renderer, &self.install, h, &d, !modern, &mut self.spy_scene) {
+            Ok(mut v) => {
+                v.screen.modern = modern.then(crate::gui::Transition::opening);
+                self.spy = Some(v);
+            }
             Err(e) => eprintln!("ig2-client: spy screen: {e}"),
         }
     }
@@ -58,7 +63,7 @@ impl App {
     pub(super) fn enter_diplomacy(&mut self, animated: bool) {
         if let (Some(g), Some(h)) = (&mut self.gpu, &self.hud) {
             let d = self.diplomacy.get_or_insert_with(|| crate::diplomacy::Open::new(&mut g.renderer, &self.install, self.tables, &h.texts, &self.world.game.state));
-            d.enter(self.tables, &h.texts, &self.world.game.state, animated);
+            d.enter(self.tables, &h.texts, &self.world.game.state, animated, self.display.modern);
             self.overlay = Some(crate::ui::Screen::Diplomacy);
         }
     }
@@ -282,7 +287,11 @@ impl App {
         let lines = crate::trade::ticker_lines(&h.texts);
         self.drop_research();
         self.drop_design();
-        self.trade = Some(crate::trade::Trade::open(&self.world.game.state, opens_animated(from), from, lines, advance));
+        // Ours (ADR 0084): the modern screen opens with its own transition instead of the frame's.
+        let modern = self.display.modern;
+        let mut t = crate::trade::Trade::open(&self.world.game.state, opens_animated(from) && !modern, from, lines, advance);
+        t.modern = modern.then(crate::gui::Transition::opening);
+        self.trade = Some(t);
         self.overlay = Some(crate::ui::Screen::Trade);
     }
 

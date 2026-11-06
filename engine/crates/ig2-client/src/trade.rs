@@ -276,6 +276,8 @@ pub struct Trade {
     on: [bool; 0x26],
     pod_x: i32,
     pub list_frame: DesignFrame,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub modern: Option<crate::gui::Transition>,
     pub tip: Tooltip,
     pub frames: u64,
     pub sounds: Vec<SoundId>,
@@ -355,6 +357,7 @@ impl Trade {
             on: [false; 0x26],
             pod_x: 200,
             list_frame: DesignFrame::default(),
+            modern: None,
             tip: Tooltip::default(),
             frames: 0,
             sounds: Vec::new(),
@@ -374,7 +377,14 @@ impl Trade {
     /// `Trade_Kilep` towards another game screen `to`: the closing runs out (`traframe` down by 0.6 a tick) before
     /// the screen goes; true = gone now (towards the messages, help or options screen it goes at once, silently).
     pub fn leave(&mut self, to: i32) -> bool {
-        if !self.animated || matches!(to, 10 | 1 | 0xd) {
+        if matches!(to, 10 | 1 | 0xd) {
+            return true;
+        }
+        if let Some(t) = &mut self.modern {
+            t.close();
+            return false;
+        }
+        if !self.animated {
             return true;
         }
         if !self.closing && !self.leaving {
@@ -387,12 +397,15 @@ impl Trade {
 
     /// Leaving or closing (a screen change is under way).
     pub fn changing(&self) -> bool {
-        self.closing || self.leaving
+        self.closing || self.leaving || self.modern.is_some_and(|t| t.closing())
     }
 
     /// The closing has finished.
     pub fn closed(&self) -> bool {
-        self.closing && self.frame <= 0.0
+        match &self.modern {
+            Some(t) => t.closed(),
+            None => self.closing && self.frame <= 0.0,
+        }
     }
 
     /// Hold the screen at rest (snapshots).
@@ -563,6 +576,9 @@ impl Trade {
     /// the frame's input (the exe runs the last three per drawn frame; one frame a tick here, as the captures run).
     pub fn step(&mut self, state: &SaveState) {
         self.frames += 1;
+        if let Some(t) = &mut self.modern {
+            t.tick();
+        }
         let m = Market::of(state);
         let e = en(state);
         let deliveries = state.mem.i32(va::TRADE_DELIVERY_COUNTS + 4 * e as u32);

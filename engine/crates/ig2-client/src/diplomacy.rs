@@ -623,6 +623,8 @@ pub struct Screen {
     /// it; `Diplomacy_Kilep` then draws its frame at `dipframe` 80 at once, before its first `FRISSITES` step).
     close_asked: bool,
     close_drawn: bool,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub modern: Option<crate::gui::Transition>,
     /// The client's own generator for the unseeded text variants (ADR 0003: not the sim's libc stream).
     rng: u32,
     /// Variant memory so a text doesn't change every frame.
@@ -691,6 +693,7 @@ impl Screen {
             kor_turn: 0.0,
             close_asked: false,
             close_drawn: false,
+            modern: None,
             rng: 0x1234_5678,
             cache: None,
         };
@@ -711,6 +714,9 @@ impl Screen {
     /// `FRISSIT_Diplomacy2` (§4), one 10 ms UI tick on an open screen.
     pub fn ui_tick(&mut self) {
         self.ui_ticks += 1;
+        if let Some(t) = &mut self.modern {
+            t.tick();
+        }
         if self.animated && !self.closing && !self.opened && self.started {
             self.dipframe = (self.dipframe + 0.285_714_3).min(80.0);
         }
@@ -768,6 +774,10 @@ impl Screen {
         if quiet || !self.opened {
             return true;
         }
+        if let Some(t) = &mut self.modern {
+            t.close();
+            return false;
+        }
         if !self.closing && !self.close_asked {
             (self.close_asked, self.close_drawn) = (true, false);
             self.sounds.push(crate::audio::SoundId::new(ig2_rules::sounds::Table::Dip, 1));
@@ -787,12 +797,15 @@ impl Screen {
 
     /// The closing has drawn its frame at 0 (`Diplomacy_Kilep::voltnulla`).
     pub fn closed(&self) -> bool {
-        self.closing && self.zero_frames >= 1
+        match &self.modern {
+            Some(t) => t.closed(),
+            None => self.closing && self.zero_frames >= 1,
+        }
     }
 
     /// The 2D passes run (`dipKINYITVA && !dipBECSUKAS`).
     pub fn live(&self) -> bool {
-        self.opened && !self.closing
+        self.opened && !self.closing && !self.modern.is_some_and(|t| t.closing())
     }
 
     /// `Diplomacy3DUpdate`'s steps (§3.1), once per drawn frame.
@@ -1608,12 +1621,14 @@ impl Open {
         Self { screen: Screen::new(rules, ui, &v), texts: Texts::load(install, ui), scene: crate::diplomacy_scene::DiplomacyScene::load(r, install, rules), design, last3d: None }
     }
 
-    /// `Diplomacy_Belep` (§3.1): the screen's state afresh, with the opening unless `animated` is false.
-    pub fn enter(&mut self, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState, animated: bool) {
+    /// `Diplomacy_Belep` (§3.1): the screen's state afresh, with the opening unless `animated` is false; `modern`
+    /// (ADR 0084): with the modern screen's own opening instead.
+    pub fn enter(&mut self, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState, animated: bool, modern: bool) {
         let wait_press = self.screen.wait_press;
         self.screen = Screen::new(rules, ui, &View::read(state));
         self.screen.wait_press = wait_press;
-        self.screen.enter(animated);
+        self.screen.enter(animated && !modern);
+        self.screen.modern = modern.then(crate::gui::Transition::opening);
         self.last3d = None;
     }
 

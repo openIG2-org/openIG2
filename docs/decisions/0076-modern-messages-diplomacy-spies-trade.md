@@ -53,6 +53,8 @@ given (`--dip-pick M,R;...` replays menu picks first).
 - **Kept 3D**: the diplomacy ring with the leader's video, raised to the board's centre (`DiplomacyScene::modern`: no
   background picture, grid or head cages); the spy agents turning on their pedestals (`Pose::bare`: no frame panels or
   wire sphere); the trade screen's chosen hull turning in a well (`TradeScene::set_modern`, 1.3 times the size).
+  Amended by ADR 0084: the three screens no longer run the original's opening and closing under the page; they
+  open and close with their own transitions, the renders at rest in their wells.
 - **Diplomacy**: contacts as cards (leader, empire, relation; a green blink while a message waits), the selected
   empire's card, the proposal menus as a click-opened cascade of panels, the dialogue panel with each side's lines under
   its empire's name and the one-level answer menus as buttons, an Exit plate.

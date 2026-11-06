@@ -83,9 +83,41 @@ pub fn tip_text(tips: &[String], id: u32) -> &str {
     tips.get(id as usize).map_or("", |s| s.as_str())
 }
 
+thread_local! {
+    /// How far the [`place`]d panels are in ([`entering`]).
+    static ENTRANCE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+}
+
+/// How far a panel slides in from its side (points).
+const ENTRANCE_SLIDE: f32 = 48.0;
+
+/// Ours (ADR 0084): run `page` with its [`place`]d panels `t` (0..1) of the way in: each fades in and slides in from
+/// the side of the screen it stands on (left or right, else from above or below), as a modern screen opens and
+/// closes ([`crate::gui::Transition::panels`]).
+pub fn entering<R>(t: f32, page: impl FnOnce() -> R) -> R {
+    let old = ENTRANCE.with(|e| e.replace(t.clamp(0.0, 1.0)));
+    let r = page();
+    ENTRANCE.with(|e| e.set(old));
+    r
+}
+
+/// The offset of a panel at `rect` on `screen` that is `t` of the way in.
+fn entrance_offset(rect: Rect, screen: Rect, t: f32) -> Vec2 {
+    if t >= 1.0 {
+        return Vec2::ZERO;
+    }
+    let d = rect.center() - screen.center();
+    let dir = if d.x.abs() > rect.width() * 0.25 { Vec2::new(d.x.signum(), 0.0) } else { Vec2::new(0.0, if d.y < 0.0 { -1.0 } else { 1.0 }) };
+    dir * (1.0 - t) * ENTRANCE_SLIDE
+}
+
 /// `add` in a fixed rectangle of the screen (an area `id` of its own, top-down).
 pub fn place<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    egui::Area::new(Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
+    let t = ENTRANCE.with(|e| e.get());
+    egui::Area::new(Id::new(id)).fixed_pos(rect.min + entrance_offset(rect, ctx.screen_rect(), t)).fade_in(false).show(ctx, |ui| {
+        if t < 1.0 {
+            ui.multiply_opacity(t);
+        }
         ui.set_min_size(rect.size());
         ui.set_max_size(rect.size());
         add(ui)

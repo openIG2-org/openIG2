@@ -317,6 +317,8 @@ pub struct SpyScreen {
     pub tip: crate::kit::Tooltip,
     /// Lines for the message ticker (`ScrollHibaUzenet`), taken by the window.
     pub errors: Vec<Vec<u8>>,
+    /// Ours (ADR 0084): the modern screen's own opening and closing (the original's runs only without it).
+    pub modern: Option<crate::gui::Transition>,
 }
 
 impl SpyScreen {
@@ -357,6 +359,7 @@ impl SpyScreen {
             held: false,
             tip: crate::kit::Tooltip::default(),
             errors: Vec::new(),
+            modern: None,
         };
         s.plan = Plan::init();
         s.fix_cursor(d);
@@ -601,6 +604,10 @@ impl SpyScreen {
     /// `Spy_Kilep`: leaving the screen. Animated, the frame closes first (`spyBECSUKAS`, frame 50 → 0); returns
     /// whether the screen can go now. The original loops `UpdateFrame` + `FRISSITES` until frame 0 was drawn once.
     pub fn leave(&mut self) -> bool {
+        if let Some(t) = &mut self.modern {
+            t.close();
+            return t.closed();
+        }
         if !self.animated {
             return true;
         }
@@ -610,6 +617,9 @@ impl SpyScreen {
 
     /// The closing has drawn frame 0 (`Spy_Kilep::voltnulla`) and one more frame.
     pub fn closed(&mut self) -> bool {
+        if let Some(t) = &self.modern {
+            return t.closed();
+        }
         if !self.closing || self.frame != 0.0 {
             return false;
         }
@@ -1212,6 +1222,9 @@ impl SpyView {
         self.screen.applied(d);
         // `Spying3DUpdate` runs per drawn frame (`spyFrameValtozo` counts them): ours once per UI frame.
         for _ in 0..ui_frames {
+            if let Some(t) = &mut self.screen.modern {
+                t.tick();
+            }
             self.screen.ui_frame(d);
             let spots = self.scene.spots(&self.screen.pose(d, None));
             self.screen.settle(d, &spots);

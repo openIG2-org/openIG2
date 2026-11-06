@@ -94,8 +94,8 @@ impl App {
             || self.research.as_ref().is_some_and(|r| r.closing)
             || self.design.as_ref().is_some_and(|d| d.closing)
             || self.trade.as_ref().is_some_and(|t| t.changing())
-            || self.spy.as_ref().is_some_and(|s| s.screen.closing)
-            || (self.overlay == Some(Screen::Diplomacy) && self.diplomacy.as_ref().is_some_and(|d| d.screen.closing))
+            || self.spy.as_ref().is_some_and(|s| s.screen.closing || s.screen.modern.is_some_and(|t| t.closing()))
+            || (self.overlay == Some(Screen::Diplomacy) && self.diplomacy.as_ref().is_some_and(|d| d.screen.closing || d.screen.modern.is_some_and(|t| t.closing())))
             || (self.overlay == Some(Screen::Messages) && self.hud.as_ref().is_some_and(|h| h.messages.closing))
     }
 

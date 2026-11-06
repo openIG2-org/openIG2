@@ -377,7 +377,9 @@ impl App {
                 self.clock = TickClock::new(SIM_TICK_MS, self.now_ms());
                 // Back to the trade screen it was opened from (`OldKep` 8), entered without its opening.
                 if let Some(old) = self.trade_under_options.take() {
-                    self.trade = Some(crate::trade::Trade::back(&old, &self.world.game.state));
+                    let mut t = crate::trade::Trade::back(&old, &self.world.game.state);
+                    t.modern = self.display.modern.then(crate::gui::Transition::opening);
+                    self.trade = Some(t);
                     self.overlay = Some(crate::ui::Screen::Trade);
                 }
                 // The screen before is entered again (`_Belep` with `OldKep` 0xd, re/screens/options.md §3.1): the spy

@@ -45,7 +45,8 @@ pub struct DiplomacyScene {
     /// `ycenter` (`250 − 10·dipframe/80` when the screen animates, §3.1).
     yc: f32,
     /// Ours (ADR 0076): under the modern panels only the ring and the leader, raised to the board's centre (virtual
-    /// y 194); no background picture, grid or head cages (the contacts are a list).
+    /// y 194); no background picture, grid or head cages (the contacts are a list). ADR 0084: at rest, without the
+    /// original's opening, closing and turns.
     pub modern: bool,
 }
 
@@ -284,8 +285,10 @@ impl DiplomacyScene {
         // plus `Atfordulas·π/30` while turning; its two rings spin `dipFrameValtozo/220` and `−/90` about z, the outer
         // one flipping about y, the inner about x (§3.1).
         if selected >= 0 {
-            let resting = scr.turn as i32 == 30;
-            let angle = scr.flip + if resting { 0.0 } else { scr.turn * 0.104_719_76 };
+            // Ours (ADR 0084): the modern page's leader rests in its well, facing the camera; a new one fades in over
+            // the frame's first third of a turn instead.
+            let resting = modern || scr.turn as i32 == 30;
+            let angle = if modern { std::f32::consts::PI } else { scr.flip + if resting { 0.0 } else { scr.turn * 0.104_719_76 } };
             let push = if resting { 0.0 } else if scr.turn >= 16.0 { (29.0 - scr.turn) * 30.0 } else { scr.turn * 30.0 };
             let ry = scene::axis_matrix([0.0, 1.0, 0.0], angle);
             if fr >= 60.0 && !scr.closing {
@@ -307,7 +310,7 @@ impl DiplomacyScene {
             let race = v.races[e];
             let frame = {
                 let a = self.anim(r, install, rules, race);
-                (!a.is_empty() && (fr >= 60.0 && scr.turn > 14.0 || scr.closing)).then(|| a[((time * 25.0) as usize) % a.len()])
+                (!a.is_empty() && (fr >= 60.0 && (modern || scr.turn > 14.0) || scr.closing)).then(|| a[((time * 25.0) as usize) % a.len()])
             };
             if let (Some(m), Some(tex)) = (self.model(r, install, "kor.xvb", None), frame) {
                 let p0 = Placement::add_to_scene(m.origin, 0.105);
@@ -317,7 +320,7 @@ impl DiplomacyScene {
                 let (rot, z, alpha) = if scr.closing {
                     (scene::create_matrix(scr.kor_turn, 0.0, 0.0), Z + s * 500.0, 1.0 - s)
                 } else {
-                    (ry, Z + push, 1.0)
+                    (ry, Z + push, if modern { (scr.turn / 10.0).min(1.0) } else { 1.0 })
                 };
                 let t = scene::Transform { matrix: scene::mul(&rot, &p0.matrix).map(|x| x * 1024.0), translation: [0.0, 0.0, z] };
                 let white = lighting::Lights::default().ambient(0xffffff);
