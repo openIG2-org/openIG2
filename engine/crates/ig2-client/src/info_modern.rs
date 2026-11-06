@@ -1059,7 +1059,7 @@ pub fn view(h: &Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules,
     let log = ui.log.iter().skip(200usize.saturating_sub(ui.log_filled)).map(|(c, t)| (dec(t), col(*c as usize))).collect();
     let tip = |k: u16| dec(&h.texts.get(9, 1, k));
     View {
-        bar: h.bar_view(state, rules, s, en as u8, gates, time, 10),
+        bar: h.bar_view(state, rules, s, en as u8, gates, time, 9),
         empires,
         selected: ui.selected,
         summary,
