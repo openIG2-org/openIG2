@@ -214,9 +214,8 @@ impl Page {
             if fr.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Text);
             }
+            ds::field_back(ui.painter(), field, self.typing);
             let p = ui.painter();
-            p.rect_filled(field, ds::RADIUS_PLATE, k.glass_deep);
-            ds::rim(p, field, ds::RADIUS_PLATE, if self.typing { k.rim_bright } else { k.rim });
             let glass = Rect::from_center_size(Pos2::new(field.left() + 21.0, field.center().y), Vec2::splat(18.0));
             p.circle_stroke(glass.center() - Vec2::splat(1.5), 6.0, egui::Stroke::new(2.0f32, k.ink_muted));
             p.line_segment([glass.center() + Vec2::splat(3.0), glass.center() + Vec2::splat(7.5)], egui::Stroke::new(2.0f32, k.ink_muted));
@@ -233,7 +232,8 @@ impl Page {
             }
             // The topics and the open one's sub-topics.
             let back_h = 44.0;
-            let list = Rect::from_min_max(Pos2::new(inner.left(), field.bottom() + 12.0), Pos2::new(inner.right(), inner.bottom() - back_h - 12.0));
+            // The board's rows 2 lower than the field's 12, their text 2 above the row's middle (the sections' 1).
+            let list = Rect::from_min_max(Pos2::new(inner.left(), field.bottom() + 14.0), Pos2::new(inner.right(), inner.bottom() - back_h - 12.0));
             // The list scrolls when the open topic's sections or a small window don't leave it room.
             let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(egui::Layout::top_down(egui::Align::Min)));
             egui::ScrollArea::vertical().id_salt("help-topics").auto_shrink([false; 2]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded).show(&mut rows_ui, |ui| {
@@ -250,21 +250,15 @@ impl Page {
                         let (rr, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), rh), Sense::click());
                         let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
                         let sel = open && sub == self.sub;
-                        let p = ui.painter();
-                        if sel {
-                            ds::hgrad(p, rr, ds::RADIUS_PLATE, &[(0.0, Color32::from_white_alpha(41)), (1.0, Color32::from_white_alpha(5))]);
-                            ds::rim(p, rr, ds::RADIUS_PLATE, k.ink_silver);
-                        } else {
-                            ds::hover_rim(p, rr, ds::RADIUS_PLATE, hover);
-                        }
+                        ds::row_back(ui, rr, hover, sel);
                         if resp.hovered() {
                             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                         }
-                        let (label, font, x, c) = match sub {
-                            None => (names[i].clone(), if open { row_font.weight(Weight::SemiBold) } else { row_font }, 16.0, k.ink),
-                            Some(n) => (ig2_formats::text::decode(&s.topics[i].subs[n], texts.lang), sub_font, 36.0, if sel { k.ink } else { k.ink_silver }),
+                        let (label, font, x, c, up) = match sub {
+                            None => (names[i].clone(), if open { row_font.weight(Weight::SemiBold) } else { row_font }, 16.0, k.ink, 2.0),
+                            Some(n) => (ig2_formats::text::decode(&s.topics[i].subs[n], texts.lang), sub_font, 36.0, if sel { k.ink } else { k.ink_silver }, 1.0),
                         };
-                        Text::new(&label, font).color(c).shrink(font.size - 3.0).paint(ui, Rect::from_min_max(Pos2::new(rr.left() + x, rr.top()), Pos2::new(rr.right() - 12.0, rr.bottom())));
+                        Text::new(&label, font).color(c).shrink(font.size - 3.0).paint(ui, Rect::from_min_max(Pos2::new(rr.left() + x, rr.top() - up), Pos2::new(rr.right() - 12.0, rr.bottom() - up)));
                         if resp.clicked() {
                             if i != s.sel {
                                 s.sel = i;
@@ -292,7 +286,7 @@ impl Page {
         egui::Area::new(egui::Id::new("help-art")).fixed_pos(art.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), art, ds::PanelKind::Glass, 0.90);
-            let inner = Rect::from_min_max(art.min + Vec2::new(40.0, 32.0), art.max - Vec2::new(56.0, 32.0));
+            let inner = Rect::from_min_max(art.min + Vec2::new(40.0, 31.0), art.max - Vec2::new(56.0, 32.0));
             ui.set_clip_rect(art);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
             child.spacing_mut().item_spacing = Vec2::ZERO;
@@ -312,7 +306,7 @@ impl Page {
                         Block::Title(t) => {
                             let f = Font { size: 30.0, line: 36.0, weight: Weight::SemiBold, tracking: 0.2, upper: true, lcd: false };
                             Text::new(t, f).color(k.ink_silver).shrink(20.0).show(ui, Vec2::new(ui.available_width(), 36.0));
-                            ui.add_space(20.0);
+                            ui.add_space(25.0);
                         }
                         Block::Heading(t, sub) => {
                             let f = Font { size: 22.0, line: 30.0, weight: Weight::SemiBold, tracking: 0.08, upper: false, lcd: false };
@@ -347,11 +341,11 @@ impl Page {
                             Text::new(d, dl).color(k.ink).lines(8).paint(ui, Rect::from_min_max(Pos2::new(rect.left() + x, rect.top()), rect.max));
                         }
                         Block::Pic(name) => {
-                            ui.add_space(8.0);
+                            ui.add_space(12.0);
                             if let Some(tex) = self.picture(ui.ctx(), install, name) {
                                 let [tw, th] = tex.size().map(|v| v as f32);
-                                // The board's frame: the design screen's picture 766 wide (2.22 times), smaller ones at that scale.
-                                let pw = (tw * 2.22).min(766.0).min(w - 12.0);
+                                // The board's frame: the pictures at the 1080-line screen's scale (2.25: the design screen's 764 wide).
+                                let pw = (tw * 2.25).min(766.0).min(w - 12.0);
                                 let ph = pw * th / tw.max(1.0);
                                 let (rect, _) = ui.allocate_exact_size(Vec2::new(pw + 12.0, ph + 12.0), Sense::hover());
                                 let p = ui.painter();
@@ -359,11 +353,11 @@ impl Page {
                                 ds::rim(p, rect, ds::RADIUS_PANEL, k.rim);
                                 p.image(tex.id(), rect.shrink(6.0), Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
                             }
-                            ui.add_space(24.0);
+                            ui.add_space(28.0);
                         }
                         Block::Gap => {
                             let defs = matches!(prev, Some(Block::Def(..))) && matches!(next, Some(Block::Def(..)));
-                            if !matches!(prev, Some(Block::Title(_) | Block::Heading(..)) | None) && !matches!(next, Some(Block::Heading(..))) {
+                            if !matches!(prev, Some(Block::Title(_) | Block::Heading(..)) | None) && !matches!(next, Some(Block::Heading(..) | Block::Pic(_))) {
                                 ui.add_space(if defs { 10.0 } else { 16.0 });
                             }
                         }
