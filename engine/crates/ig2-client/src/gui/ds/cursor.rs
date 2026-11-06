@@ -1,6 +1,9 @@
 //! The modern pointer set (ADR 0073 §5): the original's pointer types (`MOUSE.BMP`'s columns, re/screens/input.md
 //! §8) and the pages' egui cursors, drawn from geometry (signed distances, no picture files) in the design's colours,
-//! the animated ones (move, select, busy) in 20 frames over the original's 2-second cycle. They replace the game's
+//! animated as the original's are (every one of `MOUSE.BMP`'s eight columns turns over its 40 rows, re/screens/input.md
+//! §8): the darts rock about their axis, the move arrows and the select corners pulse, the building and the target
+//! ring turn, a light runs along the green cross, the sight's ring glows; the busy pointer's arc turns. 20 frames over
+//! the original's 2-second cycle. They replace the game's
 //! pointer quad only with a modern UI theme and the "Modern cursors" option on; Classic keeps `MOUSE.BMP`.
 
 use super::Tokens;
@@ -78,7 +81,7 @@ impl Cursor {
 
     /// Its frames (1: still).
     pub fn frames(self) -> usize {
-        if matches!(self, Cursor::Move | Cursor::Select | Cursor::Busy) { FRAMES } else { 1 }
+        if matches!(self, Cursor::Text | Cursor::Forbidden | Cursor::Drag) { 1 } else { FRAMES }
     }
 
     /// The frame shown at `MouseFazis` `phase` (10 ms ticks).
@@ -127,7 +130,11 @@ impl Cursor {
         let col = |c: egui::Color32, a: f32| [c.r() as f32 / 255.0 * a, c.g() as f32 / 255.0 * a, c.b() as f32 / 255.0 * a, a];
         let dark = col(k.metal_shadow, 1.0);
         let shade = col(egui::Color32::BLACK, 0.35);
-        let pulse = 0.5 - 0.5 * (t * std::f32::consts::TAU).cos();
+        let tau = std::f32::consts::TAU;
+        let pulse = 0.5 - 0.5 * (t * tau).cos();
+        // A turn about an axis seen from the side: the width across it (never flat), and which side is lit.
+        let turn = (t * tau).cos();
+        let across = 0.55 + 0.45 * turn.abs();
         let mut v = Vec::new();
         // A shape with its dark outline, `w` thick, and a soft drop shade.
         let outlined = |v: &mut Vec<Layer>, s: Shape, fill: [f32; 4], w: f32| {
@@ -139,10 +146,21 @@ impl Cursor {
         let ink = col(k.ink, 1.0);
         match self {
             Cursor::Arrow | Cursor::Click | Cursor::Busy => {
-                let dart = Shape::Poly(vec![[3.0, 2.0], [8.5, 25.0], [11.8, 16.6], [20.5, 20.0]]);
+                // The dart rocks about its axis (tip to notch) as the original's turns; the busy pointer's stays.
+                let s = if self == Cursor::Busy { 1.0 } else { 0.7 + 0.3 * turn };
+                let roll = |q: [f32; 2]| {
+                    let (a, b) = ([3.0f32, 2.0f32], [11.8f32, 16.6f32]);
+                    let d = [b[0] - a[0], b[1] - a[1]];
+                    let l2 = d[0] * d[0] + d[1] * d[1];
+                    let h = ((q[0] - a[0]) * d[0] + (q[1] - a[1]) * d[1]) / l2;
+                    let on = [a[0] + d[0] * h, a[1] + d[1] * h];
+                    [on[0] + (q[0] - on[0]) * s, on[1] + (q[1] - on[1]) * s]
+                };
+                let dart = Shape::Poly([[3.0, 2.0], [8.5, 25.0], [11.8, 16.6], [20.5, 20.0]].map(roll).to_vec());
                 outlined(&mut v, dart.clone(), silver, 1.4);
-                // The lit leading edge and the coloured tail, inside the dart.
-                v.push(Layer { shape: Shape::Inside(Box::new(dart.clone()), Box::new(Shape::Poly(vec![[3.0, 2.0], [8.5, 25.0], [6.4, 25.0], [1.0, 2.0]]))), colour: ink, glow: None });
+                // The lit leading edge (dimming as it turns away) and the coloured tail, inside the dart.
+                let lit = if self == Cursor::Busy { 1.0 } else { 0.55 + 0.45 * turn.max(0.0) };
+                v.push(Layer { shape: Shape::Inside(Box::new(dart.clone()), Box::new(Shape::Poly([[3.0, 2.0], [8.5, 25.0], [6.4, 25.0], [1.0, 2.0]].map(roll).to_vec()))), colour: col(k.ink, lit), glow: None });
                 let tail = if self == Cursor::Click { k.signal_red } else { k.info };
                 v.push(Layer { shape: Shape::Inside(Box::new(dart), Box::new(Shape::Poly(vec![[0.0, 30.0], [8.0, 15.0], [24.0, 15.0], [24.0, 30.0]]))), colour: col(tail, 1.0), glow: None });
                 if self == Cursor::Click {
@@ -167,9 +185,12 @@ impl Cursor {
                 }
             }
             Cursor::Build => {
-                let tower = Shape::Poly(vec![[9.0, 27.0], [11.0, 13.0], [16.0, 5.0], [21.0, 13.0], [23.0, 27.0]]);
+                // The building turns: narrower side-on, its lit face going round.
+                let w = |x: f32| 16.0 + (x - 16.0) * across;
+                let tower = Shape::Poly(vec![[w(9.0), 27.0], [w(11.0), 13.0], [16.0, 5.0], [w(21.0), 13.0], [w(23.0), 27.0]]);
                 outlined(&mut v, tower.clone(), silver, 1.3);
-                v.push(Layer { shape: Shape::Inside(Box::new(tower), Box::new(Shape::Poly(vec![[16.0, 4.0], [24.0, 4.0], [24.0, 28.0], [16.0, 28.0]]))), colour: col(k.metal_light, 1.0), glow: None });
+                let side = if turn >= 0.0 { 8.0 } else { -8.0 };
+                v.push(Layer { shape: Shape::Inside(Box::new(tower), Box::new(Shape::Poly(vec![[16.0, 4.0], [16.0 + side, 4.0], [16.0 + side, 28.0], [16.0, 28.0]]))), colour: col(k.metal_light, 1.0), glow: None });
                 outlined(&mut v, Shape::Poly(vec![[6.0, 27.0], [26.0, 27.0], [26.0, 29.5], [6.0, 29.5]]), col(k.info, 1.0), 1.0);
             }
             Cursor::Goto => {
@@ -180,6 +201,11 @@ impl Cursor {
                     outlined(&mut v, Shape::Poly(vec![a, b, c]), green, 1.0);
                 }
                 outlined(&mut v, Shape::Disc([16.0, 16.0], 2.4), green, 1.0);
+                // A light runs out along the four arms.
+                let r = 3.0 + 10.0 * t;
+                for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
+                    v.push(Layer { shape: Shape::Disc([16.0 + dx * r, 16.0 + dy * r], 1.3), colour: col(k.ink, 0.9 * (1.0 - t)), glow: Some(1.2) });
+                }
             }
             Cursor::Select => {
                 let r = 9.0 + 2.0 * pulse;
@@ -191,7 +217,8 @@ impl Cursor {
             }
             Cursor::Attack => {
                 let red = col(k.enemy, 1.0);
-                v.push(Layer { shape: Shape::Ring([16.0, 16.0], 8.0, 1.0), colour: col(k.signal_red, 0.6), glow: Some(2.0) });
+                // The ring's glow breathes.
+                v.push(Layer { shape: Shape::Ring([16.0, 16.0], 8.0, 1.0), colour: col(k.signal_red, 0.25 + 0.6 * pulse), glow: Some(1.5 + 1.5 * pulse) });
                 outlined(&mut v, Shape::Ring([16.0, 16.0], 8.0, 1.0), red, 1.0);
                 for (a, b) in [([16.0, 2.0], [16.0, 11.0]), ([16.0, 21.0], [16.0, 30.0]), ([2.0, 16.0], [11.0, 16.0]), ([21.0, 16.0], [30.0, 16.0])] {
                     outlined(&mut v, Shape::Segment(a, b, 0.9), red, 1.0);
@@ -200,7 +227,9 @@ impl Cursor {
             }
             Cursor::Target => {
                 let red = col(k.enemy, 1.0);
-                outlined(&mut v, Shape::Ellipse([16.0, 16.0], [11.0, 7.5], 1.1), red, 1.0);
+                // The ring turns about its upright axis, a half turn a cycle (it looks the same from behind).
+                let rx = 11.0 * (0.3 + 0.7 * (t * std::f32::consts::PI).cos().abs());
+                outlined(&mut v, Shape::Ellipse([16.0, 16.0], [rx, 7.5], 1.1), red, 1.0);
                 outlined(&mut v, Shape::Segment([16.0, 4.0], [16.0, 9.0], 0.9), red, 1.0);
                 outlined(&mut v, Shape::Segment([16.0, 23.0], [16.0, 28.0], 0.9), red, 1.0);
                 outlined(&mut v, Shape::Disc([16.0, 16.0], 2.6), red, 1.0);

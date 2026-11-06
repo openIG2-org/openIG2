@@ -61,7 +61,7 @@ with all their states, so that every screen built on it looks the same and fits 
 6. **Pointers** (`ds::cursor`): the original's pointer types (`MOUSE.BMP`'s eight columns, re/screens/input.md §8:
    arrow, clickable, move, build, destination, select, attack, target) and the pages' extras (busy, text, forbidden,
    drag) as one set drawn from geometry (signed distances, anti-aliased, a dark outline and a soft shade, the
-   design's colours), the animated ones (move, select, busy) in 20 frames over the original's 2-second cycle, 64
+   design's colours), animated as the original's (all eight of `MOUSE.BMP`'s, and busy) in 20 frames over the original's 2-second cycle, 64
    pixels across, 32 points at 100 % UI scale. No picture files. They replace the game's pointer quad (drawn last,
    where `MOUSE.BMP` was) in the modern interface when the new Remake option "Modern cursors"
    (`ModernCursors`, Interface, on by default) is on; Classic keeps `MOUSE.BMP`. An egui page's cursor icon becomes
