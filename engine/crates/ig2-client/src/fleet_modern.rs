@@ -253,13 +253,14 @@ fn panel(ui: &egui::Ui, r: Rect, title: &str, owner: &str, colour: Color32, stat
     let inner = head.shrink2(vec2(PAD.x, 0.0));
     let base = ds::fit::baseline(inner, TITLE);
     let w = Text::new(title, TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.5)).width;
-    let mut x = inner.left() + w + 18.0;
+    // The board's header row: a 16-point gap plus the letters' trailing spacing after the title and the owner.
+    let mut x = inner.left() + w + 24.0;
     // The owner and the status centred on the title's capitals (the board's header row centres its items).
     let mid = |f: Font| base - (TITLE.cap() - f.cap()) / 2.0;
     if !owner.is_empty() {
         let f = Text::new(owner, Font::OWNER).color(colour).layout(ui.ctx(), (inner.right() - x) * 0.5);
         ds::glowing_galley(p, pos2(x, mid(Font::OWNER) - f.baseline()), &f.galley, colour);
-        x += f.width + 18.0;
+        x += f.width + 20.0;
     }
     if !status.is_empty() {
         Text::new(status, STATUS).color(k.ink_muted).baseline(mid(STATUS)).paint(ui, Rect::from_min_max(pos2(x, inner.top()), inner.max));
