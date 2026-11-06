@@ -1081,7 +1081,8 @@ fn planet_list(ui: &egui::Ui, s: &Select, plate: Rect, current: &str) -> Vec<Lis
     let screen = ui.ctx().screen_rect();
     let n = s.rows.len().max(1) as f32;
     let row_h = 52.0f32.min(((screen.bottom() - plate.bottom() - 32.0) / n).floor()).max(24.0);
-    let w = plate.width() + 20.0;
+    // 17 out from the plate each side (the board's planet list).
+    let w = plate.width() + 34.0;
     let panel = Rect::from_min_size(pos2(plate.center().x - w / 2.0, plate.bottom() + 10.0), vec2(w, row_h * n + 12.0));
     let p = ui.painter();
     ds::shadow(p, panel, ds::RADIUS_PANEL, 8, 24, 0, Color32::from_black_alpha(204));
@@ -1179,10 +1180,11 @@ fn select(ui: &egui::Ui, m: &Menus, s: &Select, shift: [f32; 2], current: Option
     // Room for the texts (the sale's line is wider than its row).
     let widest = s.rows.iter().map(|r| Text::new(&r.text, font).layout(ui.ctx(), f32::INFINITY).width + if r.sub.is_empty() { 0.0 } else { Text::new(&r.sub, sub).layout(ui.ctx(), f32::INFINITY).width + 10.0 }).fold(0.0, f32::max);
     b.max.x = match width {
-        Some(w) => b.max.x.min(b.min.x + (w - 8.0).max(widest + 16.0)),
+        Some(w) => b.max.x.min(b.min.x + w.max(widest + 16.0)),
         None => b.max.x.max(b.min.x + widest + 16.0),
     };
-    let panel = b.expand2(vec2(if width.is_some() { 4.0 } else { 8.0 }, 6.0));
+    // A field's list is 6 wider than the field each side (the board's `left: -6px; width: calc(100% + 12px)`).
+    let panel = b.expand2(vec2(if width.is_some() { 6.0 } else { 8.0 }, 6.0));
     ds::menu_back(p, panel);
     for r in &s.rows {
         let mut row = rect(r.rect);
@@ -1289,7 +1291,8 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
                 let row = Rect::from_min_size(row.min + vec2(LI_PAD, 0.0), vec2(LI_W - 2.0 * LI_PAD, LI_ROUND));
                 let state = |id: u32| (ds::hover_t(ctx, egui::Id::new(("smh-li", id)), i.hot == Some(id)), i.hot == Some(id) && i.held);
                 Text::new(labels[n].trim_end_matches(':'), Font::LABEL).color(k.ink_muted).paint(ui, row.with_max_x(row.left() + LI_SET_LABEL));
-                let fw = row.width() - LI_SET_LABEL - LI_ALL - 2.0 * LI_ROUND - 4.0 * 8.0;
+                // The board's grid: 120 | 1fr | 64 | 36 | 36, 8 apart (the round keys' rings overhang their cells).
+                let fw = row.width() - LI_SET_LABEL - LI_ALL - 2.0 * 36.0 - 4.0 * 8.0;
                 let mut x = row.left() + LI_SET_LABEL + 8.0;
                 let mut next = |w: f32, h: f32| {
                     let r = Rect::from_min_size(pos2(x, row.center().y - h / 2.0), vec2(w, h));
@@ -1313,7 +1316,7 @@ fn long_info(ctx: &egui::Context, m: &Menus, i: &LongInfo, v: &View, st: &mut St
                 Text::new(&calm(all), Font::LABEL.tracking(0.12).upper(false)).center().shrink(9.0).color(k.ink).paint_only(ui, r.shrink2(vec2(3.0, 0.0)));
                 spots.push((all_id, r));
                 for (id, glyph) in [(minus, ds::Icon::Minus), (plus, ds::Icon::Plus)] {
-                    let r = next(LI_ROUND, LI_ROUND);
+                    let r = next(36.0, 36.0).expand((LI_ROUND - 36.0) / 2.0);
                     if id != 0 {
                         let (hot, down) = state(id);
                         ds::forced(hot > 0.5, down, || ui.put(r, |ui: &mut egui::Ui| ds::round_button(ui, ds::Glyph::Icon(glyph), true, false)));
