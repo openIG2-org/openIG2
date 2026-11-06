@@ -657,12 +657,14 @@ fn globe(p: &egui::Painter, r: Rect, colour: Color32, planet: bool) {
 }
 
 /// The card's and the long info's picture: the game's turning globe or fleet model (`src`) cut into `r` (a shadow
-/// under it), else the shaded globe or the fleet's mark.
+/// under a globe; a ship turns on the card's glass), else the shaded globe or the fleet's mark.
 fn planet(ui: &egui::Ui, r: Rect, colour: Color32, src: Option<[f32; 4]>, is_planet: bool, wells: &mut Vec<([f32; 4], Rect, f32)>) {
     let Some(src) = src else {
         return globe(ui.painter(), r, colour, is_planet);
     };
-    ds::shadow(ui.painter(), r.shrink(r.width() * 0.08), 255, 0, 14, 0, Color32::from_black_alpha(200));
+    if is_planet {
+        ds::shadow(ui.painter(), r.shrink(r.width() * 0.08), 255, 0, 14, 0, Color32::from_black_alpha(200));
+    }
     wells.push((src, Rect::from_center_size(r.center(), r.size() / GLOBE_FILL), ui.opacity()));
 }
 
