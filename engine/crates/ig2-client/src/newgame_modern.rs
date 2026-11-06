@@ -50,7 +50,7 @@ pub fn load_heads(ctx: &egui::Context, install: &ig2_formats::Install) -> [Optio
 const LEVELS: [u8; 3] = [0, 2, 1];
 
 /// The board's places (points at 1920 × 1080): the title, the modes' panel, the race row, the race panel.
-const TITLE: [f32; 2] = [112.0, 132.0];
+const TITLE: [f32; 2] = [112.0, 130.0];
 const NAV: [f32; 3] = [96.0, 252.0, 440.0];
 const RACES_TOP: f32 = 340.0;
 const RING: f32 = 228.0;
@@ -80,19 +80,17 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
     // The modes: Campaign (here) and Scenarios, the hint under a rim line.
     egui::Area::new(egui::Id::new("ng-nav")).fixed_pos(at(margin, nav_y)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
-        let place = ui.painter().add(egui::Shape::Noop);
-        let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 24)).show(ui, |ui| {
+        // The hint's lines sit 4 lower in their box than the kit's text (the board's 15 / 24 body).
+        ds::panel(ui, ds::PanelKind::Deep, 0.80, egui::Margin { left: 16, right: 16, top: 24, bottom: 20 }, |ui| {
             ui.set_width(side_w - 32.0);
-            ui.spacing_mut().item_spacing = Vec2::new(0.0, 4.0);
+            ui.spacing_mut().item_spacing = Vec2::ZERO;
             let labels = [tr(Item::Campaign.label()), tr(Item::Scenarios.label())];
             let entries: Vec<ds::MenuEntry> = labels.iter().map(|l| ds::MenuEntry::new(l)).collect();
             if ds::menu(ui, "ng-modes", ds::MenuStyle::MENU, &entries, Some(0), None) == Some(1) {
                 act = Some(Act::Scenarios);
             }
-            ui.add_space(14.0);
-            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), Sense::hover());
-            ui.painter().hline((r.left() + 20.0)..=(r.right() - 20.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
-            ui.add_space(14.0);
+            ds::menu_rule(ui);
+            ui.add_space(4.0);
             let f = Font { size: 15.0, line: 24.0, weight: Weight::Regular, tracking: 0.06, upper: false, lcd: false };
             let w = ui.available_width() - 40.0;
             let hint = tr("Pick an empire, then the difficulty. The campaign plays the chosen race's story.");
@@ -102,7 +100,6 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
                 Text::new(&hint, f).color(k.ink_muted).lines(4).show(ui, Vec2::new(w, h));
             });
         });
-        ds::behind(ui, place, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Deep, 0.80));
     });
     // The races: round portraits on a metal ring, the name under each.
     let mid_l = margin + side_w;
@@ -115,7 +112,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
         ui.spacing_mut().item_spacing = Vec2::new(RING_GAP, 0.0);
         ui.horizontal(|ui| {
             for (r, head) in heads.iter().enumerate() {
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ring, ring + 18.0 + 22.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(ring, ring + 20.0 + 22.0), Sense::click());
                 let sel = st.race == r;
                 let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
                 let disc = Rect::from_min_size(rect.min, Vec2::splat(ring));
@@ -132,7 +129,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
                     p.add(round_image(t.id(), img, Color32::WHITE));
                 }
                 let f = Font { size: 17.0, line: 22.0, weight: Weight::SemiBold, tracking: 0.16, upper: true, lcd: false };
-                let name = Rect::from_min_size(Pos2::new(rect.left() - RING_GAP / 2.0, disc.bottom() + 18.0), Vec2::new(ring + RING_GAP, 22.0));
+                let name = Rect::from_min_size(Pos2::new(rect.left() - RING_GAP / 2.0, disc.bottom() + 20.0), Vec2::new(ring + RING_GAP, 22.0));
                 Text::new(&race_name(r), f).center().color(if sel || hover > 0.5 { k.ink } else { k.ink_muted }).paint(ui, name);
                 if resp.hovered() {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -147,19 +144,19 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
     // The race's panel: its empire, the blurb, the difficulty.
     let side = egui::Area::new(egui::Id::new("ng-side")).fixed_pos(at(screen.width() - margin - side_w, nav_y)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
-        let place = ui.painter().add(egui::Shape::Noop);
-        let r = egui::Frame::new().inner_margin(24).show(ui, |ui| {
+        // The board's heading 1 higher and its body 4 lower than the kit's lines put them.
+        ds::panel(ui, ds::PanelKind::Glass, 0.86, egui::Margin { left: 24, right: 24, top: 23, bottom: 24 }, |ui| {
             let w = side_w - 48.0;
             ui.set_width(w);
             ui.spacing_mut().item_spacing = Vec2::new(0.0, 16.0);
             let empire = texts.get(0x11, 1, RACES[st.race] as u16 + 33);
             Text::new(&game(&empire), Font::HEADING.upper(true)).color(k.ink).shrink(15.0).show(ui, Vec2::new(w, 26.0));
+            ui.add_space(5.0);
             let blurb = game(&blurbs[st.race]);
             let body = Font { size: 17.0, line: 26.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
             let h = Text::new(&blurb, body).lines(12).layout(ui.ctx(), w).galley.rect.height().max(26.0);
             Text::new(&blurb, body).color(k.ink).lines(12).show(ui, Vec2::new(w, h));
-            let (sep, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
-            ui.painter().hline(sep.x_range(), sep.center().y, egui::Stroke::new(1.0f32, k.rim));
+            ds::separator(ui, 0.0);
             Text::new(&tr("Difficulty"), Font::LABEL).color(k.ink_muted).show(ui, Vec2::new(w, 18.0));
             let labels: Vec<String> = LEVELS.iter().map(|&l| tr(Item::Level(l).label())).collect();
             let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
@@ -168,8 +165,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, st: &mut State, blurbs: &[Vec<
                 st.level = LEVELS[i];
                 act = Some(Act::Picked);
             }
-        });
-        ds::behind(ui, place, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Glass, 0.86));
+        })
     });
     // Back and Start at the bottom right.
     let (back, start) = (tr("Back"), tr("Start"));
