@@ -179,7 +179,7 @@ impl App {
             return;
         }
         if let Some(c) = &mut self.colony {
-            c.view.camera.zoom_steps(steps);
+            c.ui.cam_keys.wheel(&c.view.camera, steps);
         } else if let (Some(v), false) = (&mut self.view, !self.display.starmap_mouse || self.menus.info_on() || self.cam_saved.is_some() || self.panels.fleet_info()) {
             v.camera.zoom_steps(steps);
         }

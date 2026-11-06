@@ -494,9 +494,6 @@ impl Camera {
         self.y = self.y.clamp(-3800.0, 3800.0);
     }
 
-    pub fn zoom_steps(&mut self, steps: f32) {
-        self.zoom = (self.zoom + steps * 60.0).clamp(-2500.0, 700.0);
-    }
 }
 
 /// `WF::LoadMesh`'s shadow textures by hull type (`WF+0x1a8 + 8·type`).
@@ -622,6 +619,8 @@ pub struct CameraKeys {
     tank_last: Option<f32>,
     /// `ColonyTargetZoom/Pitch` and `TransfRotFrame` while `TransfRot`.
     tween: Option<(f32, f32, i32)>,
+    /// The wheel's zoom target (ours, the exe has no wheel), in [`ZOOM`].
+    wheel: Option<f32>,
     /// `Colony_Autoscroll`'s `xSpeed/ySpeed` (0xa3eb68/6c).
     scroll: [i32; 2],
     /// W/A/S/D held (ADR 0030): left, right, up, down.
@@ -630,6 +629,9 @@ pub struct CameraKeys {
     /// `None` = `ujclick` (the next press takes them).
     turn_from: Option<([f32; 2], f32, f32)>,
 }
+
+/// `Frissit2_Colony`'s zoom clamp: the keys' range, the wheel's too.
+const ZOOM: (f32, f32) = (-1100.0, 240.0);
 
 /// The `c` presets (exe 0x8f1d44 zoom, 0x8f1e44 pitch; the rotate table 0x8f1dc4 is never read).
 const PRESETS: [(f32, f32); 3] = [(-240.0, -1.113946), (-666.0, -0.356804), (-1100.0, -0.05)];
@@ -672,8 +674,22 @@ impl CameraKeys {
         }
     }
 
-    /// `TransformRotation` (ELF 0x4cc070), once per drawn frame: a quarter of the way to the preset.
+    /// The wheel turned `steps` notches (ours): 60 a notch onto the target, in the keys' range, glided to like a
+    /// preset ([`Self::frame`]), so it eases into either limit.
+    pub fn wheel(&mut self, cam: &Camera, steps: f32) {
+        self.wheel = Some((self.wheel.unwrap_or(cam.zoom) + steps * 60.0).clamp(ZOOM.0, ZOOM.1));
+        self.tween = None;
+    }
+
+    /// `TransformRotation` (ELF 0x4cc070), once per drawn frame: a quarter of the way to the preset (and to the
+    /// wheel's target).
     pub fn frame(&mut self, cam: &mut Camera) {
+        if let Some(t) = self.wheel {
+            cam.zoom += (t - cam.zoom) / 4.0;
+            if (t - cam.zoom).abs() < 0.5 {
+                (cam.zoom, self.wheel) = (t, None);
+            }
+        }
         if let Some((z, p, n)) = &mut self.tween {
             cam.zoom += (*z - cam.zoom) / 4.0;
             cam.pitch += (*p - cam.pitch) / 4.0;
@@ -730,7 +746,10 @@ impl CameraKeys {
         self.zoom_speed = zs * 0.85;
         self.pitch_speed = ps * 0.79;
         cam.pitch = cam.pitch.clamp(-1.4922565, -0.05);
-        cam.zoom = cam.zoom.clamp(-1100.0, 240.0);
+        cam.zoom = cam.zoom.clamp(ZOOM.0, ZOOM.1);
+        if self.zoom_in || self.zoom_out {
+            self.wheel = None;
+        }
     }
 
     /// `Colony_Autoscroll` (exe 0x465940), one UI tick: the window pointer `at` within 8 pixels of an edge of
@@ -3135,6 +3154,34 @@ mod tests {
         k.mouse_press(&cam, [340.0, 180.0]);
         k.mouse_turn(&mut cam, [340.0, 180.0]);
         assert_eq!(cam.rotate, 0.2);
+    }
+
+    #[test]
+    fn wheel_glides_into_the_keys_range() {
+        let mut k = CameraKeys::default();
+        let mut cam = Camera { x: 0.0, y: 0.0, zoom: -1000.0, pitch: -0.7, rotate: 0.0, size: [640.0, 480.0], shake: [0.0; 2], tank: None };
+        // Out past the far limit: the target stops at −1100, the view eases there and never overshoots.
+        for _ in 0..5 {
+            k.wheel(&cam, -1.0);
+        }
+        let mut last = cam.zoom;
+        for _ in 0..40 {
+            k.frame(&mut cam);
+            k.tick(&mut cam);
+            assert!(cam.zoom <= last && cam.zoom >= -1100.0, "{} after {last}", cam.zoom);
+            last = cam.zoom;
+        }
+        assert_eq!(cam.zoom, -1100.0);
+        // Further notches at the limit don't move it.
+        k.wheel(&cam, -3.0);
+        k.frame(&mut cam);
+        assert_eq!(cam.zoom, -1100.0);
+        // In: the near limit likewise.
+        k.wheel(&cam, 40.0);
+        for _ in 0..60 {
+            k.frame(&mut cam);
+        }
+        assert_eq!(cam.zoom, 240.0);
     }
 
     #[test]

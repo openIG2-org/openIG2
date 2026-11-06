@@ -1060,7 +1060,7 @@ exe's click pass); results in
 (still exe grabs come back white); the Park smoke capture uses `--cam=-793.6,-1002.6,-1100,-0.7853982,0` + `--colony-cam`.
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
 war effects: flashes, projectile models, trails, tracers and beam ported, smoke, dust, scorch marks, ruin fade and debris flight missing (§5, row 421); the build cursor's red is a tint; the radar is its own terrain-from-above
-render; mouse-wheel zoom; the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
+render; mouse-wheel zoom (a glide to a target in the keys' −1100..240, `CameraKeys::wheel`); the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
 the blink. Ruins (§5.9): the collapse keyframes and the roads kept through a war (§3.2) compared on `_local/grwar-ruin.json`
 (the client's building falls about 2.3 s before the exe's there). Open rows: 369, 384 (rain streak pixels), 407 (building
 pick: posed at load, units don't hide it). The panel building's glass is less blue than the exe's.
