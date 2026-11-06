@@ -1406,8 +1406,13 @@ pub fn separator(ui: &mut Ui, margin: f32) {
 /// A menu column's rule between groups (`height: 1px; margin: 14px 20px` in the column's 4-point gaps: 18 above and
 /// below, 20 in from each side).
 pub fn menu_rule(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 37.0), Sense::hover());
-    ui.painter().hline((rect.left() + 20.0)..=(rect.right() - 20.0), rect.top() + 18.5, Stroke::new(1.0f32, tokens().rim));
+    menu_rule_gap(ui, 18.0, 18.0);
+}
+
+/// [`menu_rule`] with `above` and `below` it (the in-game menu's 17 and 15).
+pub fn menu_rule_gap(ui: &mut Ui, above: f32, below: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), above + 1.0 + below), Sense::hover());
+    ui.painter().hline((rect.left() + 20.0)..=(rect.right() - 20.0), rect.top() + above + 0.5, Stroke::new(1.0f32, tokens().rim));
 }
 
 /// A menu column's group heading (`.mm-group`: the label style, 20 in like the entries, 24 high, 4 to the entries).
