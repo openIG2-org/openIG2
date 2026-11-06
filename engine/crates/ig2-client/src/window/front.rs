@@ -61,8 +61,8 @@ impl App {
         if let (Some(o), Some(h)) = (&mut self.options, &self.hud) {
             draw_options(o, h, &mut frame, size, self.start.elapsed().as_secs_f64() * 1000.0);
         }
-        // Ours (ADR 0062): the modern Options screen and the multiplayer pages (ADR 0064) are egui pages, over the 2D
-        // and under the pointer.
+        // Ours (ADR 0062): the modern Options screen, the multiplayer pages (ADR 0064) and the modern menu's pages (ADR
+        // 0078) are egui pages, over the 2D and under the pointer.
         let mut top = None;
         let mut mp_outs = Vec::new();
         let mut mods_acts = Vec::new();
@@ -78,16 +78,12 @@ impl App {
                 // Load only: no save to hand back.
                 let _ = o.s.modern_page(ctx, &h.texts, &theme, &mut |id| audio.play(id));
             });
-            let mut f = crate::render::Frame::new([0.0; 4]);
-            ov.draw(&mut f, h, size);
-            top = Some(f);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(mods), Some(h)) = (fr.mods.as_mut(), &self.hud) {
             // Ours (ADR 0068): the mod manager.
             let theme = theme(h);
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| mods_acts = mods.show(ctx, &theme));
-            let mut f = crate::render::Frame::new([0.0; 4]);
-            ov.draw(&mut f, h, size);
-            top = Some(f);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(st), true, Some(h)) = (fr.stats.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern end-of-game page over the scene.
             let theme = theme(h);
@@ -98,44 +94,38 @@ impl App {
                 fr.stats = None;
                 self.audio.play(crate::audio::CLICK);
             }
-            let mut f = crate::render::Frame::new([0.0; 4]);
-            ov.draw(&mut f, h, size);
-            top = Some(f);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(rl), true, Some(h)) = (fr.replays.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern replays page over the scene.
             let theme = theme(h);
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
-            let mut f = crate::render::Frame::new([0.0; 4]);
-            ov.draw(&mut f, h, size);
-            top = Some(f);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(n), true, Some(h)) = (fr.s.name.as_ref(), fr.s.name_page_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern name prompt over the scene.
             let theme = theme(h);
             let gt = fr.s.gt.min(1.0);
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| name_pick = crate::mainscr_modern::name_page(ctx, &h.texts, n, gt));
-            ov.draw(&mut frame, h, size);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (true, Some(h)) = (fr.s.new_game_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern new game page over the scene.
             let theme = theme(h);
             let heads = fr.ng_heads.get_or_insert_with(|| crate::newgame_modern::load_heads(&g.gui.ctx, &self.install));
             let (st, blurbs, gt) = (&mut fr.ng, &fr.s.blurbs, fr.s.gt.min(1.0));
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| ng_act = crate::newgame_modern::page(ctx, &h.texts, st, blurbs, heads, gt));
-            ov.draw(&mut frame, h, size);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (true, Some(p), Some(h)) = (fr.s.modern && fr.mp.is_none(), fr.s.panel(), &self.hud) {
             // Ours (ADR 0078): the modern main menu over the scene.
             let theme = theme(h);
             let (history, can, line, gt) = (fr.s.history, fr.s.can_continue, fr.s.continue_line.clone(), fr.s.gt.min(1.0));
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt));
-            ov.draw(&mut frame, h, size);
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(mp), Some(h)) = (fr.mp.as_mut(), &self.hud) {
             let theme = theme(h);
             mp.load_heads(&g.gui.ctx, &self.install);
             let mut acts = Vec::new();
             g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| acts = mp.page(ctx, &h.texts, &h.palette, &theme, fr.s.flow));
             mp_outs = mp.apply(acts, &mut fr.net);
-            let mut f = crate::render::Frame::new([0.0; 4]);
-            ov.draw(&mut f, h, size);
-            top = Some(f);
+            top = Some(pointer_over(&ov, h, size));
         } else if let Some(h) = &self.hud {
             ov.draw(&mut frame, h, size);
         }
@@ -559,4 +549,11 @@ impl App {
             self.front_act(a);
         }
     }
+}
+
+/// The pointer and its tooltip in a frame of their own, drawn over the egui page.
+fn pointer_over(ov: &super::pointer::Overlay, h: &crate::ui::Hud, size: [f32; 2]) -> crate::render::Frame {
+    let mut f = crate::render::Frame::new([0.0; 4]);
+    ov.draw(&mut f, h, size);
+    f
 }

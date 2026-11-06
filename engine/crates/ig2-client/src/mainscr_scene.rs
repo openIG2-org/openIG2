@@ -949,14 +949,16 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
             let mut frame = Frame::new([0.0, 0.0, 0.0, 1.0]);
             scene.draw(&mut frame, &mut r, &install, &s, &vv);
             draw_2d(&mut s, &mut assets, &hud, &mut r, &install, &mut frame, size, t as f64 * 10.0);
+            // The pointer over the modern pages too, as the window draws it.
+            let mut top = Frame::new([0.0; 4]);
             if let Some((h, os)) = &mut options {
                 h.draw(os, &mut frame, size, t as f64 * 10.0);
             } else if s.leaving.is_none() {
                 // `UpdateFrame`'s pointer at the script's point, the hand over a ring or a box (`MainScr_Kilep`'s loop
                 // hides it: −2; phase 0).
-                hud.draw_pointer(&mut frame, size, [mouse[0] as i32, mouse[1] as i32], s.hand as i32);
+                hud.draw_pointer(&mut top, size, [mouse[0] as i32, mouse[1] as i32], s.hand as i32);
             }
-            let rgba = r.draw_to_image_over(&frame, o.size, 0.0, |d, q, tex| gui.paint(d, q, tex));
+            let rgba = r.draw_to_image_over_top(&frame, Some(top), o.size, 0.0, |d, q, tex| gui.paint(d, q, tex));
             let path = crate::script::grab_path(out, t);
             crate::assets::write_snapshot(&path, o, &rgba)?;
             println!("{}: t {t} | menu {:?} M {} tav {} cel {} gt {} hovered {:?} hand {} race {:?}", path.display(), s.menu, s.m, s.tav, s.cel, s.gt, s.hovered, s.hand, s.race_boxes);
