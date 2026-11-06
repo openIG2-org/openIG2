@@ -5,7 +5,7 @@
 //! code (`Trade::modern_pick`, `modern_qty`, `modern_destination`, `modern_buy`: hot-spots 0x19..0x1c, 0x23/0x24 of
 //! re/screens/trade.md), so the orders stay the original's `Command::Buy`.
 
-use egui::{pos2, vec2, Rect, Sense, Ui};
+use egui::{pos2, vec2, Rect, Ui};
 
 use crate::gui::ds::{self, Font, PanelKind, Text};
 use crate::starmap_modern::{self as sm};
@@ -99,7 +99,12 @@ const WELL: egui::Vec2 = egui::Vec2::new(560.0, 310.0);
 /// The well's centre on the original's 640 × 480 screen (the board's (960, 247) at 1080 lines).
 pub const WELL_AT: [f32; 2] = [320.0, 110.0];
 const ROW_H: f32 = 30.0;
-const EXIT_W: f32 = 240.0;
+/// The panels' insides.
+const PAD: egui::Vec2 = egui::Vec2::new(20.0, 18.0);
+/// The offers' columns: the name takes the rest, the price, the count.
+const OFFER_COLS: [f32; 3] = [0.0, 96.0, 48.0];
+const OFFER_RIGHT: [bool; 3] = [false, true, true];
+const CARD_PAD: egui::Vec2 = egui::Vec2::new(24.0, 16.0);
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
@@ -121,17 +126,7 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let ppp = ctx.pixels_per_point();
     let [cx, cy] = crate::font::Virtual::new([w * ppp, h * ppp]).px(WELL_AT[0], WELL_AT[1]);
     let well = Rect::from_center_size(pos2(cx / ppp, cy / ppp), WELL * g);
-    ds::place(ctx, "tmh-well", well, |ui| {
-        let k = ds::tokens();
-        let p = ui.painter();
-        let s = egui::Stroke::new(1.0f32, k.rim.gamma_multiply(0.5));
-        for i in 0..=5 {
-            p.vline(well.left() + well.width() * i as f32 / 5.0, well.y_range(), s);
-        }
-        for i in 0..=3 {
-            p.hline(well.x_range(), well.top() + well.height() * i as f32 / 3.0, s);
-        }
-    });
+    ds::place(ctx, "tmh-well", well, |ui| ds::turntable_grid(ui.painter(), well));
     if !v.card.is_empty() {
         let r = Rect::from_min_size(pos2(well.center().x - 300.0, well.bottom() + 28.0 * g), vec2(600.0, 78.0 + if v.weapons.is_empty() { 0.0 } else { 26.0 }));
         ds::place(ctx, "tmh-card", r, |ui| card_panel(ui, v, r.size()));
@@ -147,41 +142,26 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             Text::new(&v.line, Font::BODY.sized(17.0)).shrink(12.0).color(k.info).paint(ui, line.shrink2(vec2(16.0, 0.0)));
         });
     }
-    let exit = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - EXIT_W, h - 40.0 * g - 44.0), vec2(EXIT_W, 44.0));
-    let ships = Rect::from_min_max(pos2(ds::BOARD_EDGE, line.bottom() + 20.0 * g), pos2(exit.left() - 40.0, h - 40.0 * g));
+    let ships = Rect::from_min_max(pos2(ds::BOARD_EDGE, line.bottom() + 20.0 * g), pos2(w - ds::BOARD_EDGE - ds::EXIT_W - 40.0, ds::board_bottom(ctx)));
     ds::place(ctx, "tmh-ships", ships, |ui| deliveries_panel(ui, v, ships.size()));
-    ds::place(ctx, "tmh-exit", exit, |ui| {
-        if ui.add(ds::Plate::new(&v.labels.exit).width(EXIT_W).height(44.0)).clicked() {
-            acts.push(Act::Bar(sm::Act::Screen(2)));
-        }
-    });
-    acts
-}
-
-/// A column header row: the label left, the others right-aligned in their columns.
-fn header(ui: &Ui, r: Rect, cols: &[(&str, f32)]) {
-    let k = ds::tokens();
-    for (i, &(t, x)) in cols.iter().enumerate() {
-        let cell = if i == 0 { r.with_max_x(r.left() + x) } else { Rect::from_min_max(pos2(r.left() + x - 150.0, r.top()), pos2(r.left() + x, r.bottom())) };
-        let txt = Text::new(t, Font::LABEL).shrink(10.0).color(k.ink_muted);
-        if i == 0 { txt } else { txt.right() }.paint(ui, cell);
+    if ds::exit_plate(ctx, "tmh-exit", &v.labels.exit, true) {
+        acts.push(Act::Bar(sm::Act::Screen(2)));
     }
-    ui.painter().hline(r.x_range(), r.bottom() + 6.0, egui::Stroke::new(1.0f32, k.rim));
+    acts
 }
 
 /// An offers list: the header, every offer of the class (the original shows eight at a time; this one scrolls), the
 /// chosen one framed.
 fn list_panel(ui: &mut Ui, v: &View, kind: usize, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
-    let inner = rect.shrink2(vec2(20.0, 18.0));
-    let (price_x, count_x) = (inner.width() - 70.0, inner.width());
-    header(ui, Rect::from_min_size(inner.min, vec2(inner.width(), 18.0)), &[(&v.labels.lists[kind], price_x - 100.0), (&v.labels.price, price_x), (&v.labels.count, count_x)]);
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
+    let head = Rect::from_min_size(inner.min, vec2(inner.width(), 20.0));
+    ds::table_head(ui, &ds::table_cols(head, &OFFER_COLS), &[&v.labels.lists[kind], &v.labels.price, &v.labels.count], &OFFER_RIGHT);
+    ui.painter().hline(inner.x_range(), head.bottom() + 6.0, egui::Stroke::new(1.0f32, k.rim));
     let body = Rect::from_min_max(pos2(inner.left(), inner.top() + 32.0), inner.max);
     let rows = &v.lists[kind];
     if rows.is_empty() {
-        Text::new(&v.labels.none, Font::BODY.sized(17.0)).color(k.ink_muted).paint(ui, Rect::from_min_size(body.min, vec2(body.width(), ROW_H)));
+        Text::new(&v.labels.none, Font::BODY.sized(17.0)).color(k.ink_muted).paint(ui, Rect::from_min_size(body.min + vec2(8.0, 0.0), vec2(body.width(), ROW_H)));
         return;
     }
     let chosen = v.offer.as_ref().filter(|o| o.kind == kind).map(|o| o.row);
@@ -189,18 +169,11 @@ fn list_panel(ui: &mut Ui, v: &View, kind: usize, size: egui::Vec2, acts: &mut V
     egui::ScrollArea::vertical().id_salt(("tmh-rows", kind)).auto_shrink([false; 2]).show(&mut child, |ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         for (i, row) in rows.iter().enumerate() {
-            let (r, resp) = ui.allocate_exact_size(vec2(body.width(), ROW_H), Sense::click());
-            let on = chosen == Some(i as i32);
-            let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-            ds::row_back(ui, r, hot, on);
-            let base = ds::fit::baseline(r, Font::BODY.sized(18.0));
-            let (px, cx) = (r.left() + price_x, r.left() + count_x - 8.0);
-            Text::new(&row.name, Font::BODY.sized(18.0)).shrink(13.0).baseline(base).color(k.ink).paint(ui, Rect::from_min_max(r.min + vec2(8.0, 0.0), pos2(px - 100.0, r.bottom())));
-            Text::new(&row.price.to_string(), Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(px - 96.0, r.top()), pos2(px, r.bottom())));
-            Text::new(&row.count.to_string(), Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(cx - 60.0, r.top()), pos2(cx, r.bottom())));
+            let (price, count) = (row.price.to_string(), row.count.to_string());
+            let cells = [(row.name.as_str(), Font::BODY.sized(18.0), k.ink), (&price, Font::DATA.sized(17.0), k.info), (&count, Font::DATA.sized(17.0), k.info)];
+            let resp = ds::table_row(ui, ROW_H, &OFFER_COLS, &cells, &OFFER_RIGHT, Some(chosen == Some(i as i32)));
             // Hot-spots 0x23/0x24 take either button (`Trade_Main`).
-            let resp = ds::tip(resp.on_hover_cursor(egui::CursorIcon::PointingHand), ds::tip_text(&v.tips, 0x23 + kind as u32));
-            if ds::either(&resp) {
+            if ds::either(&ds::tip(resp, ds::tip_text(&v.tips, 0x23 + kind as u32))) {
                 acts.push(Act::Row(kind, i as i32));
             }
         }
@@ -210,28 +183,23 @@ fn list_panel(ui: &mut Ui, v: &View, kind: usize, size: egui::Vec2, acts: &mut V
 /// The shown hull's card: two columns of label and value, the weapons under them.
 fn card_panel(ui: &mut Ui, v: &View, size: egui::Vec2) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Glass, 0.9);
-    let inner = rect.shrink2(vec2(24.0, 16.0));
-    let col = inner.width() / 2.0;
-    for (i, (l, val)) in v.card.iter().enumerate() {
-        let r = Rect::from_min_size(pos2(inner.left() + (i % 2) as f32 * col, inner.top() + (i / 2) as f32 * 26.0), vec2(col - 12.0, 24.0));
-        let base = ds::fit::baseline(r, Font::DATA.sized(17.0));
-        Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + 76.0));
-        Text::new(val, Font::DATA.sized(17.0)).shrink(12.0).baseline(base).color(if i == 0 { k.ink } else { k.info }).paint(ui, r.with_min_x(r.left() + 80.0));
-    }
+    let inner = ds::board_panel(ui, size, PanelKind::Glass, CARD_PAD);
+    let mut c = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
+    c.spacing_mut().item_spacing = vec2(24.0, 6.0);
+    c.columns(2, |cols| {
+        for (i, (l, val)) in v.card.iter().enumerate() {
+            ds::kv(&mut cols[i % 2], l, val, if i == 0 { ds::Tone::Neutral } else { ds::Tone::Info }, 76.0);
+        }
+    });
     if !v.weapons.is_empty() {
-        let r = Rect::from_min_size(pos2(inner.left(), inner.top() + 52.0), vec2(inner.width(), 24.0));
-        Text::new(&v.weapons, Font::DATA.sized(15.0)).shrink(11.0).color(k.ink_silver).paint(ui, r);
+        Text::new(&v.weapons, Font::DATA.sized(15.0)).shrink(11.0).color(k.ink_silver).paint(ui, Rect::from_min_size(pos2(inner.left(), inner.top() + 52.0), vec2(inner.width(), 24.0)));
     }
 }
 
 /// The order bar: the item, the quantity with − and +, the destination's dropdown (its days), the total, the order.
 fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Glass, 0.9);
-    let inner = rect.shrink2(vec2(28.0, 20.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Glass, vec2(28.0, 20.0));
     let o = v.offer.clone().unwrap_or_default();
     let has = v.offer.is_some();
     let cy = inner.center().y + 10.0;
@@ -294,27 +262,24 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
 /// The deliveries under way: planet, days, item, amount (the original's block B, at most ten shown; this scrolls).
 fn deliveries_panel(ui: &mut Ui, v: &View, size: egui::Vec2) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(ui.max_rect().min, size);
-    ds::paint_panel(ui.painter(), rect, PanelKind::Deep, 0.9);
-    let inner = rect.shrink2(vec2(20.0, 16.0));
+    let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
     let w = inner.width();
-    let cols = [(v.labels.under_way.as_str(), w * 0.55), (v.labels.amount.as_str(), w * 0.62), (v.labels.dest.as_str(), w * 0.88), (v.labels.eta.as_str(), w)];
-    header(ui, Rect::from_min_size(inner.min, vec2(w, 18.0)), &cols);
-    let body = Rect::from_min_max(pos2(inner.left(), inner.top() + 30.0), inner.max);
+    let cols = [0.0, w * 0.12, w * 0.24, w * 0.12];
+    let right = [false, true, true, true];
+    let head = Rect::from_min_size(inner.min, vec2(w, 20.0));
+    ds::table_head(ui, &ds::table_cols(head, &cols), &[&v.labels.under_way, &v.labels.amount, &v.labels.dest, &v.labels.eta], &right);
+    ui.painter().hline(inner.x_range(), head.bottom() + 6.0, egui::Stroke::new(1.0f32, k.rim));
+    let body = Rect::from_min_max(pos2(inner.left(), inner.top() + 32.0), inner.max);
     if v.deliveries.is_empty() {
-        Text::new(&v.labels.nothing, Font::BODY.sized(17.0)).color(k.ink_muted).paint(ui, Rect::from_min_size(body.min, vec2(w, 26.0)));
+        Text::new(&v.labels.nothing, Font::BODY.sized(17.0)).color(k.ink_muted).paint(ui, Rect::from_min_size(body.min + vec2(8.0, 0.0), vec2(w, 26.0)));
         return;
     }
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
     egui::ScrollArea::vertical().id_salt("tmh-del").auto_shrink([false; 2]).show(&mut child, |ui| {
         for (planet, days, item, amount) in &v.deliveries {
-            let (r, _) = ui.allocate_exact_size(vec2(w - 12.0, 26.0), Sense::hover());
-            let base = ds::fit::baseline(r, Font::DATA.sized(16.0));
-            let cell = |a: f32, b: f32| Rect::from_min_max(pos2(r.left() + a, r.top()), pos2(r.left() + b, r.bottom()));
-            Text::new(item, Font::BODY.sized(16.0)).shrink(12.0).baseline(base).color(k.ink).paint(ui, cell(0.0, w * 0.5));
-            Text::new(&amount.to_string(), Font::DATA.sized(16.0)).right().baseline(base).color(k.info).paint(ui, cell(w * 0.55, w * 0.62));
-            Text::new(planet, Font::DATA.sized(16.0)).right().shrink(11.0).baseline(base).color(k.info).paint(ui, cell(w * 0.66, w * 0.88));
-            Text::new(&days.to_string(), Font::DATA.sized(16.0)).right().baseline(base).color(k.info).paint(ui, cell(w * 0.9, w - 12.0));
+            let (amount, days) = (amount.to_string(), days.to_string());
+            let d = Font::DATA.sized(16.0);
+            ds::table_row(ui, 26.0, &cols, &[(item.as_str(), Font::BODY.sized(16.0), k.ink), (&amount, d, k.info), (planet, d, k.info), (&days, d, k.info)], &right, None);
         }
     });
 }
