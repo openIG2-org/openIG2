@@ -856,21 +856,25 @@ impl Modern {
         let sub = last.and_then(|sl| Some(format!("{}  ·  {}", s(age(sl, true, texts.lang)?), s(sl.name.clone()))));
         let n_items = entries.len() as f32;
         let quits = entries.iter().filter(|g| matches!(g, Game::Quit | Game::Exit)).count();
-        let h = 28.0 + 34.0 + if sub.is_some() { 20.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 1.0) * 4.0 + 25.0 + 20.0;
+        let h = 25.0 + 34.0 + if sub.is_some() { 26.0 } else { 0.0 } + 18.0 + n_items * 52.0 + (n_items - 2.0) * 4.0 + 33.0 + 21.0;
         let size = egui::vec2(MENU_W, h).min(screen.size() - egui::vec2(16.0, 16.0));
         let t = ds::open_t(ctx, egui::Id::new("pause-menu"), true);
-        let top = (screen.center().y - size.y / 2.0 - 50.0).max(screen.top() + 8.0);
+        let top = (screen.center().y - size.y / 2.0 - 49.5).max(screen.top() + 8.0);
         let mut picked = None;
         egui::Area::new(egui::Id::new("pause-menu")).fixed_pos(egui::pos2(screen.center().x - size.x / 2.0, top + (1.0 - t) * 12.0)).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(t);
-            let at = ui.painter().add(egui::Shape::Noop);
-            let r = egui::Frame::new().inner_margin(egui::Margin { left: 20, right: 20, top: 28, bottom: 20 }).show(ui, |ui| {
+            ds::panel(ui, ds::PanelKind::Deep, 0.90, egui::Margin { left: 20, right: 20, top: 25, bottom: 21 }, |ui| {
                 ui.set_width(size.x - 40.0);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 let w = ui.available_width();
                 let title = Font::PAGE_TITLE.sized(28.0).tracking(0.3);
-                Text::new(&tr("Pause"), Font { line: 34.0, ..title }).color(k.ink_silver).show(ui, egui::vec2(w, 34.0));
+                // The title and the last save 20 in, as the entries' labels.
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
+                    Text::new(&tr("Pause"), Font { line: 34.0, ..title }).color(k.ink_silver).show(ui, egui::vec2(w - 40.0, 34.0));
+                });
                 if let Some(sub) = &sub {
+                    ui.add_space(6.0);
                     let f = Font::DATA.sized(14.0).tracking(0.08);
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -886,17 +890,11 @@ impl Modern {
                 if let Some(i) = ds::menu(ui, "pause-a", style, &mk(0..split), Some(self.focus).filter(|&f| f < split), focus(0)) {
                     picked = Some(i);
                 }
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(20.0);
-                    ds::separator(ui, 0.0);
-                });
-                ui.add_space(4.0);
+                ds::menu_rule_gap(ui, 17.0, 15.0);
                 if let Some(i) = ds::menu(ui, "pause-b", style, &mk(split..entries.len()), self.focus.checked_sub(split), focus(split)) {
                     picked = Some(split + i);
                 }
             });
-            ds::behind(ui, at, |p| ds::paint_panel(p, r.response.rect, ds::PanelKind::Deep, 0.90));
         });
         match picked {
             Some(i) => {
