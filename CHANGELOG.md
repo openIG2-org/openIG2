@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Multiplayer, Internet: without a relay server set, typing still goes into the join field instead of jumping to the relay field.
 - Modern interface: one simple line-icon look everywhere (the top bar, the speed and camera keys, the round buttons, the radial menu, the settings): Lucide's icons, with a tank, a colony dome and a side view drawn to match, each the same size, centred and drawn without seams.
 - Modern production screen: hovering a slot or its Design button no longer shows a "change product" tooltip (issue #101).
 - Start: the window stays hidden until it is black, so no white empty window shows while the game loads.

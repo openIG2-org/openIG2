@@ -826,7 +826,8 @@ impl MpScreen {
             entry: Field::new(ig2_net::lobby::MAX_CHAT),
             joined_password: None,
             saves: None,
-            save_dir: crate::options::slot_dir(),
+            // The unit tests never read the player's own files (a saved relay changes the screens' flow).
+            save_dir: if cfg!(test) { None } else { crate::options::slot_dir() },
             resume: None,
             story: 0,
             heads: Vec::new(),
@@ -1100,8 +1101,11 @@ impl MpScreen {
     /// back as [`Out::Start`].
     pub fn tick(&mut self, net: &mut dyn Net) -> Option<Out> {
         self.open = (self.open + 4.0).min(100.0);
+        // The list asked for on opening: without a relay it says so, but the typing stays in the join field.
         if std::mem::take(&mut self.ask) {
+            let focus = self.focus;
             self.refresh(net);
+            self.focus = focus;
         }
         if let Some(rx) = &self.browsing {
             match rx.try_recv() {
@@ -3071,7 +3075,8 @@ mod tests {
         let mut guest = open("Guest");
         // Opened from Internet the list is asked for at the first tick; without a relay it asks for one.
         guest.tick(&mut net);
-        assert_eq!((guest.line.as_slice(), guest.focus), (words::NEED_RELAY, Focus::Relay));
+        assert_eq!((guest.line.as_slice(), guest.focus), (words::NEED_RELAY, Focus::Address));
+        click_on(&mut guest, spot::RELAY, &mut net);
         guest.paste(&relay);
         let t = web_time::Instant::now();
         let wait = |host: &mut MpScreen, host_net: &mut QuicNet, guest: &mut MpScreen, net: &mut QuicNet, what: &str, done: &dyn Fn(&MpScreen, &MpScreen) -> bool| {
