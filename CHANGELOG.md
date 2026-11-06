@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Start: the window stays hidden until it is black, so no white empty window shows while the game loads.
 - Modern colony screen: the planet's card at the bottom left is the starmap's selection card (same size and layout) with a round planet instead of a squashed one (issue #87).
 - Modern colony screen: a more compact building chooser (narrower, a smaller picture, tighter tabs and list rows), so more of the colony stays in view (issue #86).
 - Modern colony screen: the building groups' tabs are as wide as their names, so every name (KERESKEDELMI, COMMERCIAL) shows whole and all in the same size (issue #85).

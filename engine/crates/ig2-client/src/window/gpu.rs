@@ -12,7 +12,8 @@ impl App {
                 Some((w, h)) if d.mode == crate::display::Mode::Window => attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h)),
                 _ => attrs.with_inner_size(winit::dpi::LogicalSize::new(1600.0, 900.0)),
             };
-            with_icon(attrs.with_fullscreen(d.fullscreen(el.primary_monitor())))
+            // Hidden until its first (black) frame: shown at once, the system paints it white while the assets load.
+            with_icon(attrs.with_fullscreen(d.fullscreen(el.primary_monitor())).with_visible(false))
         };
         // A canvas added to the page, sized by the page's stylesheet (web/index.html).
         #[cfg(target_arch = "wasm32")]
@@ -58,6 +59,8 @@ impl App {
             view_formats: Renderer::view_formats(format),
         };
         surface.configure(&device, &config);
+        present_black(&surface, &device, &queue);
+        window.set_visible(true);
         let mut renderer = Renderer::new(device, queue, format);
         crate::prof::mark("gpu");
         let assets = Assets::load(&mut renderer, &self.install);
@@ -112,4 +115,22 @@ impl App {
             c.view.resize(g.band(), g.window.scale_factor() as f32);
         }
     }
+}
+
+/// One black frame, before the assets load (a frame the surface can't give is skipped: the window then shows
+/// whatever the system draws until the first real frame).
+fn present_black(surface: &wgpu::Surface, device: &wgpu::Device, queue: &wgpu::Queue) {
+    let Ok(frame) = surface.get_current_texture() else { return };
+    let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: &view,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), store: wgpu::StoreOp::Store },
+        })],
+        ..Default::default()
+    });
+    queue.submit([enc.finish()]);
+    frame.present();
 }
