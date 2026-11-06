@@ -958,11 +958,17 @@ pub struct ListRow<'a> {
     focused: bool,
     height: f32,
     font: Font,
+    lead: bool,
 }
 
 impl<'a> ListRow<'a> {
     pub fn new(text: &'a str) -> Self {
-        Self { text, value: None, selected: false, off: false, focused: false, height: 26.0, font: Font::BODY }
+        Self { text, value: None, selected: false, off: false, focused: false, height: 26.0, font: Font::BODY, lead: false }
+    }
+    /// The row leads on to a sub-menu: a chevron at its right while hovered or selected.
+    pub fn lead(mut self, on: bool) -> Self {
+        self.lead = on;
+        self
     }
     pub fn value(mut self, v: &'a str) -> Self {
         self.value = Some(v);
@@ -1004,6 +1010,14 @@ impl Widget for ListRow<'_> {
         let base = baseline(rect, self.font);
         let mut text_box = inner;
         let mut cut = false;
+        if self.lead {
+            text_box = inner.with_max_x(inner.right() - 20.0);
+            let t = if self.selected { 1.0 } else { l.hover };
+            if t > 0.0 && !self.off {
+                let c = Pos2::new(inner.right() - 8.0, rect.center().y);
+                ui.painter().line(vec![c + Vec2::new(-3.0, -5.0), c + Vec2::new(2.0, 0.0), c + Vec2::new(-3.0, 5.0)], Stroke::new(1.5f32, k.ink_silver.gamma_multiply(t)));
+            }
+        }
         if let Some(v) = self.value {
             let vf = Text::new(v, Font::DATA).right().color(ink(l.on && !self.off, k.info)).baseline(base);
             let w = vf.layout(ui.ctx(), inner.width() * 0.45).width;
@@ -1672,4 +1686,117 @@ pub fn select(ui: &mut Ui, id: impl std::hash::Hash, value: &str, rows: &[(i32, 
         ui.memory_mut(|m| m.data.insert_temp(id, false));
     }
     (resp, out)
+}
+
+// ---- Board pages: the shell of a screen that places its own panels (ADR 0076 pages) ----
+
+/// The plates' height on a board page's foot (Exit, "Full text").
+pub const FOOT_H: f32 = 44.0;
+
+/// The bottom of a board page's content: the board's 40 above the screen's foot, squeezed with a shorter window.
+pub fn board_bottom(ctx: &egui::Context) -> f32 {
+    let h = ctx.screen_rect().height();
+    h - super::BOARD_EDGE * super::squeeze(h)
+}
+
+/// A board page's panel filling the `ds::place`d area `size` big: its `kind` background, then the content's
+/// rectangle `pad` inside it (the panel's common left edge and top).
+pub fn board_panel(ui: &Ui, size: Vec2, kind: PanelKind, pad: Vec2) -> Rect {
+    let rect = Rect::from_min_size(ui.max_rect().min, size);
+    paint_panel(ui.painter(), rect, kind, 0.9);
+    rect.shrink2(pad)
+}
+
+/// A recessed picture well's frame around `r` (a talking head's clip): a cast-metal ring six points wide; its inside
+/// stays clear for the picture drawn there.
+pub fn picture_well(p: &egui::Painter, r: Rect) {
+    let k = tokens();
+    p.rect_stroke(r.expand(3.0), RADIUS_PANEL + 2, Stroke::new(6.0f32, k.metal_shadow), egui::StrokeKind::Middle);
+    rim(p, r.expand(1.0), RADIUS_PANEL, k.metal_dark);
+    relief(p, r.expand(6.0), RADIUS_PANEL + 4);
+}
+
+/// A model's turntable in `r` (the 3D drawn under it): a faint rim-blue grid of 5 × 3 cells.
+pub fn turntable_grid(p: &egui::Painter, r: Rect) {
+    let s = Stroke::new(1.0f32, tokens().rim.gamma_multiply(0.5));
+    for i in 0..=5 {
+        p.vline(r.left() + r.width() * i as f32 / 5.0, r.y_range(), s);
+    }
+    for i in 0..=3 {
+        p.hline(r.x_range(), r.top() + r.height() * i as f32 / 3.0, s);
+    }
+}
+
+/// A board page's foot plate `width` wide at `x` ([`FOOT_H`] high on [`board_bottom`]); true when pressed with either
+/// button. The Exit plate is [`exit_plate`].
+pub fn foot_plate(ctx: &egui::Context, id: &str, x: f32, width: f32, label: &str, enabled: bool) -> bool {
+    let r = Rect::from_min_size(Pos2::new(x, board_bottom(ctx) - FOOT_H), Vec2::new(width, FOOT_H));
+    place(ctx, id, r, |ui| either(&ui.add_enabled(enabled, Plate::new(label).width(width).height(FOOT_H)))).inner
+}
+
+/// A board page's Exit plate: [`super::EXIT_W`] wide at the right edge of the foot.
+pub fn exit_plate(ctx: &egui::Context, id: &str, label: &str, enabled: bool) -> bool {
+    let x = ctx.screen_rect().width() - super::BOARD_EDGE - super::EXIT_W;
+    foot_plate(ctx, id, x, super::EXIT_W, label, enabled)
+}
+
+// ---- Table rows ----
+
+/// The cells of a list table's line `row` ([`columns`] of `widths`, a row's text inset in, [`SPACE`]`[2]` apart): the
+/// same for its [`table_head`] and its [`table_row`]s, so heads and cells share their edges.
+pub fn table_cols(row: Rect, widths: &[f32]) -> Vec<Rect> {
+    columns(row.shrink2(Vec2::new(SPACE[1], 0.0)), widths, SPACE[2])
+}
+
+/// A table's line `height` high: its `cells` (text, font, colour; right-aligned where `right`) in [`table_cols`] of
+/// `widths` on the first cell's baseline; `selected` Some makes it a clickable list row (hover rim, the selected
+/// one's sweep).
+pub fn table_row(ui: &mut Ui, height: f32, widths: &[f32], cells: &[(&str, Font, Color32)], right: &[bool], selected: Option<bool>) -> Response {
+    let sense = if selected.is_some() { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), height), sense);
+    if let Some(on) = selected {
+        let l = look(ui, &resp, false);
+        row_back(ui, rect, l.hover, on);
+    }
+    let base = cells.first().map_or(rect.center().y, |c| baseline(rect, c.1));
+    let mut cut = false;
+    for (i, (c, (t, f, ink))) in table_cols(rect, widths).into_iter().zip(cells).enumerate() {
+        let t = Text::new(t, *f).color(*ink).baseline(base);
+        cut |= if right.get(i).copied().unwrap_or(false) { t.right() } else { t }.paint_only(ui, c).cut;
+    }
+    match cells.first() {
+        Some((t, ..)) => tip_if(resp, cut, t),
+        None => resp,
+    }
+}
+
+// ---- Typed text ----
+
+/// A dialogue's or a message's body in `rect`: the `pieces` (text, colour) wrapped in `font` (its `line` the lines'
+/// pitch, at most `max_width` wide), scrolling and kept at their end; `caret` a blinking block after the last letter (the
+/// typer still running). The area's response takes a press (to type the rest at once).
+pub fn typed_text(ui: &mut Ui, id: &str, rect: Rect, pieces: &[(String, Color32)], font: Font, max_width: f32, caret: bool) -> Response {
+    let line = font.line;
+    let resp = ui.interact(rect, ui.id().with(id), Sense::click());
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::top_down(Align::Min)));
+    egui::ScrollArea::vertical().id_salt(id).auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {
+        let w = rect.width().min(max_width) - 16.0;
+        let mut job = egui::text::LayoutJob { wrap: egui::text::TextWrapping { max_width: w, ..Default::default() }, ..Default::default() };
+        for (t, c) in pieces {
+            job.append(t, 0.0, egui::TextFormat { font_id: font.id(), color: *c, extra_letter_spacing: font.spacing(), line_height: Some(line), ..Default::default() });
+        }
+        let galley = ui.fonts(|x| x.layout_job(job));
+        let (r, _) = ui.allocate_exact_size(Vec2::new(rect.width() - 16.0, galley.size().y.max(line)), Sense::hover());
+        let last = galley.rows.last().map(|row| row.rect());
+        ui.painter().galley(r.min, galley, tokens().ink);
+        if caret && (ui.input(|i| i.time) * 2.5) as i64 % 2 == 0 {
+            let (x, y) = last.map_or((0.0, 0.0), |l| (l.right(), l.top()));
+            let h = font.size + 2.0;
+            ui.painter().rect_filled(Rect::from_min_size(Pos2::new(r.left() + x + 2.0, r.top() + y + (line - h) / 2.0), Vec2::new(h / 2.0, h)), 0, tokens().ink);
+        }
+    });
+    if caret {
+        ui.ctx().request_repaint();
+    }
+    resp
 }
