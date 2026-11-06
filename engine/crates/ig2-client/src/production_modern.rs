@@ -332,23 +332,9 @@ fn toggle_list(ctx: &egui::Context, st: &mut State, l: usize, s: usize) {
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("pmh-opened"), true));
 }
 
-/// A lamp plate (`.lamp`: 26 high, 11 / 0.12 em), lit (`plate-high`) when on.
+/// A lamp (`.lamp`: the kit's plate 26 high, 8 beside its 11 / 0.12 em label, at least 56), lit when on.
 fn lamp(ui: &mut Ui, label: &str, on: bool) -> egui::Response {
-    let k = ds::tokens();
-    let w = Text::new(label, LAMP).layout(ui.ctx(), 120.0).width + 16.0;
-    let (r, resp) = ui.allocate_exact_size(vec2(w.max(56.0), 26.0), Sense::click());
-    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-    let lit = ui.ctx().animate_bool_with_time(resp.id.with("lit"), on, ds::anim(ds::HOVER_TIME));
-    let p = ui.painter();
-    ds::plate_fill(p, r, ds::RADIUS_PLATE, resp.is_pointer_button_down_on());
-    if lit > 0.0 {
-        p.rect_filled(r, ds::RADIUS_PLATE, k.plate_high.gamma_multiply(lit));
-        ds::shadow(p, r, ds::RADIUS_PLATE, 0, 6, 0, k.info.gamma_multiply(0.25 * lit));
-    }
-    ds::hover_rim(p, r, ds::RADIUS_PLATE, hot);
-    Text::new(label, LAMP).center().color(k.ink_silver.lerp_to_gamma(k.ink, lit.max(hot))).paint(ui, r.shrink2(vec2(4.0, 0.0)));
-    resp
+    ui.add(Plate::new(label).primary(on).height(26.0).width(56.0).pad(8.0).font(LAMP)).on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// The open design list under its slot: the title ("Slot n"), design 0 and the line's designs with their price, the
@@ -466,6 +452,32 @@ mod tests {
         assert!(r.right() <= 1920.0 - ds::EDGE + 0.5 && (r.width() - PANEL_W).abs() < 1.0, "{r:?}");
         // A well per filled slot.
         assert_eq!(st.wells.iter().map(|w| w.0).collect::<Vec<_>>(), vec![0, 4]);
+    }
+
+    /// The board's state (filled slots, the head's bar, the lamps) drawn to `IG2_BOARD_PNG` for a look against the
+    /// production board; no save has a filled queue. `cargo test board_png -- --ignored`.
+    #[test]
+    #[ignore]
+    fn board_png() {
+        let out = std::env::var("IG2_BOARD_PNG").unwrap_or_else(|_| "production-board.png".into());
+        let mut v = view("Destroyer");
+        for l in 0..2 {
+            v.lines[l].slots[1] = Some(Slot { name: "Fighter".into(), kind: "Vadász".into(), count: 12, price: "$6000 / db".into(), into_fleet: (l == 1).then_some(false), ..Default::default() });
+            v.lines[l].capacity = ("Kapacitás".into(), "1000".into());
+            v.lines[l].title = ["Hajók", "Járművek"][l].into();
+        }
+        v.labels = Labels { empty: "Üres".into(), free: "Szabad hely".into(), no_design: "Tervrajz nincs kiválasztva".into(), design: "Tervrajz".into(), slot: "Tervrajz a {}. helyre".into(), repeat: "Ismétlés".into(), into_fleet: "Flottába".into() };
+        ds::set_motion(false);
+        let size = (1920, 1080);
+        let mut r = crate::render::Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb).unwrap();
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let mut st = State::default();
+        for _ in 0..3 {
+            gui.run(size, &style, |ctx| _ = show(ctx, &v, &mut st, Color32::RED));
+        }
+        let rgba = r.draw_to_image_over(&crate::render::Frame::new([0.02, 0.04, 0.08, 1.0]), size, 0.0, |d, q, t| gui.paint(d, q, t));
+        crate::assets::write_png(std::path::Path::new(&out), size.0, size.1, &rgba).unwrap();
     }
 
     /// A long design name is cut inside its slot: the panels keep the board's width, at 4:3 too.
