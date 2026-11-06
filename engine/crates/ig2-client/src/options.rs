@@ -1413,6 +1413,14 @@ pub fn snapshot(o: &crate::Options, out: &Path) -> Result<(), String> {
         s.rows.extend(crate::display::rows(&file, &[], o.size));
         check_dependencies(&mut s.rows, false);
         s.modern = Some(modern::Modern::in_game(&s, b"Player".to_vec(), Default::default()));
+        // `--screen saves`: the save and load page at once, on slot 1.
+        if o.screen.as_deref() == Some("saves") {
+            s.slot = 1;
+            if let Some(mut m) = s.modern.take() {
+                m.open_saves(&s);
+                s.modern = Some(m);
+            }
+        }
     }
     let k = crate::gui::Gui::scale(o.size.1);
     let mut mouse = o.mouse.unwrap_or([320.0, 240.0]);

@@ -434,7 +434,7 @@ impl Modern {
     }
 
     /// The save and load page, the selected slot focused.
-    fn open_saves(&mut self, o: &OptionsScreen) {
+    pub(crate) fn open_saves(&mut self, o: &OptionsScreen) {
         self.set_tab(Tab::Saves);
         self.menu = false;
         self.focus = game_items(o).iter().position(|&it| it == Item::Slot(o.slot)).unwrap_or(0);
@@ -1272,15 +1272,11 @@ impl Modern {
         let s = |b: Vec<u8>| ig2_formats::text::decode(&b, texts.lang);
         let tr = |en: &str| s(texts.ours(en));
         let k = ds::tokens();
-        let cols = |r: egui::Rect| {
-            let x = r.left() + 12.0;
-            let date = r.right() - 12.0 - 150.0 - 12.0 - 150.0;
-            [egui::Rect::from_x_y_ranges(x..=x + 44.0, r.y_range()), egui::Rect::from_x_y_ranges(x + 56.0..=date - 12.0, r.y_range()), egui::Rect::from_x_y_ranges(date..=date + 150.0, r.y_range()), egui::Rect::from_x_y_ranges(r.right() - 162.0..=r.right() - 12.0, r.y_range())]
-        };
+        // `.srow`: 44 # 1fr 150 150, 12 apart, 12 in.
+        let cols = |r: egui::Rect| -> [egui::Rect; 4] { ds::columns(r.shrink2(egui::vec2(12.0, 0.0)), &[44.0, 0.0, 150.0, 150.0], 12.0).try_into().unwrap_or([r; 4]) };
         let (head, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
-        for (c, t) in cols(head).into_iter().zip(["#", "Saves", "Game date", "Saved"]) {
-            Text::new(&if t == "#" { t.to_owned() } else { tr(t) }, Font::LABEL).color(k.ink_muted).paint(ui, c);
-        }
+        let heads = ["#".to_owned(), tr("Saves"), tr("Game date"), tr("Saved")];
+        ds::table_head(ui, &cols(head), &heads.each_ref().map(String::as_str), &[]);
         ui.add_space(4.0);
         let mut click = false;
         let lcd = Font { size: 16.0, line: 18.0, ..Font::READOUT }.tracking(0.08);
@@ -1292,22 +1288,16 @@ impl Modern {
                 if autos && n <= 22 {
                     autos = false;
                     if i > 0 {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 9.0), egui::Sense::hover());
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
                         ui.painter().hline(r.x_range().shrink(12.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
                     }
                 }
                 let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::click());
                 let on = o.slot == n;
                 let hover = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-                let p = ui.painter();
-                if on {
-                    ds::hgrad(p, rect, ds::RADIUS_PLATE, &[(0.0, egui::Color32::from_white_alpha(41)), (1.0, egui::Color32::from_white_alpha(5))]);
-                    ds::rim(p, rect, ds::RADIUS_PLATE, k.ink_silver);
-                } else {
-                    ds::hover_rim(p, rect, ds::RADIUS_PLATE, hover);
-                }
+                ds::row_back(ui, rect, hover, on);
                 if self.keyed && self.focus == i {
-                    ds::focus_mark(p, rect, ds::RADIUS_PLATE as f32, 2.0);
+                    ds::focus_mark(ui.painter(), rect, ds::RADIUS_PLATE as f32, 2.0);
                     if self.shown != Some((self.tab, i)) {
                         ui.scroll_to_rect(rect, None);
                         self.shown = Some((self.tab, i));
@@ -1315,7 +1305,8 @@ impl Modern {
                 }
                 let [cn, cname, cdate, cage] = cols(rect);
                 let body_f = Font::BODY.sized(17.0);
-                Text::new(&if n > 22 { "A".to_owned() } else { n.to_string() }, lcd).color(k.ink_muted).paint(ui, cn);
+                let base = ds::baseline(rect, body_f);
+                Text::new(&if n > 22 { "A".to_owned() } else { n.to_string() }, lcd).upright().baseline(base).color(k.ink_muted).paint(ui, cn);
                 match o.slots.get(n).and_then(Option::as_ref) {
                     Some(slot) => {
                         let name = match n {
@@ -1323,14 +1314,14 @@ impl Modern {
                             23 => tr("Previous autosave"),
                             _ => s(slot.name.clone()),
                         };
-                        Text::new(&name, body_f).color(k.ink).paint(ui, cname);
-                        Text::new(&date(slot.date), lcd).color(k.info).paint(ui, cdate);
+                        Text::new(&name, body_f).color(k.ink).baseline(base).paint(ui, cname);
+                        Text::new(&date(slot.date), lcd).upright().baseline(base).color(k.info).paint(ui, cdate);
                         if let Some(a) = age(slot, false, texts.lang) {
-                            Text::new(&s(a), Font::BODY.sized(14.0)).color(k.ink_muted).paint(ui, cage);
+                            Text::new(&s(a), Font::BODY.sized(14.0)).baseline(base).color(k.ink_muted).paint(ui, cage);
                         }
                     }
                     None => {
-                        Text::new(&tr("Empty"), body_f).color(k.ink_muted).paint(ui, cname);
+                        Text::new(&tr("Empty"), body_f).baseline(base).color(k.ink_muted).paint(ui, cname);
                     }
                 }
                 // The slots are off while the save name is typed (`Options_MouseInit2`: id 4 only without `IOMode`).
@@ -1369,15 +1360,17 @@ impl Modern {
             match &slot {
                 Some(sl) => {
                     Text::new(&s(sl.name.clone()), Font { line: 30.0, ..title }).show(ui, egui::vec2(w, 30.0));
-                    ds::kv(ui, &tr("Game date"), &date(sl.date), ds::Tone::Info, 150.0);
-                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 150.0);
+                    // The lines 22 apart (`.kv`), 26 under the name.
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ds::kv(ui, &tr("Game date"), &date(sl.date), ds::Tone::Info, 158.0);
+                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 158.0);
                     if let Some(a) = age(sl, false, texts.lang) {
-                        ds::kv(ui, &tr("Saved"), &s(a), ds::Tone::Info, 150.0);
+                        ds::kv(ui, &tr("Saved"), &s(a), ds::Tone::Info, 158.0);
                     }
                 }
                 None => {
                     Text::new(&tr("Empty slot"), Font { line: 30.0, ..title }).color(k.ink_muted).show(ui, egui::vec2(w, 30.0));
-                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 150.0);
+                    ds::kv(ui, &tr("Slot"), &s(kind.clone()), ds::Tone::Info, 158.0);
                 }
             }
         });
@@ -1388,24 +1381,16 @@ impl Modern {
             let w = ui.available_width();
             ds::heading_label(ui, &tr("Save name"));
             // The field: the name being typed with its caret, else what Save would start with.
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 44.0), egui::Sense::click());
-            let p = ui.painter();
-            p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
-            ds::rim(p, rect, ds::RADIUS_PLATE, if o.entry.is_some() { k.focus } else { k.rim });
-            ds::edge_line(p, rect, ds::RADIUS_PLATE as f32, true, egui::Color32::from_black_alpha(200));
-            let f = Font::DATA.sized(17.0).tracking(0.08);
-            match &o.entry {
+            let resp = match &o.entry {
                 Some(e) => {
-                    let caret = (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
-                    let (a, b) = e.text.split_at(e.cursor.min(e.text.len()));
-                    let text = format!("{}{}{}", s(a.to_vec()), if caret { "|" } else { " " }, s(b.to_vec()));
-                    Text::new(&text, f).paint(ui, rect.shrink2(egui::vec2(14.0, 0.0)));
+                    let before = s(e.text[..e.cursor.min(e.text.len())].to_vec()).chars().count();
+                    ds::text_field(ui, &s(e.text.clone()), Some(before), "", egui::vec2(w, 44.0))
                 }
                 None => {
                     let shown = slot.as_ref().map_or_else(|| format!("Save Game {:02}", o.slot), |sl| s(sl.name.clone()));
-                    Text::new(&shown, f).color(k.ink_muted).paint(ui, rect.shrink2(egui::vec2(14.0, 0.0)));
+                    ds::text_field(ui, "", None, &shown, egui::vec2(w, 44.0))
                 }
-            }
+            };
             if resp.clicked() && o.entry.is_none() && Self::enabled(o, Item::Game(Game::Save)) {
                 o.start_entry();
                 click = true;
@@ -1425,6 +1410,7 @@ impl Modern {
                     }
                 }
             });
+            ui.add_space(8.0);
             let hint = if slot.is_some() && !o.load_only { "Saving here overwrites the old save." } else { "" };
             let f = Font::BODY.sized(14.0).tracking(0.04);
             Text::new(&tr(hint), Font { line: 20.0, ..f }).color(k.ink_muted).lines(2).show(ui, egui::vec2(w, 40.0));
