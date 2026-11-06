@@ -900,17 +900,20 @@ pub fn round_button_sized(ui: &mut Ui, glyph: Glyph, d: f32, active: bool) -> Re
 
 /// A round action button `d` across with its label on a black tag under it (the boards' repair, demolish and the
 /// ground war's strikes: 11 / 0.14 em upper case, silver, white while `active`); the response is the button's, its
-/// tooltip `tip` unless that is the label. The tag takes up to 100 more than the button before the label shrinks.
+/// tooltip `tip` unless that is the label. The tag takes up to 100 more than the button (at most the room left)
+/// before the label shrinks.
 pub fn round_action(ui: &mut Ui, glyph: Glyph, d: f32, active: bool, label: &str, tip: &str) -> Response {
     const FONT: Font = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.14, upper: true, lcd: false };
     let k = tokens();
-    ui.vertical(|ui| {
+    // The column is as wide as the wider of the button and its tag (`align-items: center`), so neighbours keep
+    // their gap between tags.
+    let outer = d + 2.0 * (if d < 48.0 { 3.0 } else { 5.0 } + 1.0);
+    let w = (outer + 100.0).min(ui.available_width().max(outer));
+    let tag_w = (Text::new(label, FONT).layout(ui.ctx(), w - 16.0).width + 16.0).min(w);
+    ui.allocate_ui_with_layout(Vec2::new(outer.max(tag_w), outer + 4.0 + 18.0), egui::Layout::top_down(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         let r = round_button_sized(ui, glyph, d, active);
-        let w = r.rect.width() + 100.0;
-        let fit = Text::new(label, FONT).layout(ui.ctx(), w - 16.0);
-        let tag_w = (fit.width + 16.0).min(w);
-        let (row, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 18.0), Sense::hover());
+        let (row, _) = ui.allocate_exact_size(Vec2::new(outer.max(tag_w), 18.0), Sense::hover());
         let tag = Rect::from_center_size(row.center(), Vec2::new(tag_w, 18.0));
         ui.painter().rect_filled(tag, RADIUS_PLATE, Color32::BLACK);
         Text::new(label, FONT).center().shrink(9.0).color(ink(ui.is_enabled(), if active { k.ink } else { k.ink_silver })).paint(ui, tag.shrink2(Vec2::new(8.0, 0.0)));
