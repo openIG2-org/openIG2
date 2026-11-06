@@ -251,171 +251,78 @@ const ROUND: f32 = 60.0;
 const ROW_H: f32 = 34.0;
 const INFO_W: f32 = 760.0;
 
-// ---- Icons ----
+// ---- The screen's own glyphs ----
 
-/// The colony's line icons (the boards' lucide strokes in a 24-unit box, 2 wide).
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Ico {
-    Coins,
-    Bolt,
-    User,
-    Info,
-    Power,
-    Wrench,
-    Trash,
-    Undo,
-    ZoomIn,
-    ZoomOut,
-    Target,
-    Burst,
-    /// A war button by its hot-spot.
-    War(u32),
-}
-
-fn ico(p: &egui::Painter, rect: Rect, i: Ico, c: Color32) {
+/// The self-destruct's and the ground war's glyphs (hot-spot 10 and 0xb..=0x12, the kit has no such icons), in the
+/// kit's stroke (2 wide in a 24-unit box). The retreat (0x10) is the kit's [`ds::Icon::Undo`].
+fn war_glyph(p: &egui::Painter, rect: Rect, id: u32, c: Color32) {
     let s = rect.width().min(rect.height()) / 24.0;
     let at = |x: f32, y: f32| rect.center() + vec2(x - 12.0, y - 12.0) * s;
     let st = Stroke::new(2.0 * s.max(0.75), c);
     let poly = |pts: &[(f32, f32)]| p.add(Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
     let closed = |pts: &[(f32, f32)]| p.add(Shape::closed_line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
     let circle = |x: f32, y: f32, r: f32| p.circle_stroke(at(x, y), r * s, st);
-    // An arc about (x, y) from `a` to `b` degrees (y down: 90 is below).
-    let arc = |x: f32, y: f32, r: f32, a: f32, b: f32| -> Vec<(f32, f32)> {
-        (0..=24).map(|j| (a + (b - a) * j as f32 / 24.0).to_radians()).map(|t| (x + r * t.cos(), y + r * t.sin())).collect()
-    };
-    match i {
-        Ico::Coins => {
-            circle(8.0, 8.0, 6.0);
-            poly(&arc(16.0, 16.0, 6.0, -69.6, 160.5));
-            poly(&[(7.0, 6.0), (8.0, 6.0), (8.0, 10.0)]);
-            poly(&[(16.71, 13.88), (17.41, 14.59), (14.59, 17.41)]);
-        }
-        Ico::Bolt => _ = closed(&[(13.0, 2.0), (3.0, 14.0), (12.0, 14.0), (11.0, 22.0), (21.0, 10.0), (12.0, 10.0)]),
-        Ico::User => {
-            circle(12.0, 7.0, 4.0);
-            let mut v = vec![(19.0, 21.0)];
-            v.extend(arc(15.0, 19.0, 4.0, 0.0, -90.0));
-            v.extend(arc(9.0, 19.0, 4.0, -90.0, -180.0));
-            v.push((5.0, 21.0));
-            poly(&v);
-        }
-        Ico::Info => {
-            circle(12.0, 12.0, 10.0);
-            poly(&[(12.0, 16.0), (12.0, 12.0)]);
-            p.circle_filled(at(12.0, 8.0), 1.3 * s, c);
-        }
-        Ico::Power => {
-            poly(&[(12.0, 2.0), (12.0, 12.0)]);
-            poly(&arc(12.0, 12.0, 9.0, -40.0, 220.0));
-        }
-        Ico::Wrench => {
-            poly(&arc(15.5, 8.5, 5.5, 10.0, 280.0));
-            poly(&[(11.6, 12.4), (4.0, 20.0)]);
-            poly(&[(4.0, 20.0), (5.0, 21.0), (12.6, 13.4)]);
-        }
-        Ico::Trash => {
-            poly(&[(3.0, 6.0), (21.0, 6.0)]);
-            poly(&[(19.0, 6.0), (19.0, 20.0), (17.0, 22.0), (7.0, 22.0), (5.0, 20.0), (5.0, 6.0)]);
-            poly(&[(8.0, 6.0), (8.0, 4.0), (10.0, 2.0), (14.0, 2.0), (16.0, 4.0), (16.0, 6.0)]);
-            poly(&[(10.0, 11.0), (10.0, 17.0)]);
-            poly(&[(14.0, 11.0), (14.0, 17.0)]);
-        }
-        Ico::Undo | Ico::War(0x10) => {
-            poly(&[(9.0, 14.0), (4.0, 9.0), (9.0, 4.0)]);
-            let mut v = vec![(4.0, 9.0)];
-            v.extend(arc(14.5, 14.5, 5.5, -90.0, 90.0));
-            v.push((11.0, 20.0));
-            poly(&v);
-        }
-        Ico::ZoomIn | Ico::ZoomOut => {
-            circle(11.0, 11.0, 8.0);
-            poly(&[(21.0, 21.0), (16.65, 16.65)]);
-            poly(&[(8.0, 11.0), (14.0, 11.0)]);
-            if i == Ico::ZoomIn {
-                poly(&[(11.0, 8.0), (11.0, 14.0)]);
-            }
-        }
-        Ico::Target => {
-            circle(12.0, 12.0, 10.0);
-            for l in [[(22.0, 12.0), (18.0, 12.0)], [(6.0, 12.0), (2.0, 12.0)], [(12.0, 6.0), (12.0, 2.0)], [(12.0, 22.0), (12.0, 18.0)]] {
-                poly(&l);
-            }
-        }
+    match id {
         // The self-destruct: a burst.
-        Ico::Burst => {
+        10 => {
             let v: Vec<(f32, f32)> = (0..16).map(|j| {
                 let (a, d) = (std::f32::consts::TAU * j as f32 / 16.0, if j % 2 == 0 { 10.0 } else { 4.5 });
                 (12.0 + a.cos() * d, 12.0 + a.sin() * d)
             }).collect();
             closed(&v);
         }
-        Ico::War(id) => match id {
-            // Air strike: a jet.
-            0xb => _ = closed(&[(12.0, 2.0), (14.0, 9.0), (21.0, 13.0), (21.0, 15.0), (14.0, 13.5), (13.5, 19.0), (16.0, 21.0), (16.0, 22.0), (12.0, 21.0), (8.0, 22.0), (8.0, 21.0), (10.5, 19.0), (10.0, 13.5), (3.0, 15.0), (3.0, 13.0), (10.0, 9.0)]),
-            // Laser strike: a beam from above onto a ring.
-            0xc => {
-                poly(&[(12.0, 2.0), (12.0, 15.0)]);
-                let v: Vec<(f32, f32)> = (0..=24).map(|j| std::f32::consts::TAU * j as f32 / 24.0).map(|t| (12.0 + 7.0 * t.cos(), 18.5 + 2.5 * t.sin())).collect();
-                poly(&v);
-                poly(&[(7.0, 8.0), (9.0, 10.0)]);
-                poly(&[(17.0, 8.0), (15.0, 10.0)]);
+        0x10 => ds::Icon::Undo.paint(p, rect, c),
+        // Air strike: a jet.
+        0xb => _ = closed(&[(12.0, 2.0), (14.0, 9.0), (21.0, 13.0), (21.0, 15.0), (14.0, 13.5), (13.5, 19.0), (16.0, 21.0), (16.0, 22.0), (12.0, 21.0), (8.0, 22.0), (8.0, 21.0), (10.5, 19.0), (10.0, 13.5), (3.0, 15.0), (3.0, 13.0), (10.0, 9.0)]),
+        // Laser strike: a beam from above onto a ring.
+        0xc => {
+            poly(&[(12.0, 2.0), (12.0, 15.0)]);
+            let v: Vec<(f32, f32)> = (0..=24).map(|j| std::f32::consts::TAU * j as f32 / 24.0).map(|t| (12.0 + 7.0 * t.cos(), 18.5 + 2.5 * t.sin())).collect();
+            poly(&v);
+            poly(&[(7.0, 8.0), (9.0, 10.0)]);
+            poly(&[(17.0, 8.0), (15.0, 10.0)]);
+        }
+        // Detonator and devastator: a charge with its fuse (the devastator's with a core).
+        0xd | 0xe => {
+            circle(10.0, 14.0, 7.0);
+            poly(&[(15.0, 9.0), (18.0, 6.0)]);
+            p.circle_filled(at(19.5, 4.5), 1.4 * s, c);
+            if id == 0xe {
+                p.circle_filled(at(10.0, 14.0), 3.0 * s, c);
+                poly(&[(21.0, 2.0), (22.0, 1.0)]);
             }
-            // Detonator and devastator: a charge with its fuse (the devastator's with a core).
-            0xd | 0xe => {
-                circle(10.0, 14.0, 7.0);
-                poly(&[(15.0, 9.0), (18.0, 6.0)]);
-                p.circle_filled(at(19.5, 4.5), 1.4 * s, c);
-                if id == 0xe {
-                    p.circle_filled(at(10.0, 14.0), 3.0 * s, c);
-                    poly(&[(21.0, 2.0), (22.0, 1.0)]);
-                }
+        }
+        // Mines: a ring with studs.
+        0xf => {
+            circle(12.0, 12.0, 5.0);
+            for j in 0..8 {
+                let a = std::f32::consts::TAU * j as f32 / 8.0;
+                poly(&[(12.0 + 5.0 * a.cos(), 12.0 + 5.0 * a.sin()), (12.0 + 9.5 * a.cos(), 12.0 + 9.5 * a.sin())]);
             }
-            // Mines: a ring with studs.
-            0xf => {
-                circle(12.0, 12.0, 5.0);
-                for j in 0..8 {
-                    let a = std::f32::consts::TAU * j as f32 / 8.0;
-                    poly(&[(12.0 + 5.0 * a.cos(), 12.0 + 5.0 * a.sin()), (12.0 + 9.5 * a.cos(), 12.0 + 9.5 * a.sin())]);
-                }
-            }
-            // Cancel the order: a stop sign.
-            _ => {
-                let v: Vec<(f32, f32)> = (0..8).map(|j| std::f32::consts::TAU * (j as f32 + 0.5) / 8.0).map(|t| (12.0 + 10.0 * t.cos(), 12.0 + 10.0 * t.sin())).collect();
-                closed(&v);
-                poly(&[(9.0, 9.0), (15.0, 15.0)]);
-                poly(&[(15.0, 9.0), (9.0, 15.0)]);
-            }
-        },
+        }
+        // Cancel the order: a stop sign.
+        _ => {
+            let v: Vec<(f32, f32)> = (0..8).map(|j| std::f32::consts::TAU * (j as f32 + 0.5) / 8.0).map(|t| (12.0 + 10.0 * t.cos(), 12.0 + 10.0 * t.sin())).collect();
+            closed(&v);
+            poly(&[(9.0, 9.0), (15.0, 15.0)]);
+            poly(&[(15.0, 9.0), (9.0, 15.0)]);
+        }
     }
 }
 
-/// A metal key with a colony icon.
-fn key(ui: &mut Ui, i: Ico, on: bool, size: egui::Vec2, tip: &str) -> egui::Response {
-    let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
-    let r = ui.add(IconKey::new(Glyph::Custom(&g)).on(on).size(size));
-    ds::tip(r, tip)
+/// A round action button for hot-spot `id` with the kit's icon `i` or the screen's own glyph.
+fn round(ui: &mut Ui, i: Option<ds::Icon>, id: u32, active: bool, label: &str, tip: &str) -> egui::Response {
+    let g = move |p: &egui::Painter, r: Rect, c: Color32| war_glyph(p, r, id, c);
+    let glyph = match i {
+        Some(i) => Glyph::Icon(i),
+        None => Glyph::Custom(&g),
+    };
+    ds::round_action(ui, glyph, ROUND, active, label, tip)
 }
 
-/// A round action button (60 across) with its label on a black tag under it (`active` lit); the response is the
-/// button's.
-fn round(ui: &mut Ui, i: Ico, active: bool, label: &str, tip: &str) -> egui::Response {
-    let k = ds::tokens();
-    ui.vertical(|ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        let g = move |p: &egui::Painter, r: Rect, c: Color32| ico(p, r, i, c);
-        let r = ds::round_button_sized(ui, Glyph::Custom(&g), ROUND, active);
-        // Room for the game's longer labels ("Visszavonulás") before they shrink.
-        let w = r.rect.width() + 100.0;
-        let f = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.14, upper: true, lcd: false };
-        let fit = Text::new(label, f).layout(ui.ctx(), w - 16.0);
-        let tag_w = (fit.width + 16.0).min(w);
-        let (row, _) = ui.allocate_exact_size(vec2(r.rect.width(), 18.0), Sense::hover());
-        let tag = Rect::from_center_size(row.center(), vec2(tag_w, 18.0));
-        ui.painter().rect_filled(tag, ds::RADIUS_PLATE, Color32::BLACK);
-        Text::new(label, f).center().shrink(9.0).color(if active { k.ink } else { k.ink_silver }).paint(ui, tag.shrink2(vec2(8.0, 0.0)));
-        if tip == label { r } else { ds::tip(r, tip) }
-    })
-    .inner
+/// A metal key with a kit icon and its tooltip.
+fn key(ui: &mut Ui, i: ds::Icon, on: bool, size: egui::Vec2, tip: &str) -> egui::Response {
+    ds::tip(ui.add(IconKey::icon(i).on(on).size(size)), tip)
 }
 
 /// The top of the panels under the bar.
@@ -444,11 +351,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let r = egui::Area::new(egui::Id::new("cmh-actions")).pivot(Align2::LEFT_BOTTOM).fixed_pos(pos2(card.right() + 24.0, card.bottom())).fade_in(false).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 22.0;
-                for (i, ic, id) in [(0usize, Ico::Wrench, 1u32), (1, Ico::Trash, 2), (3, Ico::Burst, 10)] {
-                    if a.on[i] {
+                // Repair and demolish side by side as on the board (one off while its hot-spot is), the self-destruct
+                // while it can be started.
+                let building = a.on[0] || a.on[1];
+                for (i, ic, id) in [(0usize, Some(ds::Icon::Wrench), 1u32), (1, Some(ds::Icon::Trash), 2), (3, None, 10)] {
+                    if if i == 3 { a.on[i] } else { building } {
                         let open = v.confirm.is_some() && ((id == 1) == v.confirm.as_ref().is_some_and(|c| c.price.is_some()));
                         let label = a.tips[i].split(['\n', '.']).next().unwrap_or("");
-                        if ds::either(&round(ui, ic, open, label, &a.tips[i])) {
+                        let r = ui.add_enabled_ui(a.on[i], |ui| round(ui, ic, id, open, label, &a.tips[i])).inner;
+                        if a.on[i] && ds::either(&r) {
                             acts.push(Act::Spot(id));
                         }
                     }
@@ -540,16 +451,16 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
         let title = Font::HEADING.sized(24.0).tracking(0.08);
         Text::new(&name, title).color(k.ink).shrink(16.0).paint(ui, Rect::from_min_size(col.min, vec2(col.width(), 28.0)));
         let data = Font::DATA.sized(17.0);
-        for (j, (i, s)) in [(Ico::Coins, price), (Ico::Bolt, energy.to_string()), (Ico::User, workers.to_string())].into_iter().enumerate() {
+        for (j, (i, s)) in [(ds::Icon::Coins, price), (ds::Icon::Bolt, energy.to_string()), (ds::Icon::User, workers.to_string())].into_iter().enumerate() {
             let y = col.top() + 38.0 + 26.0 * j as f32;
             let line = Rect::from_min_size(pos2(col.left(), y), vec2(col.width(), 20.0));
-            ico(ui.painter(), Rect::from_min_size(line.min + vec2(0.0, 2.0), vec2(16.0, 16.0)), i, k.info);
+            i.paint(ui.painter(), Rect::from_min_size(line.min + vec2(0.0, 2.0), vec2(16.0, 16.0)), k.info);
             Text::new(&s, data).color(k.info).paint(ui, line.with_min_x(line.left() + 24.0));
         }
         let plate = Rect::from_min_max(pos2(col.left(), col.bottom() - 40.0), col.max);
         let f = ds::Plate::FONT.sized(15.0).tracking(0.14);
         let label = if b.build_tip.is_empty() { "Build" } else { b.build_tip.as_str() };
-        let r = ui.put(plate, |ui: &mut Ui| ui.add_enabled(b.cursor, ds::Plate::new(label).primary(b.cursor).font(f).height(40.0).width(plate.width())));
+        let r = ui.put(plate, ds::Plate::new(label).primary(b.cursor).font(f).height(40.0).width(plate.width()));
         if b.cursor {
             // The armed plate breathes (the original's "BUILD" sparkles).
             let t = ui.input(|i| i.time) as f32;
@@ -565,27 +476,17 @@ fn build_menu(ui: &mut Ui, b: &Build, st: &mut State, room: f32, acts: &mut Vec<
     let current = b.entries.iter().find(|e| e.current).map(|e| e.column);
     let tab = st.tab.or(current).unwrap_or(0).min(b.headers.len().saturating_sub(1));
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.add_space(16.0);
-        ui.spacing_mut().item_spacing.x = 6.0;
-        let n = b.headers.len().max(1) as f32;
-        let w = (BUILD_W - 32.0 - 6.0 * (n - 1.0)) / n;
-        let f = ds::Plate::FONT.sized(12.0).tracking(0.10);
-        for (i, h) in b.headers.iter().enumerate() {
-            let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-            let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-            let on = i == tab;
-            ds::plate_fill(ui.painter(), r, ds::RADIUS_PANEL, on || resp.is_pointer_button_down_on());
-            if hot > 0.0 && !on {
-                ds::hover_rim(ui.painter(), r, ds::RADIUS_PANEL, hot);
-            }
-            let cut = Text::new(h, f).center().shrink(9.0).color(if on { k.ink } else { k.ink_silver.lerp_to_gamma(k.ink, hot) }).paint(ui, r.shrink2(vec2(4.0, 0.0))).cut;
-            let resp = if cut { resp.on_hover_text(h) } else { resp };
-            if resp.clicked() {
-                st.tab = Some(i);
-            }
+    // Equal slots: a long label shrinks and is cut in its own (`Plate` would widen into the next).
+    let (row, _) = ui.allocate_exact_size(vec2(BUILD_W, 36.0), Sense::hover());
+    let n = b.headers.len().max(1) as f32;
+    let w = (BUILD_W - 32.0 - 6.0 * (n - 1.0)) / n;
+    let f = ds::Plate::FONT.sized(12.0).tracking(0.10);
+    for (i, h) in b.headers.iter().enumerate() {
+        let slot = Rect::from_min_size(row.min + vec2(16.0 + i as f32 * (w + 6.0), 0.0), vec2(w, 36.0));
+        if ui.put(slot, ds::Plate::new(h).primary(i == tab).font(f).height(36.0).width(w)).clicked() {
+            st.tab = Some(i);
         }
-    });
+    }
     ui.add_space(12.0);
     // The group's entries in a recessed well (name, count, price).
     let rows = b.entries.iter().filter(|e| e.column == tab).count();
@@ -637,10 +538,10 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
     if let Some((w, e)) = c.surplus.filter(|_| v.info.is_none()) {
         ui.horizontal(|ui| {
             let cw = (width - 8.0) / 2.0;
-            for (i, n) in [(Ico::User, w), (Ico::Bolt, e)] {
+            for (i, n) in [(ds::Icon::User, w), (ds::Icon::Bolt, e)] {
                 let (r, _) = ui.allocate_exact_size(vec2(cw, 38.0), Sense::hover());
                 ds::paint_panel(ui.painter(), r, PanelKind::Deep, 0.88);
-                ico(ui.painter(), Rect::from_min_size(r.min + vec2(14.0, 10.0), vec2(18.0, 18.0)), i, k.ink);
+                i.paint(ui.painter(), Rect::from_min_size(r.min + vec2(14.0, 10.0), vec2(18.0, 18.0)), k.ink);
                 Text::new(&format!("{n:+}"), Font::DATA.sized(18.0)).color(if n < 0 { k.enemy } else { k.own }).paint(ui, r.with_min_x(r.left() + 42.0).shrink2(vec2(0.0, 4.0)));
             }
         });
@@ -672,10 +573,10 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                     let keys = if c.planet || !v.actions.on[2] { 1.0 } else { 2.0 };
                     let title = if c.planet { Font::HEADING.sized(20.0).weight(Weight::Medium) } else { Font::HEADING };
                     Text::new(&c.title, title).color(k.ink).shrink(14.0).show(ui, vec2(w - keys * 42.0, 32.0));
-                    if ds::tip(ui.add(IconKey::new(Glyph::Custom(&|p: &egui::Painter, r: Rect, col: Color32| ico(p, r, Ico::Info, col))).size(vec2(36.0, 32.0))), &v.details).clicked() {
+                    if key(ui, ds::Icon::Info, false, vec2(36.0, 32.0), &v.details).clicked() {
                         acts.push(Act::Card(false));
                     }
-                    if !c.planet && v.actions.on[2] && ds::either(&key(ui, Ico::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
+                    if !c.planet && v.actions.on[2] && ds::either(&key(ui, ds::Icon::Power, v.actions.switched_off, vec2(36.0, 32.0), &v.actions.tips[2])) {
                         acts.push(Act::Spot(0x11));
                     }
                 });
@@ -696,8 +597,8 @@ fn card_panel(ui: &mut Ui, v: &View, st: &mut State, width: f32, acts: &mut Vec<
                         ds::bar(&mut child, bar.width(), 6.0, part, if r.icon == 0 { fill } else { k.info });
                     } else {
                         let mut x = b.left();
-                        if let Some(i) = [None, Some(Ico::User), Some(Ico::Bolt), Some(Ico::Coins)].get(r.icon as usize).copied().flatten() {
-                            ico(ui.painter(), Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(16.0, 16.0)), i, r.colour);
+                        if let Some(i) = [None, Some(ds::Icon::User), Some(ds::Icon::Bolt), Some(ds::Icon::Coins)].get(r.icon as usize).copied().flatten() {
+                            i.paint(ui.painter(), Rect::from_min_size(pos2(x, rect.top() + 2.0), vec2(16.0, 16.0)), r.colour);
                             x += 22.0;
                         }
                         Text::new(&r.value, Font::DATA).color(r.colour).baseline(base).paint(ui, b.with_min_x(x));
@@ -761,7 +662,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                        if ds::either(&round(ui, Ico::War(*id), *frame > 1, label, t)) {
+                        if ds::either(&round(ui, None, *id, *frame > 1, label, t)) {
                             acts.push(Act::Spot(*id));
                         }
                         let charge = match id {
@@ -827,7 +728,7 @@ fn war_strip(ui: &mut Ui, w: &War, width: f32, acts: &mut Vec<Act>) {
                         ui.vertical_centered(|ui| {
                             if let Some((id, frame, t)) = retreat {
                                 let label = t.split(['\n', '.', '(']).next().unwrap_or("").trim();
-                                if ds::either(&round(ui, Ico::Undo, *frame > 1, label, t)) {
+                                if ds::either(&round(ui, Some(ds::Icon::Undo), *id, *frame > 1, label, t)) {
                                     acts.push(Act::Spot(*id));
                                 }
                             } else {
@@ -1098,7 +999,7 @@ fn radar(ui: &mut Ui, r: &Radar, live: bool, st: &mut State, acts: &mut Vec<Act>
     let mut zoom = None;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(keys));
     ds::key_group(&mut child, |ui| {
-        for (i, (ic, z)) in [(Ico::ZoomOut, Some(false)), (Ico::ZoomIn, Some(true)), (Ico::Target, None)].into_iter().enumerate() {
+        for (i, (ic, z)) in [(ds::Icon::ZoomOut, Some(false)), (ds::Icon::ZoomIn, Some(true)), (ds::Icon::Target, None)].into_iter().enumerate() {
             let resp = key(ui, ic, false, vec2(34.0, 28.0), &r.keys[i]);
             match z {
                 Some(z) if resp.is_pointer_button_down_on() => zoom = Some(z),

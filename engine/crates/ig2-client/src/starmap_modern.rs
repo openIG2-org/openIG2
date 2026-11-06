@@ -56,17 +56,9 @@ pub fn style(h: &crate::ui::Hud, size: [f32; 2]) -> egui::Style {
     s
 }
 
-/// The money with its thousands apart (thin spaces).
+/// The money as the original writes it (`$10000`, `-$1234567`).
 pub fn money(m: f64) -> String {
-    let digits = (m as i64).unsigned_abs().to_string();
-    let mut out = String::new();
-    for (i, c) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i) % 3 == 0 {
-            out.push('\u{2009}');
-        }
-        out.push(c);
-    }
-    format!("{}${out}", if m < 0.0 { "-" } else { "" })
+    format!("{}${}", if m < 0.0 { "-" } else { "" }, (m as i64).unsigned_abs())
 }
 
 /// What the HUD asks for; the window runs the classic hot-spot's code for each.
@@ -1649,10 +1641,10 @@ mod tests {
     }
 
     #[test]
-    fn money_groups_thousands() {
-        assert_eq!(money(109090.0), "$109\u{2009}090");
+    fn money_as_the_original() {
+        assert_eq!(money(109090.0), "$109090");
         assert_eq!(money(999.0), "$999");
-        assert_eq!(money(-1234567.0), "-$1\u{2009}234\u{2009}567");
+        assert_eq!(money(-1234567.0), "-$1234567");
     }
 
     fn view() -> View {

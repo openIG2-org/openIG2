@@ -315,6 +315,20 @@ pub enum Icon {
     SpeakerOff,
     /// Two opposed arrows (`arrow-left-right`): an exchange between two sides.
     Swap,
+    /// Money (`coins`), energy (`zap`), workers (`user`).
+    Coins,
+    Bolt,
+    User,
+    /// Details (`info`), on/off (`power`), repair (`wrench`), demolish (`trash-2`), back (`undo-2`).
+    Info,
+    Power,
+    Wrench,
+    Trash,
+    Undo,
+    /// Zoom in and out (`zoom-in`, `zoom-out`), centre on (`crosshair`).
+    ZoomIn,
+    ZoomOut,
+    Target,
 }
 
 impl Icon {
@@ -324,8 +338,71 @@ impl Icon {
         let at = |x: f32, y: f32| rect.center() + Vec2::new(x - 12.0, y - 12.0) * s;
         let st = Stroke::new(2.0 * s.max(0.75), c);
         let poly = |pts: &[(f32, f32)]| p.add(egui::Shape::line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
+        let closed = |pts: &[(f32, f32)]| p.add(egui::Shape::closed_line(pts.iter().map(|&(x, y)| at(x, y)).collect(), st));
+        let circle = |x: f32, y: f32, r: f32| p.circle_stroke(at(x, y), r * s, st);
+        // An arc about (x, y) from `a` to `b` degrees (y down: 90 is below).
+        let arc = |x: f32, y: f32, r: f32, a: f32, b: f32| -> Vec<(f32, f32)> {
+            (0..=24).map(|j| (a + (b - a) * j as f32 / 24.0).to_radians()).map(|t| (x + r * t.cos(), y + r * t.sin())).collect()
+        };
         let chev = |dx: f32| poly(&[(9.0 + dx, 18.0), (15.0 + dx, 12.0), (9.0 + dx, 6.0)]);
         match self {
+            Icon::Coins => {
+                circle(8.0, 8.0, 6.0);
+                poly(&arc(16.0, 16.0, 6.0, -69.6, 160.5));
+                poly(&[(7.0, 6.0), (8.0, 6.0), (8.0, 10.0)]);
+                poly(&[(16.71, 13.88), (17.41, 14.59), (14.59, 17.41)]);
+            }
+            Icon::Bolt => _ = closed(&[(13.0, 2.0), (3.0, 14.0), (12.0, 14.0), (11.0, 22.0), (21.0, 10.0), (12.0, 10.0)]),
+            Icon::User => {
+                circle(12.0, 7.0, 4.0);
+                let mut v = vec![(19.0, 21.0)];
+                v.extend(arc(15.0, 19.0, 4.0, 0.0, -90.0));
+                v.extend(arc(9.0, 19.0, 4.0, -90.0, -180.0));
+                v.push((5.0, 21.0));
+                poly(&v);
+            }
+            Icon::Info => {
+                circle(12.0, 12.0, 10.0);
+                poly(&[(12.0, 16.0), (12.0, 12.0)]);
+                p.circle_filled(at(12.0, 8.0), 1.3 * s, c);
+            }
+            Icon::Power => {
+                poly(&[(12.0, 2.0), (12.0, 12.0)]);
+                poly(&arc(12.0, 12.0, 9.0, -40.0, 220.0));
+            }
+            Icon::Wrench => {
+                poly(&arc(15.5, 8.5, 5.5, 10.0, 280.0));
+                poly(&[(11.6, 12.4), (4.0, 20.0)]);
+                poly(&[(4.0, 20.0), (5.0, 21.0), (12.6, 13.4)]);
+            }
+            Icon::Trash => {
+                poly(&[(3.0, 6.0), (21.0, 6.0)]);
+                poly(&[(19.0, 6.0), (19.0, 20.0), (17.0, 22.0), (7.0, 22.0), (5.0, 20.0), (5.0, 6.0)]);
+                poly(&[(8.0, 6.0), (8.0, 4.0), (10.0, 2.0), (14.0, 2.0), (16.0, 4.0), (16.0, 6.0)]);
+                poly(&[(10.0, 11.0), (10.0, 17.0)]);
+                poly(&[(14.0, 11.0), (14.0, 17.0)]);
+            }
+            Icon::Undo => {
+                poly(&[(9.0, 14.0), (4.0, 9.0), (9.0, 4.0)]);
+                let mut v = vec![(4.0, 9.0)];
+                v.extend(arc(14.5, 14.5, 5.5, -90.0, 90.0));
+                v.push((11.0, 20.0));
+                poly(&v);
+            }
+            Icon::ZoomIn | Icon::ZoomOut => {
+                circle(11.0, 11.0, 8.0);
+                poly(&[(21.0, 21.0), (16.65, 16.65)]);
+                poly(&[(8.0, 11.0), (14.0, 11.0)]);
+                if self == Icon::ZoomIn {
+                    poly(&[(11.0, 8.0), (11.0, 14.0)]);
+                }
+            }
+            Icon::Target => {
+                circle(12.0, 12.0, 10.0);
+                for l in [[(22.0, 12.0), (18.0, 12.0)], [(6.0, 12.0), (2.0, 12.0)], [(12.0, 6.0), (12.0, 2.0)], [(12.0, 22.0), (12.0, 18.0)]] {
+                    poly(&l);
+                }
+            }
             Icon::ChevronLeft => _ = poly(&[(15.0, 18.0), (9.0, 12.0), (15.0, 6.0)]),
             Icon::ChevronRight | Icon::Play => _ = chev(0.0),
             Icon::ChevronDown => _ = poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)]),
@@ -498,6 +575,27 @@ pub fn round_button_sized(ui: &mut Ui, glyph: Glyph, d: f32, active: bool) -> Re
         p.circle_stroke(c, d / 2.0 + ring + 8.0, Stroke::new(2.0f32, k.focus));
     }
     resp
+}
+
+/// A round action button `d` across with its label on a black tag under it (the boards' repair, demolish and the
+/// ground war's strikes: 11 / 0.14 em upper case, silver, white while `active`); the response is the button's, its
+/// tooltip `tip` unless that is the label. The tag takes up to 100 more than the button before the label shrinks.
+pub fn round_action(ui: &mut Ui, glyph: Glyph, d: f32, active: bool, label: &str, tip: &str) -> Response {
+    const FONT: Font = Font { size: 11.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.14, upper: true, lcd: false };
+    let k = tokens();
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 4.0;
+        let r = round_button_sized(ui, glyph, d, active);
+        let w = r.rect.width() + 100.0;
+        let fit = Text::new(label, FONT).layout(ui.ctx(), w - 16.0);
+        let tag_w = (fit.width + 16.0).min(w);
+        let (row, _) = ui.allocate_exact_size(Vec2::new(r.rect.width(), 18.0), Sense::hover());
+        let tag = Rect::from_center_size(row.center(), Vec2::new(tag_w, 18.0));
+        ui.painter().rect_filled(tag, RADIUS_PLATE, Color32::BLACK);
+        Text::new(label, FONT).center().shrink(9.0).color(ink(ui.is_enabled(), if active { k.ink } else { k.ink_silver })).paint(ui, tag.shrink2(Vec2::new(8.0, 0.0)));
+        if tip == label { r } else { super::tip(r, tip) }
+    })
+    .inner
 }
 
 // ---- Rows ----

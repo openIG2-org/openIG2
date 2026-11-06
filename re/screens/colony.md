@@ -1052,7 +1052,7 @@ pick list, windows, short info, rename, planet info mode), `colony_war.rs` (§11
 unit slots, groups seeded from `+0x13c` on entry and written back after Ctrl+4..9 in SP, hit test on the last drawn
 frame's centres, landing, self-destruct, pointer), `colony_weather.rs` (§2.6), `colony_smoke.rs` (§3.5). Reloading the
 scene when the buildings change carries smoke, weather and falling boxes over.
-Modern panels (ADR 0074: design-kit look, own modern panel for the planet info mode, §12): with the Modern interface (default) the 2D panels are egui console plates (ADR 0070, `colony_modern.rs`, acts through `ColonyUi::modern_act`); the classic panels are unchanged, drawn when the option is off, and every capture stays byte-identical.
+Modern panels (ADR 0074: design-kit look, own modern panel for the planet info mode, §12): with the Modern interface (default) the 2D panels are egui console plates (ADR 0070, `colony_modern.rs`, acts through `ColonyUi::modern_act`); the classic panels are unchanged, drawn when the option is off, and every capture stays byte-identical. The build menu's group tabs and Build are the kit's command plates (current group pressed, Build lit while the build cursor is up), Repair sits beside Demolish (greyed while nothing needs repair), and the icons, keys and round buttons are the kit's (`gui/ds/widgets.rs`: line icons, `round_action`).
 Done: §2–§6, §9–§12 as specified; capture comparisons `colony:42`, `colony:6` (rain), `grwar:17` (snow, war UI),
 `grwar:17 --land`, `colony:42 --self-destruct 380`, `--colony-live`, `--colony-ui pick|demolish|build|war`; the building pick by model hit (`View::building_at`, §10, tested against the
 exe's click pass); results in
