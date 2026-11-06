@@ -1311,13 +1311,17 @@ pub fn key_cap(ui: &mut Ui, text: &str, listening: bool) -> Response {
 
 /// An LCD readout (`.ig-lcd`): olive digits, slanted, in a recessed black window at least `min_chars` wide.
 pub fn lcd(ui: &mut Ui, text: &str, size: f32, min_chars: usize) -> Response {
+    lcd_ink(ui, text, size, min_chars, tokens().lcd_ink)
+}
+
+/// An [`lcd`] with its digits in `ink` (a readout blinking after a change).
+pub fn lcd_ink(ui: &mut Ui, text: &str, size: f32, min_chars: usize, ink: Color32) -> Response {
     let f = Font::READOUT.sized(size);
-    let k = tokens();
     let char_w = Text::new("0", f).layout(ui.ctx(), f32::INFINITY).width + f.spacing();
     let w = Text::new(text, f).layout(ui.ctx(), f32::INFINITY).width.max(char_w * min_chars as f32) + 2.0 * SPACE[1] + f.size * 0.2;
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, f.line + 4.0), Sense::hover());
     lcd_window(ui.painter(), rect);
-    Text::new(text, f).color(k.lcd_ink).paint_only(ui, rect.shrink2(Vec2::new(SPACE[1], 0.0)));
+    Text::new(text, f).color(ink).paint_only(ui, rect.shrink2(Vec2::new(SPACE[1], 0.0)));
     resp
 }
 
