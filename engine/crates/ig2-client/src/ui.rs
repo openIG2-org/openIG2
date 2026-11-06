@@ -958,6 +958,7 @@ impl Hud {
             turbo: self.turbo,
             line,
             waiting,
+            unread: crate::messages_modern::unread(self, s),
             history: s.history.iter().map(|h| dec(&crate::diplomacy::articles(h, hu))).collect(),
             history_open: self.history_open,
             screens,

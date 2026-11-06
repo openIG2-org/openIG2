@@ -172,6 +172,8 @@ pub struct View {
     pub line: String,
     /// The line is the pulsing "message waiting" (or the story's) text.
     pub waiting: bool,
+    /// The inbox's unread messages (the messages key's badge).
+    pub unread: usize,
     pub history: Vec<String>,
     pub history_open: bool,
     pub screens: Vec<ScreenItem>,
@@ -550,6 +552,8 @@ fn group_w(n: usize, w: f32) -> f32 {
 /// The research button's width (board: 300) and the readouts' and the ticker's height.
 const RESEARCH_W: f32 = 300.0;
 const LINE_H: f32 = 30.0;
+/// The bar's row: the key groups and the LCDs 32 high, the ticker and the research button 30 in its middle.
+const ROW_H: f32 = 32.0;
 /// The selection card (`.ig-panel.deep`, 380 wide, 14 × 16 inside; the globe's column 96, 16 to the text).
 const CARD_W: f32 = 380.0;
 const CARD_SIDE: f32 = 96.0;
@@ -654,8 +658,9 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
         ds::shadow(p, rect, 0, 3, 8, 0, Color32::from_black_alpha(204));
         ds::vgrad(p, rect, 0, &[(0.0, k.metal_light), (0.3, k.metal_dark), (1.0, k.metal_shadow)]);
         ds::relief(p, rect, 0);
-        let inner = rect.shrink2(BAR_PAD);
-        ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)), |ui| {
+        // One row of 32-point boxes on the bar's middle line (a centred layout drops a key group's 2-point frame below it).
+        let inner = Rect::from_center_size(rect.center(), vec2(rect.width() - 2.0 * BAR_PAD.x, ROW_H));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Min)), |ui| {
             ui.spacing_mut().item_spacing.x = BAR_GAP;
             // Pause and the speeds: one key block, the running one lit.
             ds::key_group(ui, |ui| {
@@ -671,10 +676,10 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
                 }
             });
             if v.turbo > 1 {
-                Text::new(&format!("×{}", v.turbo), Font::LABEL).color(k.lcd_ink).show(ui, vec2(26.0, LINE_H));
+                Text::new(&format!("×{}", v.turbo), Font::LABEL).color(k.lcd_ink).show(ui, vec2(26.0, ROW_H));
             }
             let money = v.money.replace('\u{2009}', "");
-            readout(ui, &money, if money.starts_with('-') { k.enemy } else { k.lcd_ink }, 8);
+            readout(ui, &money, if money.starts_with('-') { k.enemy } else { k.lcd_ink }, 7);
             readout(ui, &v.date, k.lcd_ink, 12);
             // The right part's room first; the ticker takes what is left between.
             let (main, side): (Vec<_>, Vec<_>) = v.screens.iter().partition(|s| !matches!(s.n, 1 | 10 | 13));
@@ -688,13 +693,9 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
                 ds::key_group(ui, |ui| {
                     for s in list {
                         let n = s.n;
-                        let draw = move |p: &egui::Painter, r: Rect, c: Color32| icon(p, r, Icon::Screen(n), c);
-                        let r = ui.add_enabled(s.on, IconKey::new(ds::Glyph::Custom(&draw)).on(s.current));
-                        // New mail waiting: a lit dot on the messages key.
-                        if n == 10 && v.waiting {
-                            let c = r.rect.right_top() + vec2(-6.0, 6.0);
-                            ds::shadow(ui.painter(), Rect::from_center_size(c, vec2(7.0, 7.0)), 255, 0, 6, 0, k.lcd_ink.gamma_multiply(0.6));
-                            ui.painter().circle_filled(c, 3.5, k.lcd_ink);
+                        let r = ui.add_enabled(s.on, IconKey::icon(screen_icon(n)).on(s.current));
+                        if n == 10 && v.unread > 0 {
+                            unread_badge(ui, r.rect, v.unread);
                         }
                         if hand(tip(r, &s.name, &s.key, &ink)).clicked() && !s.current {
                             acts.push(Act::Screen(n));
@@ -717,14 +718,44 @@ pub(crate) fn bar(ctx: &egui::Context, v: &View, st: &mut State, acts: &mut Vec<
     ink
 }
 
+/// A screen's key icon (the board's top bar).
+fn screen_icon(n: i32) -> ds::Icon {
+    use ds::Icon as I;
+    match n {
+        1 => I::Help,
+        2 => I::Map,
+        3 => I::Building,
+        4 => I::Flask,
+        5 => I::Wrench,
+        6 => I::Users,
+        7 => I::Eye,
+        8 => I::Trade,
+        9 => I::Activity,
+        10 => I::Mail,
+        _ => I::Menu,
+    }
+}
+
+/// The unread count on a key's top right (the board's badge: 14 high, at least 14 wide, black on LCD ink).
+fn unread_badge(ui: &egui::Ui, key: Rect, n: usize) {
+    let k = ds::tokens();
+    let f = Font { size: 10.0, line: 14.0, weight: Weight::SemiBold, tracking: 0.0, upper: false, lcd: false };
+    let text = if n > 99 { "99+".to_string() } else { n.to_string() };
+    let w = (Text::new(&text, f).layout(ui.ctx(), f32::INFINITY).width + 6.0).max(14.0);
+    let r = Rect::from_min_size(pos2(key.right() - 2.0 - w, key.top() + 1.0), vec2(w, 14.0));
+    ui.painter().rect_filled(r, 7, k.lcd_ink);
+    Text::new(&text, f).center().color(Color32::BLACK).paint_only(ui, r);
+}
+
 /// An LCD readout (`.ig-lcd`, 22 points) at least `min_chars` wide, so the bar doesn't move as the digits change.
 fn readout(ui: &mut egui::Ui, text: &str, colour: Color32, min_chars: usize) {
     let f = Font::READOUT.sized(22.0);
-    let digit = Text::new("0", f).layout(ui.ctx(), f32::INFINITY).width + f.spacing();
-    let w = Text::new(text, f).layout(ui.ctx(), f32::INFINITY).width.max(digit * min_chars as f32) + 2.0 * ds::SPACE[1] + f.size * 0.3;
-    let (rect, _) = ui.allocate_exact_size(vec2(w, LINE_H + 2.0), Sense::hover());
+    // The board's monospaced LCD face sets the width: a fixed pitch a character, a space as wide as a digit.
+    const PITCH: f32 = 14.5;
+    let w = (PITCH * text.chars().count().max(min_chars) as f32 + 2.0 * ds::SPACE[1]).round();
+    let (rect, _) = ui.allocate_exact_size(vec2(w, ROW_H), Sense::hover());
     ds::lcd_window(ui.painter(), rect);
-    Text::new(text, f).color(colour).paint(ui, rect.shrink2(vec2(ds::SPACE[1], 0.0)));
+    Text::new(text, f).shrink(18.0).color(colour).paint(ui, rect.shrink2(vec2(ds::SPACE[1], 0.0)));
 }
 
 /// The research button (black, a metal rim; the flask, the project's name, its progress and per cent, or the idle
@@ -732,7 +763,8 @@ fn readout(ui: &mut egui::Ui, text: &str, colour: Color32, min_chars: usize) {
 fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width: f32) -> Rect {
     let k = ds::tokens();
     let r = &v.research;
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, LINE_H), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(vec2(width, ROW_H), Sense::click());
+    let rect = rect.shrink2(vec2(0.0, (ROW_H - LINE_H) / 2.0));
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered()).max(st.research_open as u8 as f32);
     let p = ui.painter();
     p.rect_filled(rect, ds::RADIUS_PLATE, Color32::BLACK);
@@ -750,7 +782,7 @@ fn research_status(ui: &mut egui::Ui, v: &View, st: &mut State, ink: &Ink, width
         None => _ = Text::new(&v.labels.idle, BUTTON_TEXT).color(if on { k.ink_silver } else { k.ink_muted }).paint(ui, text),
     }
     // Over the progress fill.
-    icon(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(17.0, 17.0)), Icon::Screen(4), if on { k.ink_silver } else { k.ink_muted });
+    ds::Icon::Flask.paint(p, Rect::from_center_size(pos2(inner.left() + 8.0, rect.center().y), vec2(16.0, 16.0)), if on { k.ink_silver } else { k.ink_muted });
     ds::rim(p, rect, ds::RADIUS_PLATE, k.metal_light.lerp_to_gamma(k.ink_silver, hot));
     if hand(tip(resp, &label, "", ink)).clicked() {
         st.research_open = !st.research_open;
@@ -779,7 +811,8 @@ fn progress_field(ui: &egui::Ui, rect: Rect, text: Rect, frac: f32, name: &str, 
 /// messages screen; right button held: the history.
 fn ticker(ui: &mut egui::Ui, v: &View, ink: &Ink, size: Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let (r, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (r, resp) = ui.allocate_exact_size(vec2(size.x, ROW_H), Sense::click());
+    let r = Rect::from_center_size(r.center(), size);
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
     let p = ui.painter();
     p.rect_filled(r, ds::RADIUS_PLATE, Color32::BLACK);

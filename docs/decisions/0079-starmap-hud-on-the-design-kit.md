@@ -18,7 +18,9 @@ because the original's hot-spot code hit-tests it there.
    colour), the message ticker taking the room between (the original's scrolling message, the waiting text pulsing in
    LCD ink, "Pause" in LCD ink while paused and nothing scrolls, else the latest history line dim), the research button
    (300 wide: flask, the field itself filling faintly from the left as the progress bar, the project's name cut with "…" and the per cent right-aligned in the LCD face, or the idle text) and the screens as metal keys
-   in two blocks (the screens; help, messages and options), a lit dot on the messages key while a message waits. The
+   in two blocks (the screens; help, messages and options) drawn with the kit's line icons, a yellow count badge on the
+   messages key while messages wait. Every part sits on one 32-point row on the bar's middle line (keys and LCDs 32
+   high, the message line and research button 30), the money LCD at least 7 characters wide. The
    colony, info and research screens keep using this bar (`starmap_modern::bar`).
 2. **Selection card** (`.ig-panel.deep` with `.ig-card`, 380 wide, 24 from the bottom-left corner): a shaded globe in
    the owner's colour (a fleet's mark for a fleet) between the richness and habitability ratios, the name, the

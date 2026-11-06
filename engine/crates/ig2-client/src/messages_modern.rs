@@ -264,6 +264,11 @@ fn date(t: i32) -> String {
 }
 
 /// What the modern messages screen shows this frame, from the classic screen's state.
+/// The inbox's unread messages: not kept and not opened this session.
+pub fn unread(h: &crate::ui::Hud, s: &crate::ui::UiSnap) -> usize {
+    s.inbox.iter().enumerate().filter(|&(i, m)| m.1 & 1 == 0 && !h.messages.read.contains(&i)).count()
+}
+
 pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_rules::Rules, s: &crate::ui::UiSnap, gates: Option<&[bool; 20]>, time: f32) -> View {
     let lang = h.texts.lang;
     let dec = |b: &[u8]| ig2_formats::text::decode(b.split(|&c| c == 0).next().unwrap_or(&[]), lang).trim().to_string();
@@ -292,7 +297,7 @@ pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_ru
     } else {
         Vec::new()
     };
-    let unread = (0..n).filter(|&i| s.inbox[i].1 & 1 == 0 && !m.read.contains(&i)).count();
+    let unread = unread(h, s);
     let blink = (time * 1000.0 / 200.0) as i64 % 2 == 1;
     let open = m.open.as_ref().filter(|_| m.text_up()).map(|d| {
         let k = kind(d.index);
