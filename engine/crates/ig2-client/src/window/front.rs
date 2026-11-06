@@ -78,6 +78,7 @@ impl App {
         let mut name_pick = None;
         let mut replay_act = None;
         let mut stats_close = false;
+        let mut scenario_act = None;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -106,6 +107,15 @@ impl App {
             let theme = theme(h);
             let t = page_in(&mut fr.page, Page::Replays, false);
             run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
+            top = Some(pointer_over(&ov, h, size));
+        } else if let (true, Some(h), Some(a)) = (fr.s.scenarios_page_up() && fr.mp.is_none() && fr.mods.is_none(), &self.hud, &fr.scenarios) {
+            // Ours (ADR 0078): the modern scenarios page over the scene.
+            let theme = theme(h);
+            let t = page_in(&mut fr.page, Page::Scenarios, false);
+            let (install, pics) = (&self.install, &mut fr.sc_pics);
+            if let Some(sc) = fr.s.scenario.as_mut() {
+                run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| scenario_act = crate::scenarios_modern::page(ctx, &h.texts, install, sc, &a.tables, pics));
+            }
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(n), true, Some(h)) = (fr.s.name.as_ref(), fr.s.name_page_up() && fr.mp.is_none(), &self.hud) {
             // Ours (ADR 0078): the modern name prompt over the scene.
@@ -161,6 +171,16 @@ impl App {
                     f.stats = None;
                 }
             });
+        }
+        if let Some(a) = scenario_act {
+            self.audio.play(crate::audio::CLICK);
+            if a != crate::scenarios_modern::Act::Click {
+                self.after_page(move |app| {
+                    if let Some(f) = &mut app.front {
+                        crate::scenarios_modern::finish(&mut f.s, a);
+                    }
+                });
+            }
         }
         match replay_act {
             Some(crate::replay_viewer::ListAct::Close) => {
@@ -631,6 +651,7 @@ pub(super) enum Page {
     Mods,
     Stats,
     Replays,
+    Scenarios,
     Name,
     NewGame,
     Main(crate::menu_flow::Panel),

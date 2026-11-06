@@ -301,6 +301,7 @@ const TABLE: &[(&str, &str)] = &[
     ("Scenarios", "Forgatókönyvek"),
     ("Local network", "Helyi hálózat"),
     ("Internet", "Internet"),
+    ("Race", "Faj"),
     ("Started (UTC)", "Kezdés (UTC)"),
     ("No recorded games yet.", "Még nincs rögzített játék."),
     ("Selected replay", "Kiválasztott visszajátszás"),

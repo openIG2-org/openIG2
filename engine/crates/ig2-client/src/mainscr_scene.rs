@@ -525,7 +525,8 @@ pub fn draw_2d(s: &mut MainScr, assets: &mut Option<crate::mainscr_scenario::Ass
     if let Some(rc) = s.race.as_ref().filter(|_| !s.modern) {
         rc.draw_blurb(frame, &d, blink);
     }
-    if let (Some(sc), Some(a)) = (&mut s.scenario, assets) {
+    // Ours (ADR 0078): the modern page draws the list.
+    if let (Some(sc), Some(a), false) = (&mut s.scenario, assets, s.modern) {
         a.race_pictures(r, install);
         if let Some(e) = sc.entry() {
             let pic = e.pic.clone();
@@ -684,7 +685,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
     let mut options: Option<(crate::options::Headless, crate::options::OptionsScreen)> = None;
     let tables = ig2_rules::Rules::from_install(&install)?;
     let hud = crate::ui::Hud::load(&mut r, &install, &tables);
-    let mut assets = None;
+    let mut assets: Option<crate::mainscr_scenario::Assets> = None;
+    let mut sc_pics = crate::scenarios_modern::Pics::default();
     // Our MP screens (ADR 0014), offline: hosting works on a listener nobody reaches, nothing touches the network.
     let mut mp: Option<crate::mp_lobby::MpScreen> = None;
     let mut net = crate::mp_lobby::OfflineNet;
@@ -827,6 +829,27 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                 Some(crate::mainscr_modern::NamePick::Accept) => picked = s.name_key(crate::options::EntryKey::Enter),
                 Some(crate::mainscr_modern::NamePick::Back) => s.escape(),
                 None => {}
+            }
+            press = None;
+            release = None;
+        }
+        // Ours (ADR 0078): the modern scenarios page, driven by the script's pointer.
+        if let (true, None, None, Some(a)) = (s.scenarios_page_up(), &mp, &options, &assets) {
+            gui.pointer(Some(vv.px(mouse[0], mouse[1])), k);
+            if press.is_some() {
+                gui.button(0, true);
+            }
+            if release.is_some() {
+                gui.button(0, false);
+            }
+            let theme = crate::theme::Theme::modern();
+            let mut act = None;
+            if let Some(sc) = s.scenario.as_mut() {
+                gui.run(o.size, &crate::gui::style(&theme), |ctx| act = crate::scenarios_modern::page(ctx, &hud.texts, &install, sc, &a.tables, &mut sc_pics));
+            }
+            if let Some(a) = act {
+                crate::scenarios_modern::finish(&mut s, a);
+                println!("t {t}: scenarios {a:?}");
             }
             press = None;
             release = None;

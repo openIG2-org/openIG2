@@ -150,7 +150,7 @@ impl Skirmish {
         }
     }
 
-    fn value(&self, k: usize) -> i32 {
+    pub fn value(&self, k: usize) -> i32 {
         let mut c = *self;
         *c.get(k)
     }
@@ -381,28 +381,13 @@ impl ScenarioList {
         let id = self.spot_at(at);
         let n = self.entries.len();
         match id {
-            0x15 if n > 0 => {
-                self.closing = true;
-                self.starting = true;
-                self.pic_cel = 0.0;
-                Some(Act::Start)
-            }
+            0x15 if n > 0 => self.start().then_some(Act::Start),
             0x16 => {
                 self.cancel();
                 None
             }
             0x17 => {
-                let r = (((at[1].floor() as i32) - 0x41) / 0xf).clamp(0, 0x16) as usize + self.first;
-                if r < n && r != self.selected {
-                    self.selected = r;
-                    if self.entries[r].skirmish() {
-                        self.high_score = false;
-                    }
-                    self.init_skirmish();
-                    if self.pic != 0.0 {
-                        self.pic_cel = 0.0;
-                    }
-                }
+                self.pick((((at[1].floor() as i32) - 0x41) / 0xf).clamp(0, 0x16) as usize + self.first);
                 None
             }
             0x18..=0x26 if id != 0x1c => {
@@ -415,10 +400,7 @@ impl ScenarioList {
                     0x23 | 0x24 => 5,
                     _ => 6,
                 };
-                let up = matches!(id, 0x19 | 0x1b | 0x1e | 0x20 | 0x22 | 0x24 | 0x26);
-                let (lo, hi) = (SETTINGS[k].2, SETTINGS[k].3);
-                let v = self.sk.get(k);
-                *v = if up { (*v + 1).min(hi) } else { (*v - 1).max(lo) };
+                self.step(k, matches!(id, 0x19 | 0x1b | 0x1e | 0x20 | 0x22 | 0x24 | 0x26));
                 Some(Act::Click)
             }
             0x1c => {
@@ -432,6 +414,43 @@ impl ScenarioList {
             }
             _ => None,
         }
+    }
+
+    /// Start (box 0x15): the panel closes for the start; false when it is closing already or empty.
+    pub fn start(&mut self) -> bool {
+        if self.closing || self.starting || self.entries.is_empty() {
+            return false;
+        }
+        self.closing = true;
+        self.starting = true;
+        self.pic_cel = 0.0;
+        true
+    }
+
+    /// A list row (box 0x17): entry `r` selected (a skirmish entry leaves the high scores), its picture swapped.
+    pub fn pick(&mut self, r: usize) {
+        if r < self.entries.len() && r != self.selected {
+            self.selected = r;
+            if self.entries[r].skirmish() {
+                self.high_score = false;
+            }
+            self.init_skirmish();
+            if self.pic != 0.0 {
+                self.pic_cel = 0.0;
+            }
+        }
+    }
+
+    /// A skirmish setting's arrow (boxes 0x18..=0x26): setting `k` one step up or down within its bounds.
+    pub fn step(&mut self, k: usize, up: bool) {
+        let (lo, hi) = Self::bounds(k);
+        let v = self.sk.get(k);
+        *v = if up { (*v + 1).min(hi) } else { (*v - 1).max(lo) };
+    }
+
+    /// Setting `k`'s lowest and highest value.
+    pub fn bounds(k: usize) -> (i32, i32) {
+        (SETTINGS[k].2, SETTINGS[k].3)
     }
 
     /// The pointer moved (with the knob held: `Mouse_Megfogva` keeps box 0x1c's case running).
@@ -796,7 +815,7 @@ pub fn draw_disconnected(f: &mut Frame, d: &Draw, reason: u16, at: [f32; 2]) {
 }
 
 /// `sprintf(fmt, n)` for the one `%d` the texts carry (the texts are code-page bytes, kept as they are).
-fn fmt1(fmt: &[u8], n: i32) -> Vec<u8> {
+pub(crate) fn fmt1(fmt: &[u8], n: i32) -> Vec<u8> {
     match fmt.windows(2).position(|w| w == b"%d") {
         Some(i) => [&fmt[..i], n.to_string().as_bytes(), &fmt[i + 2..]].concat(),
         None => fmt.to_vec(),
@@ -804,7 +823,7 @@ fn fmt1(fmt: &[u8], n: i32) -> Vec<u8> {
 }
 
 /// `sprintf(fmt, s)` for one `%s`.
-fn fmts(fmt: &[u8], s: &[u8]) -> Vec<u8> {
+pub(crate) fn fmts(fmt: &[u8], s: &[u8]) -> Vec<u8> {
     match fmt.windows(2).position(|w| w == b"%s") {
         Some(i) => [&fmt[..i], s, &fmt[i + 2..]].concat(),
         None => fmt.to_vec(),
@@ -813,6 +832,19 @@ fn fmts(fmt: &[u8], s: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_setting_steps_within_its_bounds_and_start_closes_once() {
+        let mut s = ScenarioList::open(Vec::new());
+        s.sk = Skirmish::new(8);
+        s.step(0, true);
+        assert_eq!(s.sk.race, 8, "race 8 is the last");
+        for _ in 0..10 {
+            s.step(1, false);
+        }
+        assert_eq!(s.sk.computers, ScenarioList::bounds(1).0);
+        assert!(!s.start(), "no entry to start");
+    }
+
     use super::*;
 
     /// The texts' accented bytes stay single bytes (the `%d` line "JÁTÉKOS" in Latin-2: the exe's `sprintf` copies

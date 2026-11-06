@@ -533,6 +533,11 @@ impl MainScr {
 
     /// Ours (ADR 0059): the panel in the rings' place, for the ring set at rest (the main set's grouped panel, a
     /// sub-set's entries, the difficulty rings' while they would take a press); the rings are hidden.
+    /// Ours (ADR 0078): the scenario list is up as the modern page (not while it closes).
+    pub fn scenarios_page_up(&self) -> bool {
+        self.modern && self.scenario.as_ref().is_some_and(|sc| !sc.closing) && self.name.is_none() && self.high_score.is_none() && self.disconnected.is_none()
+    }
+
     pub fn panel(&self) -> Option<crate::menu_flow::Panel> {
         use crate::menu_flow::Panel;
         if !self.flow || self.covered || self.scenario.is_some() || self.name.is_some() || self.mp || self.disconnected.is_some() || self.high_score.is_some()
@@ -665,6 +670,19 @@ impl MainScr {
 
     /// A left press at `at`: a box ring or a direct ring (`Mouse_Lenyom && Mouse_Bal` in `Update3D`), the race boxes,
     /// the scenario panel's boxes, the disconnected box's OK.
+    /// The scenario list's start (§6.3 0x15, after [`crate::mainscr_scenario::ScenarioList::start`]): `Cel` 6, the
+    /// chosen entry started once the screen is left.
+    pub fn start_chosen(&mut self) {
+        let Some(sc) = self.scenario.as_ref() else { return };
+        let Some(e) = sc.chosen() else { return };
+        self.cel = 6.0;
+        self.start = Some(if e.skirmish() {
+            Start::Skirmish { settings: sc.sk, kind: e.kind }
+        } else {
+            Start::Scenario { file: e.file.clone(), registry: e.registry.clone() }
+        });
+    }
+
     pub fn press(&mut self, at: [f32; 2]) -> Option<Act> {
         self.press_button(at, true)
     }
@@ -717,14 +735,7 @@ impl MainScr {
                 S::Click => Some(Act::Click),
                 // §6.3 0x15: `Cel` 6, `AktKep = 2`; the panel closes while the exit animation runs.
                 S::Start => {
-                    let sc = self.scenario.as_ref()?;
-                    let e = sc.chosen()?;
-                    self.cel = 6.0;
-                    self.start = Some(if e.skirmish() {
-                        Start::Skirmish { settings: sc.sk, kind: e.kind }
-                    } else {
-                        Start::Scenario { file: e.file.clone(), registry: e.registry.clone() }
-                    });
+                    self.start_chosen();
                     None
                 }
             };
