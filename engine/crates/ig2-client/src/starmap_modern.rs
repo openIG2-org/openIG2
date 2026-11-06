@@ -1594,7 +1594,7 @@ mod tests {
         assert!((back[0] - 470.0).abs() < 0.01 && (back[1] - 316.0).abs() < 0.01, "{back:?}");
         // Off the drawn menu, the original's rows at their old place answer nothing (no unseen pick).
         assert_eq!(st.info_pointer([470.0, 316.0]), NEUTRAL);        // The menu's kind names its field, wherever the press opened it: an autobuild menu opened nearer the tax
-        // field still opens on the autobuild one, its value ("Civil") marked there; the list is the field's width.
+        // field still opens on the autobuild one, its value ("Civil") marked there; the list is 6 out from the field each side.
         v.menus.select = Some(Select { rows: vec![SelectRow { rect: [450.0, 297.0, 121.0, 13.0], text: "None".into(), ..Default::default() }, SelectRow { rect: [450.0, 310.0, 121.0, 13.0], text: "Civil".into(), ..Default::default() }], field: Some(1), planets: false });
         for _ in 0..2 {
             g.run(SIZE, &style, |ctx| _ = show(ctx, &v, &mut st));
@@ -1602,7 +1602,7 @@ mod tests {
         let (shift, bounds) = st.placed.as_ref().and_then(|p| p.menu).expect("menu");
         let field = st.placed.as_ref().unwrap().spots.iter().find(|s| s.0 == 0x5e).unwrap().1;
         assert!((field.center().y - (map[1] + (316.5 + shift[1]) * map[2])).abs() < 1.0, "{shift:?}");
-        assert!(bounds.width() < field.width() + 12.0, "{bounds:?} {field:?}");
+        assert!(bounds.width() <= field.width() + 12.5, "{bounds:?} {field:?}");
     }
 
     /// The planet list opens under the production view's plate at the board's rows, the plate's planet marked, and
