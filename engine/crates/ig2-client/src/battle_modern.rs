@@ -409,7 +409,8 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip:
     let k = ds::tokens();
     let w = 440.0;
     let rows = b.rows.len() + b.weapons.len();
-    let h = 52.0 + 200.0 + 18.0 + rows as f32 * 30.0 + 18.0 + if b.weapons.is_empty() { 0.0 } else { 12.0 };
+    // The board's box: the header 52, the picture 200, then 16 over the rows (20 high, 10 apart) and 18 under them.
+    let h = 52.0 + 200.0 + 16.0 + rows as f32 * 30.0 - 10.0 + 18.0 + if b.weapons.is_empty() { 0.0 } else { 12.0 };
     let f = b.f.clamp(0.0, 1.0);
     let x = screen.right() - RAIL_W - 8.0 - w + (1.0 - f) * (w + RAIL_W);
     let r = Rect::from_min_size(pos2(x, top), vec2(w, h));
@@ -423,8 +424,10 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip:
     let base = ds::fit::baseline(inner, BIG_TITLE);
     let tw = Text::new(&b.title, BIG_TITLE).color(k.ink).baseline(base).paint(ui, inner.with_max_x(inner.left() + inner.width() * 0.55)).width;
     if !b.owner.is_empty() {
-        let g = Text::new(&b.owner, Font::OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - 16.0);
-        ds::glowing_galley(&p, pos2(inner.left() + tw + 16.0, base - g.baseline()), &g.galley, b.colour);
+        // The board's 16-point gap after the title's last letter spacing.
+        let gap = 16.0 + BIG_TITLE.spacing();
+        let g = Text::new(&b.owner, Font::OWNER).color(b.colour).layout(ui.ctx(), inner.right() - inner.left() - tw - gap);
+        ds::glowing_galley(&p, pos2(inner.left() + tw + gap, base - g.baseline()), &g.galley, b.colour);
     }
     // The selection's model on the void (the original's info model), the count in an LCD window.
     let pic = Rect::from_min_size(head.left_bottom(), vec2(w, 200.0));
@@ -435,8 +438,9 @@ fn big(ui: &mut egui::Ui, b: &Big, st: &mut State, screen: Rect, top: f32, clip:
     if clip.contains_rect(well) {
         st.wells.push((Well::Info, well, ui.opacity()));
     }
-    let lw = 14.0 + 12.0 * b.count.len() as f32;
-    let lcd = Rect::from_min_size(pic.right_bottom() - vec2(14.0 + lw, 14.0 + 26.0), vec2(lw, 26.0));
+    // The board's `.ig-lcd` at 20 points: 8 aside, a 28-point line and 2 over and under it.
+    let lw = 16.0 + 20.0 * 0.62 * b.count.len() as f32;
+    let lcd = Rect::from_min_size(pic.right_bottom() - vec2(14.0 + lw, 14.0 + 32.0), vec2(lw, 32.0));
     ds::lcd_window(&p, lcd);
     Text::new(&b.count, Font::READOUT.sized(20.0)).center().color(k.lcd_ink).paint_only(ui, lcd);
     let mut y = pic.bottom() + 16.0;
