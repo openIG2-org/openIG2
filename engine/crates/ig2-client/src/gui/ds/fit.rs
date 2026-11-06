@@ -45,11 +45,12 @@ pub struct Text<'a> {
     overflow: Overflow,
     lines: usize,
     baseline: Option<f32>,
+    upright: bool,
 }
 
 impl<'a> Text<'a> {
     pub fn new(text: &'a str, font: Font) -> Self {
-        Self { text, font, color: None, align: Align::Min, overflow: Overflow::Elide, lines: 1, baseline: None }
+        Self { text, font, color: None, align: Align::Min, overflow: Overflow::Elide, lines: 1, baseline: None, upright: false }
     }
     pub fn color(mut self, c: Color32) -> Self {
         self.color = Some(c);
@@ -78,6 +79,12 @@ impl<'a> Text<'a> {
     /// Put a single line's baseline at `y` instead of centring it (a row of mixed styles on one baseline).
     pub fn baseline(mut self, y: f32) -> Self {
         self.baseline = Some(y);
+        self
+    }
+
+    /// The LCD face without its slant (the boards' table numbers, `.num`).
+    pub fn upright(mut self) -> Self {
+        self.upright = true;
         self
     }
 
@@ -130,7 +137,7 @@ impl<'a> Text<'a> {
         let ppp = ui.ctx().pixels_per_point();
         let pos = Pos2::new((pos.x * ppp).round() / ppp, (pos.y * ppp).round() / ppp);
         let painter = ui.painter().with_clip_rect(rect.expand2(Vec2::new(f.font.size * 0.3, f.font.line)).intersect(ui.clip_rect()));
-        if f.font.lcd {
+        if f.font.lcd && !self.upright {
             super::sheared_galley(&painter, pos, &f.galley, 0.2);
         } else {
             painter.galley(pos, f.galley.clone(), Color32::WHITE);
