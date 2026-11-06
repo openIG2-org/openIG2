@@ -164,7 +164,10 @@ impl App {
         let pages = self.research_modern_up() || self.design_modern_up();
         let modern = self.modern_up() || info_modern || pages;
         let over_gui = self.over_gui();
-        let bar_spot = |at: [f32; 2]| if modern { None } else { crate::hud::bar_tip_spot(at) };
+        // Ours (ADR 0082): the Modern interface's own bar on every screen, its keys' tooltips its own.
+        let interface_modern = self.display.modern;
+        let bar_spot = |at: [f32; 2]| if modern || interface_modern { None } else { crate::hud::bar_tip_spot(at) };
+        let over_modern_bar = interface_modern && crate::hud::bar_tip_spot(colony.as_ref().map_or(at, |c| c.at)).is_some();
         let starmap = if starmap_shown && bar_spot(at).is_none() && !over_gui { self.starmap_tip(at).filter(|t| !modern || !(matches!(t.id, 8 | 10 | 11) || (t.id == 0x35 && t.now))) } else { None };
         // The info and messages screens' hot-spots (`Info_MouseInit`'s texts); a held one keeps its own (`Mouse_Megfogva`).
         let info = match (&self.hud, self.overlay) {
@@ -201,7 +204,7 @@ impl App {
             _ => 0,
         };
         let mut out = Overlay::default();
-        if game && self.akt_kep_now() < 0xe {
+        if game && self.akt_kep_now() < 0xe && !over_modern_bar {
             // `AktIkonKiir`: the bar's slots (2..=8) win over the screen's (id + 0x1e).
             let bar = bar_spot(at);
             let (slot, text) = match (bar, &self.hud, &colony, &starmap) {
