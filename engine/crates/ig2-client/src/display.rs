@@ -358,11 +358,36 @@ pub fn rows(f: &File, sizes: &[(u32, u32)], current: (u32, u32)) -> Vec<Row> {
     ]
 }
 
-/// Ours: the resolution row is off while borderless (the desktop's size).
+/// A remake row that works only when another one allows it (ADR 0083): the parent row's key, whether the parent's
+/// value allows it, the note shown while it doesn't.
+pub struct Parent {
+    pub key: &'static str,
+    pub allows: fn(i32) -> bool,
+    pub note: &'static str,
+}
+
+/// ADR 0083: what `key`'s row depends on, if anything.
+pub fn parent(key: &str) -> Option<Parent> {
+    let modern = |v: i32| v != 0;
+    let classic = |v: i32| v == 0;
+    Some(match key {
+        RESOLUTION => Parent { key: MODE, allows: |v| v != Mode::Borderless as i32, note: "Borderless uses the desktop's size." },
+        UI_SCALE => Parent { key: INTERFACE, allows: modern, note: "Used by the Modern interface." },
+        // The modern main menu always has the grouped menu (`Front`'s `flow`).
+        crate::menu_flow::KEY => Parent { key: INTERFACE, allows: classic, note: "Modern always uses the grouped menu." },
+        BOX_MODELS | CENTRED_EXIT | SLIDER_UNDER | MENU_SETTINGS | EVENT_LOG => Parent { key: INTERFACE, allows: classic, note: "Used by the Classic interface." },
+        _ => return None,
+    })
+}
+
+/// Ours (ADR 0083): a remake row is off while its parent row doesn't allow it.
 pub fn dependencies(rows: &mut [Row]) {
-    let mode = rows.iter().find(|r| r.key == MODE).map(|r| r.value);
-    if let Some(r) = rows.iter_mut().find(|r| r.key == RESOLUTION && r.ours) {
-        r.enabled = mode != Some(Mode::Borderless as i32);
+    let values: Vec<(String, i32)> = rows.iter().filter(|r| r.ours).map(|r| (r.key.clone(), r.value)).collect();
+    for r in rows.iter_mut().filter(|r| r.ours) {
+        let Some(p) = parent(&r.key) else { continue };
+        if let Some(&(_, v)) = values.iter().find(|(k, _)| k == p.key) {
+            r.enabled &= (p.allows)(v);
+        }
     }
 }
 

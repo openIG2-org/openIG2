@@ -16,6 +16,10 @@ const NAME_KEY: &str = "MultiplayerNev";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Display,
+    /// ADR 0083: the 3D effects and the original's detail rows.
+    Graphics,
+    /// ADR 0083: the interface (ADR 0082) with the modern and the classic interface's own settings.
+    Interface,
     Accessibility,
     /// ADR 0058: the key bindings.
     Controls,
@@ -26,17 +30,20 @@ pub enum Tab {
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [Tab::Display, Tab::Accessibility, Tab::Controls, Tab::Sound, Tab::Game];
+    pub const ALL: [Tab; 7] = [Tab::Display, Tab::Graphics, Tab::Interface, Tab::Accessibility, Tab::Controls, Tab::Sound, Tab::Game];
 
     /// The label (the remake text table's key).
     pub fn title(self) -> &'static str {
-        ["DISPLAY", "ACCESSIBILITY", "CONTROLS", "SOUND", "GAME", "SAVE & LOAD"][self as usize]
+        ["DISPLAY", "GRAPHICS", "INTERFACE", "ACCESSIBILITY", "CONTROLS", "SOUND", "GAME", "SAVE & LOAD"][self as usize]
     }
 
     /// The tab's cards in order (the remake text table's keys); Controls' are the actions' places.
     fn cards(self) -> &'static [&'static str] {
         match self {
-            Tab::Display => &["Screen", "Graphics", "Interface", "Detail"],
+            Tab::Display => &["Screen", "Picture"],
+            Tab::Graphics => &["Effects", "Detail"],
+            // The chosen interface's card is the live one (ADR 0083).
+            Tab::Interface => &["Interface", "Modern interface", "Classic interface"],
             Tab::Accessibility => &["Readability", "Subtitles and colours", "Language"],
             Tab::Sound => &["Volume", "Music"],
             Tab::Game => &["Battles and saving", "Enhancements", "Handling"],
@@ -126,24 +133,28 @@ fn place(rows: &[Row], it: Item) -> (Tab, &'static str) {
         Item::Row(k) => {
             let r = &rows[k];
             if !r.ours {
-                return if r.page == 1 { (Tab::Display, "Detail") } else { (Tab::Game, "Battles and saving") };
+                return if r.page == 1 { (Tab::Graphics, "Detail") } else { (Tab::Game, "Battles and saving") };
             }
             match r.key.as_str() {
-                d::UI_SCALE | d::SHARP_TEXT | d::SLIDER_UNDER | d::CLEAN_ENTRY => (Tab::Accessibility, "Readability"),
-                d::WASD | d::STARMAP_MOUSE | d::FLEET_GROUPS | d::EVENT_LOG | crate::menu_flow::KEY => (Tab::Game, "Handling"),
+                d::SHARP_TEXT | d::CLEAN_ENTRY => (Tab::Accessibility, "Readability"),
+                d::WASD | d::STARMAP_MOUSE | d::FLEET_GROUPS => (Tab::Game, "Handling"),
                 d::AUTOSAVE => (Tab::Game, "Battles and saving"),
                 d::TITLE_MUSIC => (Tab::Sound, "Music"),
-                d::TEXTURE_UPSCALE => (Tab::Display, "Graphics"),
-                d::SHARP_UI => (Tab::Display, "Interface"),
-                _ => match r.group {
-                    Group::Display => (Tab::Display, "Screen"),
-                    Group::Graphics => (Tab::Display, "Graphics"),
-                    Group::Interface => (Tab::Display, "Interface"),
-                    Group::Game => (Tab::Game, "Enhancements"),
-                    Group::Accessibility => (Tab::Accessibility, "Subtitles and colours"),
-                    Group::Language => (Tab::Accessibility, "Language"),
-                    Group::Multiplayer => (Tab::Game, "Handling"),
-                    Group::Sound => (Tab::Sound, "Volume"),
+                d::TEXTURE_UPSCALE => (Tab::Graphics, "Detail"),
+                d::LIVE_BACKGROUND | d::SHARP_UI => (Tab::Display, "Picture"),
+                d::INTERFACE => (Tab::Interface, "Interface"),
+                // ADR 0083: a row the interface allows goes to that interface's card.
+                k => match (d::parent(k), r.group) {
+                    (Some(p), _) if p.key == d::INTERFACE && (p.allows)(1) => (Tab::Interface, "Modern interface"),
+                    (Some(p), _) if p.key == d::INTERFACE => (Tab::Interface, "Classic interface"),
+                    (_, Group::Display) => (Tab::Display, "Screen"),
+                    (_, Group::Graphics) => (Tab::Graphics, "Effects"),
+                    (_, Group::Interface) => (Tab::Interface, "Interface"),
+                    (_, Group::Game) => (Tab::Game, "Enhancements"),
+                    (_, Group::Accessibility) => (Tab::Accessibility, "Subtitles and colours"),
+                    (_, Group::Language) => (Tab::Accessibility, "Language"),
+                    (_, Group::Multiplayer) => (Tab::Game, "Handling"),
+                    (_, Group::Sound) => (Tab::Sound, "Volume"),
                 },
             }
         }
@@ -185,11 +196,11 @@ fn rank(rows: &[Row], it: Item) -> u8 {
     use crate::display as d;
     let Item::Row(k) = it else { return 50 };
     match rows[k].key.as_str() {
-        d::UI_SCALE | d::LANGUAGE | d::UI_THEME | d::AUTOSAVE | d::WASD => 0,
-        d::SHARP_TEXT | d::STARMAP_MOUSE => 1,
-        d::SLIDER_UNDER => 2,
+        d::INTERFACE | d::TEXTURE_UPSCALE => 0,
+        d::UI_SCALE | d::LANGUAGE | d::UI_THEME | d::AUTOSAVE | d::WASD => 1,
+        d::SHARP_TEXT | d::STARMAP_MOUSE => 2,
         d::CLEAN_ENTRY => 3,
-        d::TEXTURE_UPSCALE | d::SHARP_UI => 99,
+        d::SHARP_UI => 99,
         _ => 50,
     }
 }
@@ -663,6 +674,38 @@ fn cards(rows: &[Row], items: &[Item]) -> Vec<(&'static str, Vec<usize>)> {
     v
 }
 
+/// ADR 0083: the note of a row its parent row turns off.
+fn note(o: &OptionsScreen, it: Item) -> Option<&'static str> {
+    let Item::Row(k) = it else { return None };
+    let r = &o.rows[k];
+    if !r.ours || r.enabled {
+        return None;
+    }
+    crate::display::parent(&r.key).map(|p| p.note)
+}
+
+/// ADR 0083: a row whose parent is on its own card sits indented under it (the interface's rows have cards of their own).
+fn child(o: &OptionsScreen, it: Item) -> bool {
+    let Item::Row(k) = it else { return false };
+    crate::display::parent(&o.rows[k].key).is_some_and(|p| p.key != crate::display::INTERFACE)
+}
+
+/// A card's note: when every line is off (a whole interface's card), the first line's note, drawn once under its
+/// heading; a line with another note keeps its own.
+fn card_note(o: &OptionsScreen, items: &[Item], lines: &[usize]) -> Option<&'static str> {
+    let first = note(o, items[*lines.first()?])?;
+    lines.iter().all(|&i| note(o, items[i]).is_some()).then_some(first)
+}
+
+/// The note's line: a muted line under a heading or a row.
+const NOTE_H: f32 = 22.0;
+const INDENT: f32 = 20.0;
+
+fn note_line(ui: &mut egui::Ui, text: &str) {
+    let f = Font::BODY.sized(13.0).tracking(0.05);
+    Text::new(text, Font { line: NOTE_H, ..f }).color(ds::tokens().ink_muted).show(ui, egui::vec2(ui.available_width(), NOTE_H));
+}
+
 /// A setting's label.
 fn label(o: &OptionsScreen, texts: &UiTexts, it: Item) -> Vec<u8> {
     match it {
@@ -903,8 +946,11 @@ impl Modern {
                 let width = ui.available_width();
                 let col_w = (width - GAP * (n as f32 - 1.0)) / n as f32;
                 let mut cols: Vec<(f32, Vec<usize>)> = vec![(0.0, Vec::new()); n];
+                let notes: Vec<Option<&'static str>> = all.iter().map(|(_, lines)| card_note(o, &items, lines)).collect();
                 for (c, (_, lines)) in all.iter().enumerate() {
-                    let h = 36.0 + 28.0 + lines.iter().map(|&i| line_height(o, texts, items[i])).sum::<f32>();
+                    let own = lines.iter().filter(|&&i| note(o, items[i]).is_some_and(|n| Some(n) != notes[c])).count();
+                    let row_notes = (own + notes[c].is_some() as usize) as f32 * NOTE_H;
+                    let h = 36.0 + 28.0 + row_notes + lines.iter().map(|&i| line_height(o, texts, items[i])).sum::<f32>();
                     let shortest = (0..n).min_by(|&a, &b| cols[a].0.total_cmp(&cols[b].0)).unwrap();
                     cols[shortest].0 += h + GAP;
                     cols[shortest].1.push(c);
@@ -922,8 +968,21 @@ impl Modern {
                                     for &c in cs {
                                         let (title, lines) = &all[c];
                                         ds::card(ui, Some(&tr(title)), |ui| {
+                                            if let Some(n) = notes[c] {
+                                                note_line(ui, &tr(n));
+                                            }
                                             for &i in lines {
-                                                click |= self.line(o, ui, texts, i, items[i], sound);
+                                                let it = items[i];
+                                                let indent = if child(o, it) { INDENT } else { 0.0 };
+                                                ui.horizontal_top(|ui| {
+                                                    ui.add_space(indent);
+                                                    ui.vertical(|ui| {
+                                                        click |= self.line(o, ui, texts, i, it, sound);
+                                                        if let Some(n) = note(o, it).filter(|&n| Some(n) != notes[c]) {
+                                                            note_line(ui, &tr(n));
+                                                        }
+                                                    });
+                                                });
                                             }
                                         });
                                         ui.add_space(GAP - 2.0);
@@ -1431,6 +1490,38 @@ mod tests {
         assert_eq!(items(&o.rows, Tab::Game)[..3], [autosave, Item::Row(0), Item::Row(1)]);
     }
 
+    /// ADR 0083: the interface's tab leads with the choice, then each interface's card; only the chosen interface's
+    /// card is live, its note once under the heading; the resolution sits indented under the display mode.
+    #[test]
+    fn interface_cards_and_dependent_rows() {
+        use crate::display as d;
+        let mut o = screen();
+        let row = |o: &OptionsScreen, key: &str| o.rows.iter().position(|r| r.key == key).unwrap();
+        let tab = items(&o.rows, Tab::Interface);
+        assert_eq!(tab[0], Item::Row(row(&o, d::INTERFACE)));
+        let titles: Vec<&str> = cards(&o.rows, &tab).iter().map(|c| c.0).collect();
+        assert_eq!(titles, ["Interface", "Modern interface", "Classic interface"]);
+        let card = |o: &OptionsScreen, t: &str| cards(&o.rows, &tab).into_iter().find(|c| c.0 == t).unwrap().1;
+        // Modern (the default): the classic card off with its note, the modern one live.
+        assert_eq!(card_note(&o, &tab, &card(&o, "Classic interface")), Some("Used by the Classic interface."));
+        assert_eq!(card_note(&o, &tab, &card(&o, "Modern interface")), None);
+        assert!(!o.rows[row(&o, crate::menu_flow::KEY)].enabled && o.rows[row(&o, d::UI_SCALE)].enabled);
+        // Classic: the other way round.
+        let i = row(&o, d::INTERFACE);
+        Modern::set(&mut o, i, 0);
+        assert!(o.rows[row(&o, d::BOX_MODELS)].enabled && o.rows[row(&o, crate::menu_flow::KEY)].enabled);
+        assert_eq!(card_note(&o, &tab, &card(&o, "Modern interface")), Some("Used by the Modern interface."));
+        // Borderless: the resolution off with its note, a child of the display mode.
+        let (mode, res) = (row(&o, d::MODE), row(&o, d::RESOLUTION));
+        assert!(child(&o, Item::Row(res)) && !child(&o, Item::Row(mode)));
+        assert_eq!(note(&o, Item::Row(res)), None);
+        Modern::set(&mut o, mode, d::Mode::Borderless as i32);
+        assert_eq!(note(&o, Item::Row(res)), Some("Borderless uses the desktop's size."));
+        for n in ["Borderless uses the desktop's size.", "Used by the Modern interface.", "Used by the Classic interface.", "Modern always uses the grouped menu."] {
+            assert!(crate::tr::has(n), "{n}");
+        }
+    }
+
     /// Every setting has a description, and every text the screen writes is in the remake text table.
     #[test]
     fn descriptions_and_labels_are_in_the_table() {
@@ -1474,7 +1565,7 @@ mod tests {
         o.store(&mut f);
         assert_eq!((f.int(crate::display::VSYNC), f.get(NAME_KEY)), (Some(0), Some("Kim")));
         // A slider and the name changed, then Back: both taken back, the screen leaves.
-        for _ in 0..3 {
+        for _ in 0..5 {
             m.key(&mut o, Nav::NextTab, &mut quiet);
         }
         assert_eq!(m.tab, Tab::Sound);
