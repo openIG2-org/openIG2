@@ -35,6 +35,11 @@ impl App {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.stats.is_some())
     }
 
+    /// Ours (ADR 0078): the modern replays page is up.
+    pub(super) fn replays_modern_up(&self) -> bool {
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.replays.is_some())
+    }
+
     /// Ours (ADR 0078): the modern new game page is up.
     pub(super) fn new_game_modern_up(&self) -> bool {
         self.options.is_none() && self.front.as_ref().is_some_and(|f| (f.s.new_game_up() || f.s.name_page_up()) && f.mp.is_none() && f.mods.is_none())

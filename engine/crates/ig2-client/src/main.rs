@@ -142,6 +142,7 @@ mod starmap_planet;
 mod starmap_radar;
 mod starmap_tip;
 mod replay_viewer;
+mod replays_modern;
 mod stats_screen;
 mod theme;
 mod trade;

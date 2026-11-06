@@ -69,6 +69,7 @@ impl App {
         let mut main_pick = None;
         let mut ng_act = None;
         let mut name_pick = None;
+        let mut replay_act = None;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -97,6 +98,13 @@ impl App {
                 fr.stats = None;
                 self.audio.play(crate::audio::CLICK);
             }
+            let mut f = crate::render::Frame::new([0.0; 4]);
+            ov.draw(&mut f, h, size);
+            top = Some(f);
+        } else if let (Some(rl), true, Some(h)) = (fr.replays.as_mut(), fr.s.modern, &self.hud) {
+            // Ours (ADR 0078): the modern replays page over the scene.
+            let theme = theme(h);
+            g.gui.run((bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
             let mut f = crate::render::Frame::new([0.0; 4]);
             ov.draw(&mut f, h, size);
             top = Some(f);
@@ -140,6 +148,19 @@ impl App {
         }
         for a in mods_acts {
             self.mods_act(a);
+        }
+        match replay_act {
+            Some(crate::replay_viewer::ListAct::Close) => {
+                if let Some(f) = &mut self.front {
+                    f.replays = None;
+                }
+                self.audio.play(crate::audio::CLICK);
+            }
+            Some(crate::replay_viewer::ListAct::Open(path)) => {
+                self.audio.play(crate::audio::CLICK);
+                self.watch_replay(&path);
+            }
+            None => {}
         }
         if let Some(p) = name_pick {
             self.audio.play(crate::audio::CLICK);

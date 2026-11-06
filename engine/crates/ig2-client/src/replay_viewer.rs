@@ -263,6 +263,8 @@ pub struct ReplayList {
     hover: Option<ListSpot>,
     /// The folder couldn't be read, or the last replay didn't open or play to its end.
     pub error: Option<String>,
+    /// The modern page's selected row (the newest at first).
+    pub selected: Option<usize>,
 }
 
 impl ReplayList {
@@ -273,7 +275,13 @@ impl ReplayList {
             Some(Err(e)) => (Vec::new(), Some(e)),
             None => (Vec::new(), None),
         };
-        Self { list, top: 0, hover: None, error: error.or(read) }
+        let selected = (!list.is_empty()).then_some(0);
+        Self { list, top: 0, hover: None, error: error.or(read), selected }
+    }
+
+    /// The replays, newest first.
+    pub fn entries(&self) -> &[Entry] {
+        &self.list
     }
 
     fn spot(&self, at: [f32; 2]) -> Option<ListSpot> {

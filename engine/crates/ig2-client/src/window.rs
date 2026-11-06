@@ -808,7 +808,10 @@ fn draw_front_2d(fr: &mut Front, h: &crate::ui::Hud, r: &mut crate::render::Rend
             st.draw(frame, &d);
         }
     } else if let Some(rl) = &fr.replays {
-        rl.draw(frame, &d);
+        // Ours (ADR 0078): the modern page draws it with the modern main menu.
+        if !fr.s.modern {
+            rl.draw(frame, &d);
+        }
     } else if front_history_shown(fr) {
         if history {
             crate::stats_screen::draw_history_item(frame, &d, crate::kit::inside_f(crate::stats_screen::HISTORY_ITEM, fr.at), fr.s.gt);
