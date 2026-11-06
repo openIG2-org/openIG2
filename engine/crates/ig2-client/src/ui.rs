@@ -876,6 +876,9 @@ impl Hud {
             let debug = state.mem.u8(ig2_sim::save::va::DEBUGX) != 0;
             let own_calm = sel.mode == 2 && state.fleets.get(sel.fleet).is_some_and(|f| f[0x15] == curr.human && f[0x52] & 1 == 0);
             let c = crate::starmap_tip::Ctx { texts: &self.texts, state, sel: *sel, menus, panels, console: None, locked: false, human: curr.human };
+            // Both buttons' word: (2, 1, 0x2f)'s before its colon ("Mindkettő:Átnevezés").
+            let both_line = dec(&self.texts.get(2, 1, 0x2f).into_iter().take_while(|&b| b != 0).collect::<Vec<u8>>());
+            let both = both_line.split(':').next().unwrap_or("");
             m::Info {
                 title: main.first().map(|l| dec(&l.0)).unwrap_or_default(),
                 colour: col(match owner {
@@ -890,7 +893,7 @@ impl Hud {
                 product: product || (debug && sel.mode == 1),
                 redirect: menus.redirect,
                 caret: None,
-                tip: crate::starmap_tip::tip(&c, [1.0, 470.0]).filter(|t| t.id == 8).map(|t| dec(&t.text)).unwrap_or_default(),
+                tip: crate::starmap_tip::tip(&c, [1.0, 470.0]).filter(|t| t.id == 8).map(|t| m::mouse_rows(&dec(&t.text), both)).unwrap_or_default(),
                 left: dec(&self.texts.ours("Details")),
                 right: match sel.mode {
                     1 => md.names.get(3).map(|n| m::calm(&dec(n))),

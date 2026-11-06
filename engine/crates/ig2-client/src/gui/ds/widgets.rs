@@ -1567,6 +1567,60 @@ pub fn tip_key(resp: Response, text: &str, key: &str) -> Response {
     })
 }
 
+/// A mouse button or both together: a mouse action's trigger ([`mouse_hints`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mouse {
+    Left,
+    Right,
+    Both,
+}
+
+/// A small mouse (12 × 16 points) centred in `r`: its outline `dim`, the button `b` (or both) filled `lit`.
+pub fn paint_mouse(p: &egui::Painter, r: Rect, b: Mouse, lit: Color32, dim: Color32) {
+    let body = Rect::from_center_size(r.center(), Vec2::new(12.0, 16.0));
+    let (mid, split) = (body.center().x, body.top() + 7.0);
+    let stroke = Stroke::new(1.0f32, dim);
+    if matches!(b, Mouse::Left | Mouse::Both) {
+        let left = Rect::from_min_max(body.min, Pos2::new(mid, split)).shrink(1.5);
+        p.rect_filled(left, egui::CornerRadius { nw: 4, ..Default::default() }, lit);
+    }
+    if matches!(b, Mouse::Right | Mouse::Both) {
+        let right = Rect::from_min_max(Pos2::new(mid, body.top()), Pos2::new(body.right(), split)).shrink(1.5);
+        p.rect_filled(right, egui::CornerRadius { ne: 4, ..Default::default() }, lit);
+    }
+    p.rect_stroke(body, 6, stroke, egui::StrokeKind::Inside);
+    p.line_segment([Pos2::new(body.left(), split), Pos2::new(body.right(), split)], stroke);
+    p.line_segment([Pos2::new(mid, body.top()), Pos2::new(mid, split)], stroke);
+}
+
+/// A control's mouse actions, one row each: the button as a small mouse, the action's name in the tooltip's body
+/// style ([`tip_mouse`]'s content).
+pub fn mouse_hints(ui: &mut Ui, rows: &[(Mouse, String)]) {
+    let k = tokens();
+    let f = Font::DATA.weight(Weight::Regular).tracking(0.05);
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = SPACE[0];
+        for (b, name) in rows {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE[1];
+                let (g, _) = ui.allocate_exact_size(Vec2::new(14.0, f.line), Sense::hover());
+                paint_mouse(ui.painter(), g, *b, k.info, k.rim_bright);
+                let fit = Text::new(name, f).layout(ui.ctx(), 300.0);
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width.min(300.0), fit.galley.size().y), Sense::hover());
+                ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
+            });
+        }
+    });
+}
+
+/// A tooltip of mouse actions on `resp` ([`mouse_hints`]); none for no rows.
+pub fn tip_mouse(resp: Response, rows: &[(Mouse, String)]) -> Response {
+    if rows.is_empty() {
+        return resp;
+    }
+    resp.on_hover_ui(|ui| mouse_hints(ui, rows))
+}
+
 /// A tooltip at a point (a game hot-spot's text where no egui widget is under the pointer): a deep panel beside `at`,
 /// kept on the screen, up to three lines of 320 points.
 pub fn tip_at(ctx: &egui::Context, id: &str, at: egui::Pos2, text: &str) {

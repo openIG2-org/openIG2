@@ -126,11 +126,43 @@ pub struct Info {
     pub tanks: bool,
     pub product: bool,
     pub redirect: bool,
-    /// The info box's tooltip (`Starmap_MouseInit2`'s text for hot-spot 8).
-    pub tip: String,
+    /// The info box's tooltip (`Starmap_MouseInit2`'s text for hot-spot 8) as its mouse actions ([`mouse_rows`]).
+    pub tip: Vec<(ds::Mouse, String)>,
     /// The left and the right button's labels.
     pub left: String,
     pub right: Option<String>,
+}
+
+/// The info box's tooltip (`Starmap_MouseInit2`: "Bal:Info  Jobb:Kolónia  Mindkettő:Átnevezés", (2, 1, 0x29..0x2f))
+/// as mouse rows: a button's word before each colon, its action up to the next button's word; the word `both` (before
+/// the colon of (2, 1, 0x2f)) is both buttons, the others left, then right.
+pub fn mouse_rows(tip: &str, both: &str) -> Vec<(ds::Mouse, String)> {
+    let mut parts = tip.split(':');
+    let mut button = parts.next().unwrap_or("").trim();
+    let mut rows: Vec<(ds::Mouse, String)> = Vec::new();
+    let mut parts = parts.peekable();
+    while let Some(seg) = parts.next() {
+        let (action, next) = match parts.peek() {
+            None => (seg, ""),
+            Some(_) => {
+                let t = seg.trim_end();
+                t.rfind(char::is_whitespace).map_or(("", t), |j| (&t[..j], t[j..].trim()))
+            }
+        };
+        let action = action.trim().trim_end_matches('-').trim();
+        let b = if button == both.trim() {
+            ds::Mouse::Both
+        } else if rows.iter().any(|r| r.0 == ds::Mouse::Left) {
+            ds::Mouse::Right
+        } else {
+            ds::Mouse::Left
+        };
+        if !action.is_empty() {
+            rows.push((b, action.to_string()));
+        }
+        button = next;
+    }
+    rows
 }
 
 /// The minimap's points, 0..1 across.
@@ -737,7 +769,7 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
         let card = ui.interact(body.response.rect, ui.id().with("smh-info-card"), Sense::click());
         let hot = ds::hover_t(ui.ctx(), card.id, card.hovered());
         ds::hover_rim(ui.painter(), body.response.rect.expand(6.0), ds::RADIUS_PLATE, hot);
-        let card = hand(card).on_hover_text(&info.tip);
+        let card = ds::tip_mouse(hand(card), &info.tip);
         if card.clicked() {
             acts.push(Act::Info(false));
         }
@@ -1449,6 +1481,21 @@ mod tests {
         let at = |ctx: &egui::Context| area(ctx, BAR_ID).right_top() + vec2(-BAR_PAD.x - 2.0 - KEY.x / 2.0, BAR_H / 2.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Screen(3)]);
+    }
+
+    /// The info tip's mouse rows in the game's languages (txt02.txt (2, 1, 0x29..0x2f)).
+    #[test]
+    fn mouse_rows_split_the_info_tip() {
+        use ds::Mouse::*;
+        let rows = mouse_rows;
+        let s = |v: &[(ds::Mouse, &str)]| v.iter().map(|&(m, t)| (m, t.to_string())).collect::<Vec<_>>();
+        assert_eq!(rows("Bal:Info  Jobb:Kolónia  Mindkettő:Átnevezés", "Mindkettő"), s(&[(Left, "Info"), (Right, "Kolónia"), (Both, "Átnevezés")]));
+        assert_eq!(rows("Bal:Flotta info ki  Jobb:Szétosztás", "Mindkettő"), s(&[(Left, "Flotta info ki"), (Right, "Szétosztás")]));
+        assert_eq!(rows("Bal:Info  Mindkettő:Átnevezés", "Mindkettő"), s(&[(Left, "Info"), (Both, "Átnevezés")]));
+        assert_eq!(rows("Gauche : info off - Droit : scinder  Simult : rebaptiser", "Simult "), s(&[(Left, "info off"), (Right, "scinder"), (Both, "rebaptiser")]));
+        assert_eq!(rows("Izquierda: información sobre la flota desactivada Derecha: dividir", "Ambos"), s(&[(Left, "información sobre la flota desactivada"), (Right, "dividir")]));
+        assert_eq!(rows("Sx: info - Dx: divisione  Sx+Dx: cambia nome", "Sx+Dx"), s(&[(Left, "info"), (Right, "divisione"), (Both, "cambia nome")]));
+        assert!(rows("", "Mindkettő").is_empty());
     }
 
     /// The selection panel: left click = the info box's left button, right click = its right one.

@@ -170,6 +170,8 @@ pub fn page(ctx: &egui::Context, cursors: &[(Cursor, Vec<egui::TextureHandle>)])
                 let r = lcd(ui, "64%", 18.0, 3);
                 tip(r, "A rich tooltip wraps at 320 points and stops after eight lines.");
             });
+            let hints = [(Mouse::Left, "Info".to_string()), (Mouse::Right, "Kolónia".to_string()), (Mouse::Both, "Átnevezés".to_string())];
+            panel(ui, PanelKind::Deep, 0.97, 8.0, |ui| mouse_hints(ui, &hints));
             ui.horizontal(|ui| {
                 bar(ui, 180.0, 6.0, 0.64, tokens().lcd_ink);
                 bar(ui, 180.0, 10.0, 0.4, tokens().own);

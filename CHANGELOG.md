@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern starmap: the selection card's tooltip lists its mouse actions one per row, each with a small left, right or both-buttons mouse, instead of one dense line; the shared look has this tooltip for any control with several mouse actions (issue #80).
 - Modern starmap: renaming a planet or fleet types into the selection card's own text field, without the classic rename text drawn behind and beside the card (issue #79).
 - Modern starmap: the selection card no longer draws a black disc behind a turning ship, fleet or trader; the model turns on the card itself (planets keep their globe) (issue #84).
 - Modern starmap, fleet and space battle screens on the shared look: the tooltips with their key, the camera and radial menu icons, the settings lists and the planet list from the shared parts; the long info's settings row, the lists, the fleet headers, the battle's radar and info box on their design boards (issue #75).
