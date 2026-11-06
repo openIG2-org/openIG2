@@ -105,16 +105,10 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
             let style = ds::MenuStyle { height: item_h, ..ds::MenuStyle::MENU };
             for (g, (head, items)) in all.iter().enumerate() {
                 if g > 0 {
-                    // `height: 1px; margin: 14px 20px` in the column's 4-point gaps.
-                    ui.add_space(18.0);
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-                    ui.painter().hline((r.left() + 20.0)..=(r.right() - 20.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
-                    ui.add_space(18.0);
+                    ds::menu_rule(ui);
                 }
                 if let Some(h) = head {
-                    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 24.0), egui::Sense::hover());
-                    Text::new(&tr(h), Font::LABEL).color(k.ink_muted).paint(ui, Rect::from_min_max(Pos2::new(r.left() + 20.0, r.top()), Pos2::new(r.right() - 20.0, r.bottom() - 6.0)));
-                    ui.add_space(4.0);
+                    ds::menu_heading(ui, &tr(h));
                 }
                 let labels: Vec<String> = items.iter().map(|&i| tr(i.label())).collect();
                 let entries: Vec<ds::MenuEntry> = items.iter().zip(&labels).map(|(&i, l)| {
@@ -134,10 +128,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
                 }
             }
             if p != Panel::Main {
-                ui.add_space(18.0);
-                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
-                ui.painter().hline((r.left() + 20.0)..=(r.right() - 20.0), r.center().y, egui::Stroke::new(1.0f32, k.rim));
-                ui.add_space(18.0);
+                ds::menu_rule(ui);
                 let back = tr("Back");
                 if ds::menu(ui, "mm-back", style, &[ds::MenuEntry { hint: Some("ESC"), ..ds::MenuEntry::new(&back) }], None, None).is_some() {
                     pick = Some(Pick::Back);
@@ -186,9 +177,7 @@ pub fn name_page(ctx: &egui::Context, texts: &UiTexts, n: &crate::mainscr::NameE
             let q = ig2_formats::text::decode(&texts.get(15, 3, 2), texts.lang);
             Text::new(q.trim(), Font::PAGE_TITLE.sized(24.0)).color(k.ink_silver).shrink(16.0).show(ui, Vec2::new(iw, 30.0));
             let (field, _) = ui.allocate_exact_size(Vec2::new(iw, 44.0), egui::Sense::hover());
-            let p = ui.painter();
-            p.rect_filled(field, ds::RADIUS_PLATE, k.glass_deep);
-            ds::rim(p, field, ds::RADIUS_PLATE, k.focus);
+            ds::field_back(ui.painter(), field, true);
             let caret = (ui.input(|i| i.time) * 2.0) as i64 % 2 == 0;
             let name = ig2_formats::text::decode(&n.text, texts.lang);
             let (before, after) = name.split_at(name.char_indices().nth(n.cursor).map_or(name.len(), |c| c.0));

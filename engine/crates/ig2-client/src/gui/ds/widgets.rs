@@ -236,7 +236,7 @@ pub fn menu(ui: &mut Ui, id: impl std::hash::Hash, style: MenuStyle, entries: &[
     let k = tokens();
     let w = ui.available_width();
     let gap = SPACE[0];
-    let sf = Font::LABEL.weight(Weight::Medium).tracking(0.1).upper(false);
+    let sf = Font { line: 16.0, ..Font::LABEL.weight(Weight::Medium).tracking(0.1).upper(false) };
     // A second line fits the item's height while it can (the board's 48: 21 + 6 + 16).
     let heights: Vec<f32> = entries.iter().map(|e| if e.sub.is_some() { style.height.max(style.font.size + 6.0 + sf.line + 4.0) } else { style.height }).collect();
     let (whole, _) = ui.allocate_exact_size(Vec2::new(w, heights.iter().sum::<f32>() + gap * entries.len().saturating_sub(1) as f32), Sense::hover());
@@ -1155,6 +1155,26 @@ pub fn separator(ui: &mut Ui, margin: f32) {
     ui.painter().hline(rect.x_range(), rect.center().y.floor() + 0.5, Stroke::new(1.0f32, tokens().rim));
 }
 
+/// A menu column's rule between groups (`height: 1px; margin: 14px 20px` in the column's 4-point gaps: 18 above and
+/// below, 20 in from each side).
+pub fn menu_rule(ui: &mut Ui) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 37.0), Sense::hover());
+    ui.painter().hline((rect.left() + 20.0)..=(rect.right() - 20.0), rect.top() + 18.5, Stroke::new(1.0f32, tokens().rim));
+}
+
+/// A menu column's group heading (`.mm-group`: the label style, 20 in like the entries, 24 high, 4 to the entries).
+pub fn menu_heading(ui: &mut Ui, text: &str) {
+    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 28.0), Sense::hover());
+    Text::new(text, Font::LABEL).color(tokens().ink_muted).paint(ui, Rect::from_min_max(Pos2::new(r.left() + 20.0, r.top()), Pos2::new(r.right() - 20.0, r.top() + 18.0)));
+}
+
+/// A recessed text field's back (`.field`: deep glass, a rim lit while it takes the keys).
+pub fn field_back(p: &egui::Painter, rect: Rect, focused: bool) {
+    let k = tokens();
+    p.rect_filled(rect, RADIUS_PLATE, k.glass_deep);
+    rim(p, rect, RADIUS_PLATE, if focused { k.focus } else { k.rim });
+}
+
 /// A label line (`.label`, the boards' section headings: 13 / 0.14 em upper case, muted) in the available width.
 pub fn heading_label(ui: &mut Ui, text: &str) -> Response {
     Text::new(text, Font::LABEL).color(tokens().ink_muted).show(ui, Vec2::new(ui.available_width(), Font::LABEL.line))
@@ -1173,7 +1193,7 @@ pub enum PanelKind {
 
 /// A panel around `add` with `margin` inside (`.ig-panel`'s 16), its fill at `alpha` (the boards' deep panels over
 /// a scene: 0.80, 0.88). The background is drawn behind what `add` drew.
-pub fn panel<R>(ui: &mut Ui, kind: PanelKind, alpha: f32, margin: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+pub fn panel<R>(ui: &mut Ui, kind: PanelKind, alpha: f32, margin: impl Into<egui::Margin>, add: impl FnOnce(&mut Ui) -> R) -> R {
     let at = ui.painter().add(egui::Shape::Noop);
     let r = egui::Frame::new().inner_margin(margin).show(ui, add);
     behind(ui, at, |p| paint_panel(p, r.response.rect, kind, alpha));
