@@ -459,20 +459,6 @@ impl Icon {
                 v.push((11.0, 20.0));
                 poly(&v);
             }
-            Icon::ZoomIn | Icon::ZoomOut => {
-                circle(11.0, 11.0, 8.0);
-                poly(&[(21.0, 21.0), (16.65, 16.65)]);
-                poly(&[(8.0, 11.0), (14.0, 11.0)]);
-                if self == Icon::ZoomIn {
-                    poly(&[(11.0, 8.0), (11.0, 14.0)]);
-                }
-            }
-            Icon::Target => {
-                circle(12.0, 12.0, 10.0);
-                for l in [[(22.0, 12.0), (18.0, 12.0)], [(6.0, 12.0), (2.0, 12.0)], [(12.0, 6.0), (12.0, 2.0)], [(12.0, 22.0), (12.0, 18.0)]] {
-                    poly(&l);
-                }
-            }
             Icon::ChevronLeft => _ = poly(&[(15.0, 18.0), (9.0, 12.0), (15.0, 6.0)]),
             Icon::ChevronRight | Icon::Play => _ = chev(0.0),
             Icon::ChevronDown => _ = poly(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)]),
@@ -620,6 +606,9 @@ impl Icon {
             Icon::TiltDown => f(10),
             Icon::TopView => f(11),
             Icon::SideView => f(12),
+            Icon::ZoomIn => f(22),
+            Icon::ZoomOut => f(23),
+            Icon::Target => f(24),
             Icon::Rop(n) => f(match n {
                 3 => 13,
                 5 => 14,
@@ -639,7 +628,7 @@ impl Icon {
 }
 
 /// The kit's icon files, in [`Icon::file`]'s order.
-pub(crate) const ICON_FILES: [&str; 22] = [
+pub(crate) const ICON_FILES: [&str; 25] = [
     include_str!("../icons/factory.svg"),
     include_str!("../icons/info.svg"),
     include_str!("../icons/wrench.svg"),
@@ -662,6 +651,9 @@ pub(crate) const ICON_FILES: [&str; 22] = [
     include_str!("../icons/tornado.svg"),
     include_str!("../icons/bug.svg"),
     include_str!("../icons/bomb.svg"),
+    include_str!("../icons/zoom-in.svg"),
+    include_str!("../icons/zoom-out.svg"),
+    include_str!("../icons/target.svg"),
 ];
 
 /// What an [`IconKey`] shows: one of the kit's icons or the page's own drawing (`(painter, rect, colour)`).

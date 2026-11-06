@@ -2,36 +2,74 @@
 //! with round ends and no fills. Read here (paths, circles, ellipses, rects, lines; the path commands Lucide uses) and
 //! stroked with the painter in the caller's colour, so an icon takes its key's or button's tint like the text.
 
-use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke, Vec2};
+use egui::{Color32, Painter, Pos2, Rect, Vec2};
 
 type Line = (Vec<[f32; 2]>, bool);
 
-/// Strokes the icon `svg` into `rect` (its 24 units over the shorter side) in `c`.
+/// Draws the icon `svg` into `rect` in `c`: rendered once per size (white, round joins and caps, one anti-aliased
+/// pass, so its strokes meet without seams) and kept as a texture, tinted as it is drawn.
 pub fn paint(p: &Painter, rect: Rect, svg: &str, c: Color32) {
+    let ctx = p.ctx();
+    let ppp = ctx.pixels_per_point();
+    let size = [(rect.width() * ppp).round().max(1.0) as usize, (rect.height() * ppp).round().max(1.0) as usize];
+    let key = egui::Id::new(("ds-icon", svg.as_ptr() as usize, size));
+    let tex = ctx.memory(|m| m.data.get_temp::<egui::TextureHandle>(key)).unwrap_or_else(|| {
+        let t = ctx.load_texture(format!("ds-icon-{key:?}"), render(svg, size), egui::TextureOptions::LINEAR);
+        ctx.memory_mut(|m| m.data.insert_temp(key, t.clone()));
+        t
+    });
+    // On whole pixels, so the strokes stay as sharp as rendered.
+    let min = ((rect.center().to_vec2() * ppp - Vec2::new(size[0] as f32, size[1] as f32) / 2.0).round() / ppp).to_pos2();
+    let r = Rect::from_min_size(min, Vec2::new(size[0] as f32, size[1] as f32) / ppp);
+    p.image(tex.id(), r, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), c);
+}
+
+/// The icon in white on a `size` pixel canvas: its outline (with the stroke) centred, its longer side 22 of the 24
+/// units (Lucide's live area and its stroke), whatever room the drawing leaves in its grid; the stroke 2 units.
+fn render(svg: &str, size: [usize; 2]) -> egui::ColorImage {
+    use tiny_skia::{FillRule, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke as Pen, Transform};
     let lines = lines(svg);
-    // Every icon the same size and in the middle: its outline (with the stroke) centred, its longer side 20 units
-    // (Lucide's live area in the 24 grid), whatever room the drawing leaves in its grid.
     let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
     for q in lines.iter().flat_map(|l| &l.0) {
         lo = [lo[0].min(q[0]), lo[1].min(q[1])];
         hi = [hi[0].max(q[0]), hi[1].max(q[1])];
     }
     let (w, h) = ((hi[0] - lo[0]).max(0.0) + 2.0, (hi[1] - lo[1]).max(0.0) + 2.0);
-    let unit = rect.width().min(rect.height()) / 24.0;
+    let unit = size[0].min(size[1]) as f32 / 24.0;
     let s = unit * 22.0 / w.max(h);
     let mid = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
-    let at = |q: [f32; 2]| rect.center() + Vec2::new(q[0] - mid[0], q[1] - mid[1]) * s;
-    let st = Stroke::new((2.0 * unit).max(1.0), c);
-    for (points, closed) in lines {
-        let pts: Vec<Pos2> = points.iter().map(|&q| at(q)).collect();
-        // Round ends and joins: a dot at each corner (a zero-length line is Lucide's dot).
-        for q in &pts {
-            p.circle_filled(*q, st.width / 2.0, c);
+    let at = |q: [f32; 2]| (size[0] as f32 / 2.0 + (q[0] - mid[0]) * s, size[1] as f32 / 2.0 + (q[1] - mid[1]) * s);
+    let Some(mut pixmap) = Pixmap::new(size[0] as u32, size[1] as u32) else { return egui::ColorImage::new(size, vec![Color32::TRANSPARENT; size[0] * size[1]]) };
+    let mut paint = Paint::default();
+    paint.set_color_rgba8(255, 255, 255, 255);
+    paint.anti_alias = true;
+    let width = 2.0 * unit;
+    let pen = Pen { width, line_cap: LineCap::Round, line_join: LineJoin::Round, ..Default::default() };
+    let mut strokes = PathBuilder::new();
+    let mut dots = PathBuilder::new();
+    for (points, closed) in &lines {
+        let (x, y) = at(points[0]);
+        // A lone point (or a zero-length line) is Lucide's dot.
+        if points.iter().all(|&q| q == points[0]) {
+            dots.push_circle(x, y, width / 2.0);
+            continue;
         }
-        if pts.len() > 1 {
-            p.add(if closed { Shape::closed_line(pts, st) } else { Shape::line(pts, st) });
+        strokes.move_to(x, y);
+        for &q in &points[1..] {
+            let (x, y) = at(q);
+            strokes.line_to(x, y);
+        }
+        if *closed {
+            strokes.close();
         }
     }
+    if let Some(path) = strokes.finish() {
+        pixmap.stroke_path(&path, &paint, &pen, Transform::identity(), None);
+    }
+    if let Some(path) = dots.finish() {
+        pixmap.fill_path(&path, &paint, FillRule::Winding, Transform::identity(), None);
+    }
+    egui::ColorImage::from_rgba_premultiplied(size, pixmap.data())
 }
 
 /// The icon's outlines in its 24 units.
