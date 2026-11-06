@@ -341,28 +341,12 @@ fn properties(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
             Some(t) => Text::new(t, Font::LABEL).color(k.signal_red).show(ui, vec2(w, 18.0)),
             None => Text::new(&v.labels.name, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0)),
         };
-        let (r, resp) = ui.allocate_exact_size(vec2(w, 36.0), Sense::click());
-        let resp = resp.on_hover_cursor(egui::CursorIcon::Text);
-        let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
-        let editing = v.entry.is_some();
-        let p = ui.painter();
-        p.rect_filled(r, ds::RADIUS_PLATE, k.glass_deep);
-        ds::rim(p, r, ds::RADIUS_PLATE, if v.taken.is_some() { k.signal_red } else if editing { k.focus } else { k.rim_bright.lerp_to_gamma(k.ink_silver, hot * 0.5) });
-        let f = Font::BODY.sized(18.0).weight(Weight::Medium).tracking(0.08);
-        let inner = r.shrink2(vec2(10.0, 0.0));
+        // The kit's text field, the caret while the name is typed; a taken name rims it red.
         let (text, cursor) = v.entry.as_ref().map_or((v.name.as_str(), None), |(t, c)| (t.as_str(), Some(*c)));
-        let fit = Text::new(text, f).baseline(ds::fit::baseline(r, f)).paint(ui, inner);
-        if let Some(c) = cursor {
-            // The caret after the `c`th letter, blinking.
-            let before: String = text.chars().take(c).collect();
-            let x = inner.left() + Text::new(&before, f).layout(ui.ctx(), inner.width()).width.min(inner.width());
-            let on = (ui.input(|i| i.time) * 2.0).fract() < 0.6;
-            if on {
-                ui.painter().vline(x + 1.0, r.shrink(8.0).y_range(), egui::Stroke::new(1.5f32, k.focus));
-            }
-            ui.ctx().request_repaint();
+        let resp = ds::text_field(ui, text, cursor, "", vec2(w, 36.0)).on_hover_cursor(egui::CursorIcon::Text);
+        if v.taken.is_some() {
+            ds::rim(ui.painter(), resp.rect, ds::RADIUS_PLATE, k.signal_red);
         }
-        let _ = fit;
         if ds::pressed(&ds::tip(resp, ds::tip_text(&v.tips, 0x56))) {
             acts.push(Act::Name);
         }
