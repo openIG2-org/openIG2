@@ -318,14 +318,18 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     // The selection, bottom left (the long info shows the planet itself).
     if let Some(info) = v.info.as_ref().filter(|_| v.menus.info.is_none()) {
         let card = egui::Area::new(egui::Id::new("smh-info")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, -ds::EDGE)).fade_in(false).show(ctx, |ui| info_card(ui, info, v, &mut acts, st)).response.rect;
-        // Production as its own round button right of the card (as the colony's repair and demolish).
-        if info.product {
+        // Production and the tanks as round buttons right of the card (as the colony's repair and demolish).
+        if info.product || info.tanks {
             egui::Area::new(egui::Id::new("smh-actions")).pivot(Align2::LEFT_BOTTOM).fixed_pos(pos2(card.right() + 24.0, card.bottom())).fade_in(false).show(ctx, |ui| {
-                let tip = &v.tips[9];
-                let label = tip.split(['\n', '.']).next().unwrap_or("");
-                if hand(ds::round_action(ui, ds::Glyph::Icon(ds::Icon::Factory), ROUND, false, label, tip)).clicked() {
-                    acts.push(Act::Panel(11));
-                }
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 22.0;
+                    for (on, icon, tip, panel) in [(info.product, ds::Icon::Factory, &v.tips[9], 11), (info.tanks, ds::Icon::Tanks, &v.tips[8], 10)] {
+                        let label = tip.split(['\n', '.']).next().unwrap_or("");
+                        if on && hand(ds::round_action(ui, ds::Glyph::Icon(icon), ROUND, false, label, tip)).clicked() {
+                            acts.push(Act::Panel(panel));
+                        }
+                    }
+                });
             });
         }
     }
@@ -738,12 +742,11 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
             ui.spacing_mut().item_spacing.x = 6.0;
             // One type size for both plates (`.ig-plate`, 14 points, 12 aside), smaller together when
             // the labels and the keys don't fit; a label still too long is shrunk or cut by the plate.
-            let keys = info.tanks as usize;
             // The board's plate: 12 aside, the label's last letter spacing after it (CSS), and the 3 points the
             // browser's label measures wider than ours.
             const PAD: f32 = 2.0 * 12.0 + 14.0 * 0.16 + 3.0;
             let labels: Vec<&str> = info.right.iter().map(|s| s.as_str()).chain([info.left.as_str()]).collect();
-            let room = main_w - keys as f32 * (KEY.x + 6.0) - 6.0 * (labels.len() as f32 - 1.0) - PAD * labels.len() as f32;
+            let room = main_w - 6.0 * (labels.len() as f32 - 1.0) - PAD * labels.len() as f32;
             let ctx = ui.ctx().clone();
             let text_w = |s: &str, f: Font| Text::new(s, f).layout(&ctx, f32::INFINITY).width;
             let natural: f32 = labels.iter().map(|s| text_w(s, Plate::FONT.sized(14.0))).sum();
@@ -761,9 +764,6 @@ fn info_card(ui: &mut egui::Ui, info: &Info, v: &View, acts: &mut Vec<Act>, st: 
             let lw = pw(&info.left);
             if hand(ui.add_sized(vec2(lw, 32.0), Plate::new(&info.left).height(32.0).width(lw).font(font))).clicked() {
                 acts.push(Act::Info(false));
-            }
-            if info.tanks && hand(ds::tip_key(ui.add(IconKey::icon(ds::Icon::Tanks).size(vec2(KEY.x, 32.0))), &v.tips[8], "")).clicked() {
-                acts.push(Act::Panel(10));
             }
         });
     });
@@ -1459,6 +1459,10 @@ mod tests {
         let at = |ctx: &egui::Context| area(ctx, "smh-actions").left_top() + vec2(36.0, 36.0);
         let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
         assert_eq!(acts, vec![Act::Panel(11)]);
+        // The tanks' button beside it (60 across in its 6-point ring, 22 apart).
+        let at = |ctx: &egui::Context| area(ctx, "smh-actions").left_top() + vec2(36.0 + ROUND + 12.0 + 22.0, 36.0);
+        let acts = drive(&view(), &[(None, None), (None, Some((0, true))), (None, Some((0, false)))], at);
+        assert_eq!(acts, vec![Act::Panel(10)]);
     }
 
     /// The card's picture: the globe for a planet, the fleet model's own place for a fleet, the original's mark for
