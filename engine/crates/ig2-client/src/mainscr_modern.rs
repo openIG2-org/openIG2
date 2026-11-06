@@ -26,7 +26,7 @@ pub enum Pick {
 }
 
 /// The board's places (points at 1920 × 1080): the title, the panel, its width.
-const TITLE: [f32; 2] = [112.0, 132.0];
+const TITLE: [f32; 2] = [112.0, 130.0];
 const PANEL: [f32; 3] = [96.0, 252.0, 440.0];
 
 /// The panel's groups: a heading (none for the last group) and its entries.
@@ -98,8 +98,7 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
     let width = PANEL[2].min(screen.width() - 32.0);
     egui::Area::new(egui::Id::new("mm-panel")).fixed_pos(at(PANEL[0], top)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
-        let place = ui.painter().add(egui::Shape::Noop);
-        let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 24)).show(ui, |ui| {
+        ds::panel(ui, ds::PanelKind::Deep, 0.80, egui::Margin::symmetric(16, 24), |ui| {
             ui.set_width(width - 32.0);
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             let style = ds::MenuStyle { height: item_h, ..ds::MenuStyle::MENU };
@@ -135,12 +134,11 @@ pub fn page(ctx: &egui::Context, texts: &UiTexts, p: Panel, history: bool, can_c
                 }
             }
         });
-        ds::behind(ui, place, |pt| ds::paint_panel(pt, r.response.rect, ds::PanelKind::Deep, 0.80));
     });
     // The version at the bottom right.
     let f = Font { size: 13.0, line: 18.0, weight: Weight::Medium, tracking: 0.14, upper: false, lcd: false };
     let v = format!("openIG2 {}", crate::version());
-    let rect = Rect::from_min_max(Pos2::new(screen.right() - 340.0, screen.bottom() - 46.0), Pos2::new(screen.right() - 40.0, screen.bottom() - 28.0));
+    let rect = Rect::from_min_max(Pos2::new(screen.right() - 344.0, screen.bottom() - 47.0), Pos2::new(screen.right() - 44.0, screen.bottom() - 29.0));
     egui::Area::new(egui::Id::new("mm-version")).fixed_pos(rect.min).fade_in(false).interactable(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
         Text::new(&v, f).color(k.ink_muted).right().show(ui, rect.size());
@@ -169,8 +167,7 @@ pub fn name_page(ctx: &egui::Context, texts: &UiTexts, n: &crate::mainscr::NameE
     ctx.layer_painter(egui::LayerId::background()).rect_filled(screen, 0.0, egui::Color32::from_black_alpha((90.0 * opacity) as u8));
     egui::Area::new(egui::Id::new("mm-name")).fixed_pos(Pos2::new(screen.center().x - w / 2.0, screen.top() + screen.height() * 0.32)).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
-        let place = ui.painter().add(egui::Shape::Noop);
-        let r = egui::Frame::new().inner_margin(egui::Margin { left: 28, right: 28, top: 28, bottom: 24 }).show(ui, |ui| {
+        ds::panel(ui, ds::PanelKind::Deep, 0.90, egui::Margin { left: 28, right: 28, top: 28, bottom: 24 }, |ui| {
             let iw = w - 56.0;
             ui.set_width(iw);
             ui.spacing_mut().item_spacing = Vec2::new(16.0, 16.0);
@@ -195,7 +192,6 @@ pub fn name_page(ctx: &egui::Context, texts: &UiTexts, n: &crate::mainscr::NameE
                 }
             });
         });
-        ds::behind(ui, place, |pt| ds::paint_panel(pt, r.response.rect, ds::PanelKind::Deep, 0.90));
     });
     pick
 }
