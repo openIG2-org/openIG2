@@ -535,6 +535,9 @@ lines go through `sprintf` on the code page's bytes. Description lines: §7.2 [o
 the call (the panel fades in by 8), and only then come `Nyitottsag = 0`, K = 0, `Cel = 6`, the other resets; `MainScr_Main` returns at 659. The
 list's own presses act on the next tick. The script clock moves one tick a drawn frame, so 8 is the load's frame count there; in real play it is
 wall-clock. [obs] Right after the open (entry 0, the skirmish, selected) the exe already draws the selected-row frame on it.
+Ours (ADR 0085 §5): with the enhanced ruleset (setting `EnhancedAi` 1) a skirmish entry's panel also has an Advanced label (box 0x28, past
+the exe's 0x27, at (0x158, 0x188, 66 × 15), its text at y 0x18c: right of the race, over the money; fade `P`, colour 1, 2 under the pointer) that opens the modern
+Custom game page; with the classic ruleset there is no such box and the panel is the exe's. Capture runs (`--snapshot --script`) never show it.
 
 ### 9.4 Tutorial
 6.1 (five parts + back), then 2.2 (`TutorialSetCampaignGameOptions` 0x504250, `TutorialStart("main", n)`): re/rules/tutorial.md §6

@@ -224,7 +224,14 @@ pub struct ScenarioList {
     pub frame: DesignFrame,
     /// Ours (ADR 0039): the quick game's panel (the skirmish entry only); closing it returns to the main ring set.
     pub quick: bool,
+    /// Ours (ADR 0085 §5, the enhanced ruleset only): the skirmish entry's Advanced label (box [`ADVANCED`]) opens the
+    /// Custom game page; off, the panel is the exe's.
+    pub advanced: bool,
 }
+
+/// Ours (ADR 0085 §5): the Advanced label's box (id 0x28, past the exe's 0x27) right of the race, over the money; its
+/// text 4 below the box's top, as the exe's arrows sit in theirs.
+const ADVANCED: [f32; 4] = [0x158 as f32, 0x188 as f32, 66.0, 15.0];
 
 /// What a press asks of the main menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -233,6 +240,8 @@ pub enum Act {
     Click,
     /// Start (box 0x15): the menu leaves for the starmap and starts the entry.
     Start,
+    /// Ours (ADR 0085 §5): the Advanced label: the Custom game page.
+    Advanced,
 }
 
 impl ScenarioList {
@@ -257,6 +266,7 @@ impl ScenarioList {
             at: [0.0; 2],
             frame: DesignFrame::default(),
             quick: false,
+            advanced: false,
         };
         s.init_skirmish();
         s
@@ -343,6 +353,9 @@ impl ScenarioList {
                 v.push((id, [x as f32, y as f32, 33.0, 15.0]));
                 v.push((id + 1, [x as f32 + 37.0, y as f32, 33.0, 15.0]));
             }
+            if self.advanced {
+                v.push((0x28, ADVANCED));
+            }
         } else {
             v.push((0x27, [300.0, 446.0, 110.0, 19.0]));
         }
@@ -412,6 +425,7 @@ impl ScenarioList {
                 self.high_score = !self.high_score;
                 None
             }
+            0x28 => Some(Act::Advanced),
             _ => None,
         }
     }
@@ -732,6 +746,10 @@ impl ScenarioList {
             val(f, format!("$ {}", tables.money[sk.money.clamp(0, 5) as usize]).as_bytes(), 0x158, 0x1b1);
             label(f, colon(d.texts.get(15, 2, 0xc)), 0x77, 0x160);
             val(f, &d.texts.get(15, 6, sk.population as u16 + 1), 0x77, 0x170);
+            if self.advanced {
+                let a = crate::tr::bytes(d.texts.lang, b"Advanced");
+                text(f, &a, ADVANCED[0] as i32, ADVANCED[1] as i32 + 4, a.len(), 2, Align::Left, if hover == 0x28 { 2 } else { 1 }, pfade);
+            }
         } else {
             text(f, &d.texts.get(15, 2, if self.high_score { 0xe } else { 0xd }), 0x163, 0x1c4, 0x1e, 2, Align::Centre, if hover == 0x27 { 2 } else { 0x25 }, fade);
             text(f, &d.texts.get(15, 4, e.difficulty.max(0) as u16), 0x143, 0x28, 0x1e, 2, Align::Left, 0x22, pfade);
@@ -896,6 +914,19 @@ mod tests {
         s.release(true);
         s.press([620.0, 64.0], true);
         assert_eq!(s.first, 0);
+    }
+
+    /// Ours (ADR 0085 §5): the Advanced label is there with the enhanced ruleset only.
+    #[test]
+    fn advanced_label_only_when_enhanced() {
+        let mut s = list(5);
+        for _ in 0..100 {
+            s.tick(false);
+        }
+        let at = [ADVANCED[0] + 10.0, ADVANCED[1] + 5.0];
+        assert_eq!((s.spot_at(at), s.press(at, true)), (0, None), "the classic panel has nothing there");
+        s.advanced = true;
+        assert_eq!(s.press(at, true), Some(Act::Advanced));
     }
 
     /// The knob drag: exclusive while held (a press elsewhere scrolls, `AktIkon` stays 0x1c), it ends

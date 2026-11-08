@@ -236,6 +236,7 @@ impl Front {
     fn new(scene: Option<crate::mainscr_scene::MainScene>, ui_ms: u32, settings: &ig2_formats::options::Options) -> Self {
         let mut s = crate::mainscr::MainScr::enter();
         s.settings = settings.int(crate::display::MENU_SETTINGS) != Some(0);
+        s.advanced = settings.int(crate::display::ENHANCED_AI) == Some(1);
         s.flow = settings.int(crate::menu_flow::KEY) == Some(1);
         s.history = settings.int(crate::display::STATISTICS) != Some(0);
         s.can_continue = crate::options::slot_dir().is_some_and(|d| !crate::menu_flow::saves_newest_first(&d).is_empty());

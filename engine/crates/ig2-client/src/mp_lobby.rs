@@ -645,6 +645,9 @@ pub struct MpScreen {
     pub story: i32,
     /// The race heads on the room's player rows (ADR 0041), race 1 first; loaded by [`MpScreen::load_heads`].
     heads: Vec<Option<egui::TextureHandle>>,
+    /// A custom game seat's first values (ADR 0085 §4): the skirmish menu's step 2 money and technology 2, from the
+    /// install's tables ([`MpScreen::load_heads`]); `None`: no custom game is offered.
+    custom_seat: Option<ig2_net::galaxy::Seat>,
     /// The host's Start found someone not ready: the next press starts anyway (ADR 0041).
     force: bool,
     /// Up or Down moved the list's selection: the page scrolls it into view.
@@ -831,6 +834,7 @@ impl MpScreen {
             resume: None,
             story: 0,
             heads: Vec::new(),
+            custom_seat: None,
             force: false,
             reveal: Default::default(),
         }
@@ -1389,6 +1393,12 @@ impl MpScreen {
         }
         lobby.set_slot(s.empire, kind);
         Some(Out::Click)
+    }
+
+    /// The host's galaxy options as the page set them (ADR 0085 §4's custom game).
+    fn set_options(&mut self, o: GalaxyOptions) -> Option<Out> {
+        let Some(Role::Host { lobby, .. }) = self.role.as_mut() else { return None };
+        lobby.set_options(o).then_some(Out::Click)
     }
 
     /// The host sets the computer's level in slot `i` (1..3, ADR 0033).
@@ -2887,6 +2897,19 @@ mod tests {
         sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().slots[7].kind == SlotKind::Ai);
         let st = guests[0].state().unwrap();
         assert_eq!((st.slots[0].race, st.slots[6].kind, st.galaxy.unwrap().difficulty[7]), (4, SlotKind::Open, 3));
+        // ADR 0085 §4: the host's custom game reaches the seats; a joiner's is refused; both pages draw its rows.
+        let seat = ig2_net::galaxy::Seat { money: 30000, tech: 2, planets: 3, aggression: 1, relation: 1 };
+        let mut custom = ig2_net::galaxy::RoomCustom::new(90, 77, seat);
+        custom.seats[7].aggression = 2;
+        let o = GalaxyOptions { custom: Some(custom), ..st.galaxy.unwrap() };
+        assert!(guests[0].apply(vec![page::Act::Options(GalaxyOptions { custom: None, ..o })], &mut net).is_empty());
+        host.custom_seat = Some(seat);
+        host.apply(vec![page::Act::Options(o)], &mut net);
+        sync(&mut host, &mut guests, &mut net, |h| h.state().unwrap().galaxy.unwrap().custom.is_some());
+        assert_eq!(guests[0].state().unwrap().galaxy.unwrap().custom, Some(custom));
+        for s in std::iter::once(&mut host).chain(guests.iter_mut()) {
+            assert!(page(s, false, &mut gui).is_empty());
+        }
         // The right button: Back with the menu's navigation, nothing without.
         let right = |gui: &mut crate::gui::Gui| {
             gui.pointer(Some([5.0, 5.0]), crate::gui::Gui::scale(768));

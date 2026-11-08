@@ -314,6 +314,8 @@ pub struct MainScr {
     /// Ours (ADR 0031, `MenuSettings`): the Settings label and `O` are on; `covered`: the Options screen is up.
     pub settings: bool,
     pub covered: bool,
+    /// Ours (ADR 0085 §5): the enhanced ruleset (`EnhancedAi` 1): the skirmish panel's Advanced label.
+    pub advanced: bool,
     /// Ours (ADR 0059, `MenuNavigation` 1): the grouped panel and the back paths; `history`: its History entry
     /// (`GameStatistics`); `can_continue`: a save for Continue.
     pub flow: bool,
@@ -400,6 +402,7 @@ impl MainScr {
             race_boxes: [None; 3],
             settings: false,
             covered: false,
+            advanced: false,
             flow: false,
             modern: false,
             continue_line: None,
@@ -739,6 +742,7 @@ impl MainScr {
             use crate::mainscr_scenario::Act as S;
             return match sc.press(at, left)? {
                 S::Click => Some(Act::Click),
+                S::Advanced => Some(Act::CustomGame),
                 // §6.3 0x15: `Cel` 6, `AktKep = 2`; the panel closes while the exit animation runs.
                 S::Start => {
                     self.start_chosen();
@@ -1015,6 +1019,9 @@ impl MainScr {
     /// One 10 ms UI tick (`FRISSIT_MainScr2`, exe 0x4f65f0, spec §5; the gate `MainElindult` is open once a frame was
     /// drawn).
     pub fn tick(&mut self) {
+        if let Some(sc) = &mut self.scenario {
+            sc.advanced = self.advanced;
+        }
         // `MainScr_Kilep` (spec §2.2): the screen is left; its loop runs the exit animation, 0.5 a tick from 100, with
         // `Cel` held at 6, before the start.
         if let Some(st) = self.start.take() {

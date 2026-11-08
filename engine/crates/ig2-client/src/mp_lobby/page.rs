@@ -7,7 +7,7 @@
 //! spots made; the text fields stay ours (their keys come through [`MpScreen::key`], ADR 0062 §4).
 
 use egui::{Color32, Pos2, Rect, Vec2};
-use ig2_net::galaxy::{MAX_AIS, PLANETS};
+use ig2_net::galaxy::{GalaxyOptions, RoomCustom, Seat, CUSTOM_PLANETS, MAX_AIS, MONEY_MAX, PLANETS, START_PLANETS};
 use ig2_net::lobby::SlotKind;
 use ig2_net::rendezvous::Rendezvous;
 
@@ -26,6 +26,8 @@ pub enum Act {
     Race(usize, u8),
     /// The computer in slot `i` plays at this level (1..3).
     Level(usize, u8),
+    /// The host's new galaxy options (the custom game's values, ADR 0085 §4).
+    Options(ig2_net::galaxy::GalaxyOptions),
     /// Esc: leave the room, then the screens.
     Back,
 }
@@ -164,6 +166,11 @@ fn footer(ctx: &egui::Context, st: Stage, bottom: f32, opacity: f32, plates: &[(
 impl MpScreen {
     /// The race heads for the player rows (ADR 0041), read once from the install.
     pub fn load_heads(&mut self, ctx: &egui::Context, install: &ig2_formats::Install) {
+        if self.custom_seat.is_none() {
+            if let Some(t) = install.read_raw("ig2.exe").ok().and_then(|b| ig2_rules::PeImage::parse(&b).ok().map(|pe| crate::mainscr_scenario::Tables::read(&pe))) {
+                self.custom_seat = Some(Seat { money: t.money[2].clamp(0, MONEY_MAX), tech: 2, planets: 2, aggression: 1, relation: 1 });
+            }
+        }
         if !self.heads.is_empty() {
             return;
         }
@@ -216,6 +223,7 @@ impl MpScreen {
                 Act::Slot(i, kind) => self.set_slot(i, kind),
                 Act::Race(i, race) => self.set_race(i, race),
                 Act::Level(i, level) => self.set_level(i, level),
+                Act::Options(o) => self.set_options(o),
                 Act::Back => self.key(None, true, net),
             };
             outs.extend(o);
@@ -451,63 +459,85 @@ impl MpScreen {
         let seats = Rect::from_min_size(left.min, Vec2::new(left.width(), 0.0));
         let h = place(ctx, "mp-seats", seats, ds::PanelKind::Deep, 0.86, [24.0, 18.0], op, |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
-            title(ui, &w(words::PLAYERS));
-            ui.add_space(6.0);
-            for (i, sl) in st.slots.iter().enumerate().take(8) {
-                self.slot_row(ui, texts, palette, i, sl, st, me, acts);
+            // Ours (ADR 0085 §4): the custom game's empires in the seats' place while they are open.
+            let empires = st.galaxy.filter(|o| o.custom.is_some() && ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(EMPIRES))).unwrap_or(false));
+            if let Some(o) = empires {
+                title(ui, crate::tr::text(lang, "Empires"));
+                ui.add_space(6.0);
+                self.custom_table(ui, texts, palette, o, st, host, acts);
+            } else {
+                title(ui, &w(words::PLAYERS));
+                ui.add_space(6.0);
+                for (i, sl) in st.slots.iter().enumerate().take(8) {
+                    self.slot_row(ui, texts, palette, i, sl, st, me, acts);
+                }
             }
             ui.min_rect().height()
         });
         // The galaxy's settings: four a row, the setting's name over its stepper (the host's).
         let galaxy = Rect::from_min_size(Pos2::new(left.left(), left.top() + h + 36.0 + 30.0), Vec2::new(left.width(), 0.0));
         place(ctx, "mp-galaxy", galaxy, ds::PanelKind::Glass, 0.88, [24.0, 20.0], op, |ui| {
-            match st.galaxy {
-                Some(o) => {
-                    let planets = s(texts.get(15, 2, 8));
-                    let at = PLANETS.iter().position(|&p| p == o.planets).unwrap_or(1);
-                    let rows: [(String, String, bool, bool); super::OPTIONS] = [
-                        (planets, s(texts.get(14, 2, at as u16 + 1)), at > 0, at < 3),
-                        (s(texts.get(14, 1, 1)), format!("{}", o.ais), o.ais > 0, o.ais < MAX_AIS),
-                        (w(words::SHAPE), format!("{}", o.shape), o.shape > 1, o.shape < 2),
-                        (w(words::BATTLES), w(words::BATTLE[o.battle_status.min(3) as usize]), o.battle_status > 0, o.battle_status < 3),
-                        (w(words::SPEED), w(words::SPEED_BY[o.host_time as usize]), o.host_time, !o.host_time),
-                        (w(words::FORMATION), w(words::FORMATION_BY[o.formation as usize]), o.formation, !o.formation),
-                        (w(words::SPECTATORS), w(words::SPECTATORS_BY[o.spectators as usize]), o.spectators, !o.spectators),
-                        (w(words::AI), w(words::AI_BY[o.enhanced_ai as usize]), o.enhanced_ai, !o.enhanced_ai),
-                    ];
-                    let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
-                    for (r, four) in rows.chunks(4).enumerate() {
-                        if r > 0 {
-                            ui.add_space(16.0);
-                        }
-                        ui.horizontal_top(|ui| {
-                            ui.spacing_mut().item_spacing.x = 24.0;
-                            for (c, (name, value, down, up)) in four.iter().enumerate() {
-                                ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    ui.set_width(cell);
-                                    ui.spacing_mut().item_spacing.y = 12.0;
-                                    label(ui, name.trim_end_matches(':'));
-                                    let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
-                                    if (step < 0 && *down) || (step > 0 && *up) {
-                                        acts.push(Act::Spot(spot::OPTION + 2 * (4 * r + c) as u32 + (step > 0) as u32, false));
-                                    }
-                                });
+            // A custom game's rows can outgrow the column: the panel scrolls within it.
+            let max_h = (left.bottom() - galaxy.top() - 40.0).max(120.0);
+            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                match st.galaxy {
+                    Some(o) => {
+                        let planets = s(texts.get(15, 2, 8));
+                        let at = PLANETS.iter().position(|&p| p == o.planets).unwrap_or(1);
+                        // A custom game's planet count (ADR 0085 §4) in place of the room's steps.
+                        let planets_v = match o.custom {
+                            Some(c) => (format!("{}", c.planets), c.planets > CUSTOM_PLANETS.0, c.planets < CUSTOM_PLANETS.1),
+                            None => (s(texts.get(14, 2, at as u16 + 1)), at > 0, at < 3),
+                        };
+                        let rows: [(String, String, bool, bool); super::OPTIONS] = [
+                            (planets, planets_v.0, planets_v.1, planets_v.2),
+                            (s(texts.get(14, 1, 1)), format!("{}", o.ais), o.ais > 0, o.ais < MAX_AIS),
+                            (w(words::SHAPE), format!("{}", o.shape), o.shape > 1, o.shape < 2),
+                            (w(words::BATTLES), w(words::BATTLE[o.battle_status.min(3) as usize]), o.battle_status > 0, o.battle_status < 3),
+                            (w(words::SPEED), w(words::SPEED_BY[o.host_time as usize]), o.host_time, !o.host_time),
+                            (w(words::FORMATION), w(words::FORMATION_BY[o.formation as usize]), o.formation, !o.formation),
+                            (w(words::SPECTATORS), w(words::SPECTATORS_BY[o.spectators as usize]), o.spectators, !o.spectators),
+                            (w(words::AI), w(words::AI_BY[o.enhanced_ai as usize]), o.enhanced_ai, !o.enhanced_ai),
+                        ];
+                        let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
+                        for (r, four) in rows.chunks(4).enumerate() {
+                            if r > 0 {
+                                ui.add_space(16.0);
                             }
-                        });
+                            ui.horizontal_top(|ui| {
+                                ui.spacing_mut().item_spacing.x = 24.0;
+                                for (c, (name, value, down, up)) in four.iter().enumerate() {
+                                    ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                        ui.set_width(cell);
+                                        ui.spacing_mut().item_spacing.y = 12.0;
+                                        label(ui, name.trim_end_matches(':'));
+                                        let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
+                                        let moved = (step < 0 && *down) || (step > 0 && *up);
+                                        if let (Some(cg), 0, 0, true) = (o.custom, r, c, moved) {
+                                            let planets = cg.planets.saturating_add_signed(10 * step.signum() as i8);
+                                            acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { planets, ..cg }.clamped()), ..o }));
+                                        } else if moved {
+                                            acts.push(Act::Spot(spot::OPTION + 2 * (4 * r + c) as u32 + (step > 0) as u32, false));
+                                        }
+                                    });
+                                }
+                            });
+                        }
+                        self.custom_rows(ui, texts, o, host, acts);
+                    }
+                    None => {
+                        title(ui, &w(words::SAVED));
+                        ui.add_space(8.0);
+                        hint(ui, &w(words::NEED_SAVED), k.ink_muted, 2);
                     }
                 }
-                None => {
-                    title(ui, &w(words::SAVED));
-                    ui.add_space(8.0);
-                    hint(ui, &w(words::NEED_SAVED), k.ink_muted, 2);
+                // Ours (ADR 0068 §6): everyone in the room has the host's mods (a mismatch is refused).
+                let mods = crate::mods_page::loaded();
+                if !mods.is_empty() {
+                    ui.add_space(16.0);
+                    hint(ui, &format!("{} {}", crate::tr::text(lang, "Mods in this game:"), mods.join(", ")), k.ink_muted, 2);
                 }
-            }
-            // Ours (ADR 0068 §6): everyone in the room has the host's mods (a mismatch is refused).
-            let mods = crate::mods_page::loaded();
-            if !mods.is_empty() {
-                ui.add_space(16.0);
-                hint(ui, &format!("{} {}", crate::tr::text(lang, "Mods in this game:"), mods.join(", ")), k.ink_muted, 2);
-            }
+            });
         });
         // The host's connection, the chat.
         let right = stage.right_col(stage.r.top() + 196.0);
@@ -602,6 +632,122 @@ impl MpScreen {
             Some(0) => acts.push(Act::Spot(spot::LEAVE, false)),
             Some(_) => acts.push(Act::Spot(spot::READY, false)),
             None => {}
+        }
+    }
+
+    /// Ours (ADR 0085 §4): the custom game's switch and seed (the host's), and Empires: the seats' start values in the
+    /// seats' panel (`custom_table`).
+    fn custom_rows(&self, ui: &mut egui::Ui, texts: &UiTexts, o: GalaxyOptions, host: bool, acts: &mut Vec<Act>) {
+        let tr = |t: &str| crate::tr::text(texts.lang, t).to_string();
+        // Without the install's start tables there is nothing to start a custom game from.
+        let Some(seat) = self.custom_seat.or(o.custom.map(|c| c.seats[0])) else { return };
+        ui.add_space(16.0);
+        let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
+        let new_seed = || crate::new_game::wall_ticks() % 0x7fff;
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 24.0;
+            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(cell);
+                ui.spacing_mut().item_spacing.y = 12.0;
+                label(ui, &tr("Custom game"));
+                let on = o.custom.is_some();
+                let v = if on { tr("on") } else { tr("off (classic)") };
+                let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, &v, cell - 64.0).1).inner;
+                if step != 0 && (step > 0) != on {
+                    let custom = (step > 0).then(|| {
+                        let planets = o.planets.clamp(CUSTOM_PLANETS.0, CUSTOM_PLANETS.1);
+                        let start = ig2_sim::game::new_game::skirmish_start_planets(2, planets as i32, o.ais as i32);
+                        RoomCustom::new(planets, new_seed(), Seat { planets: start.clamp(1, 8) as u8, ..seat })
+                    });
+                    acts.push(Act::Options(GalaxyOptions { custom, ..o }));
+                }
+            });
+            let Some(c) = o.custom else {
+                ui.ctx().data_mut(|d| d.remove::<bool>(egui::Id::new(EMPIRES)));
+                return;
+            };
+            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.set_width(cell);
+                ui.spacing_mut().item_spacing.y = 12.0;
+                label(ui, &tr("Seed"));
+                let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, &c.seed.to_string(), cell - 64.0).1).inner;
+                if step != 0 {
+                    acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { seed: c.seed.wrapping_add_signed(step.signum()), ..c }), ..o }));
+                }
+            });
+            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(30.0);
+                if ui.add_enabled(host, ds::Plate::new(&tr("New seed")).width(cell).height(36.0)).clicked() {
+                    acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { seed: new_seed(), ..c }), ..o }));
+                }
+            });
+            // The empires' start values open in the seats' panel (and back).
+            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(30.0);
+                let id = egui::Id::new(EMPIRES);
+                let open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+                if ui.add(ds::Plate::new(&tr(if open { "Players" } else { "Empires" })).width(cell).height(36.0)).clicked() {
+                    ui.ctx().data_mut(|d| d.insert_temp(id, !open));
+                }
+            });
+        });
+    }
+
+    /// Ours (ADR 0085 §4): the custom game's seats in play, a row each (the host's to edit, every seat sees them).
+    #[allow(clippy::too_many_arguments)]
+    fn custom_table(&self, ui: &mut egui::Ui, texts: &UiTexts, palette: &[[f32; 3]], o: GalaxyOptions, st: &ig2_net::lobby::LobbyState, host: bool, acts: &mut Vec<Act>) {
+        let lang = texts.lang;
+        let s = |b: Vec<u8>| ig2_formats::text::decode(&b, lang);
+        let tr = |t: &str| crate::tr::text(lang, t).to_string();
+        let k = ds::tokens();
+        // A joiner's copy comes from the host: kept in range here too.
+        let Some(c) = o.custom.map(RoomCustom::clamped) else { return };
+        // The seats in play, a row each: the empire's colour and race; money, technology, start planets, a computer's
+        // aggressiveness, the start relation.
+        let widths = [100.0, 160.0, 0.0, 96.0, 0.0, 0.0];
+        let heads_l = [tr("Race"), s(texts.get(15, 2, 0xb)), s(texts.get(15, 2, 0xa)), tr("Planets"), tr("Aggressiveness"), tr("Relations")];
+        let tw = ui.available_width();
+        let (head, _) = ui.allocate_exact_size(Vec2::new(tw, 22.0), egui::Sense::hover());
+        let cols = ds::columns(head, &widths, 10.0);
+        let refs: Vec<&str> = heads_l.iter().map(String::as_str).collect();
+        ds::table_head(ui, &cols, &refs, &[]);
+        let pick = Font { size: 15.0, line: 18.0, weight: Weight::Medium, tracking: 0.04, upper: false, lcd: false };
+        let aggr = ["Low", "Normal", "High"];
+        let rel = ["Hostile", "Neutral", "Friendly"];
+        for sl in st.slots.iter().take(8).filter(|sl| matches!(sl.kind, SlotKind::Human(_) | SlotKind::Ai)) {
+            let i = (sl.empire as usize).clamp(1, 8) - 1;
+            let e = c.seats[i];
+            let (row, _) = ui.allocate_exact_size(Vec2::new(tw, 40.0), egui::Sense::hover());
+            let cc = ds::columns(row, &widths, 10.0);
+            let col = palette.get(0xf + sl.empire as usize).copied().unwrap_or([1.0; 3]);
+            ui.painter().rect_filled(Rect::from_min_size(row.min, Vec2::new(4.0, row.height())), 2.0, crate::gui::ink(col));
+            Text::new(&s(texts.race(sl.race)), BODY).color(k.ink_silver).paint(ui, cc[0].shrink2(Vec2::new(12.0, 0.0)));
+            let mut u: Vec<egui::Ui> = cc.iter().map(|&r| ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)))).collect();
+            let money = u[1].add_enabled_ui(host, |ui| ds::stepper(ui, &e.money.to_string(), cc[1].width() - 64.0).1).inner;
+            let planets = u[3].add_enabled_ui(host, |ui| ds::stepper(ui, &e.planets.to_string(), cc[3].width() - 64.0).1).inner;
+            let mut select = |j: usize, id: &str, value: String, rows: Vec<(i32, String, bool)>| -> Option<i32> {
+                if !host {
+                    Text::new(&value, BODY).color(k.ink).paint(&u[j], cc[j].shrink2(Vec2::new(8.0, 0.0)));
+                    return None;
+                }
+                ds::select(&mut u[j], (id, i), &value, &rows, Vec2::new(cc[j].width(), 34.0), pick, k.ink).1.flatten()
+            };
+            let tech_rows = (0..=3).map(|t| (t, s(texts.get(15, 5, t as u16 + 1)), false)).collect();
+            let tech = select(2, "mp-cg-tech", s(texts.get(15, 5, e.tech as u16 + 1)), tech_rows);
+            let aggression = if sl.kind == SlotKind::Ai { select(4, "mp-cg-aggr", tr(aggr[e.aggression as usize]), (0..3).map(|a| (a, tr(aggr[a as usize]), false)).collect()) } else { None };
+            let relation = select(5, "mp-cg-rel", tr(rel[e.relation as usize]), (0..3).map(|a| (a, tr(rel[a as usize]), false)).collect());
+            let n = Seat {
+                money: if money != 0 { money_step(e.money, money > 0) } else { e.money },
+                tech: tech.map_or(e.tech, |t| t as u8),
+                planets: e.planets.saturating_add_signed(planets.signum() as i8).clamp(START_PLANETS.0, START_PLANETS.1),
+                aggression: aggression.map_or(e.aggression, |a| a as u8),
+                relation: relation.map_or(e.relation, |a| a as u8),
+            };
+            if n != e {
+                let mut c = c;
+                c.seats[i] = n;
+                acts.push(Act::Options(GalaxyOptions { custom: Some(c.clamped()), ..o }));
+            }
         }
     }
 
@@ -805,4 +951,15 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     crate::assets::write_snapshot(out, o, &rgba)?;
     println!("{}", out.display());
     Ok(())
+}
+
+/// The egui memory key of the open custom game empires' table (ADR 0085 §4).
+const EMPIRES: &str = "mp-cg-empires";
+
+/// The money stepper's steps (the Custom game page's): 1000 to 10 000, 5000 to 100 000, 25 000 above.
+fn money_step(v: i32, up: bool) -> i32 {
+    let at = if up { v } else { v - 1 };
+    let step = if at < 10_000 { 1000 } else if at < 100_000 { 5000 } else { 25_000 };
+    let n = if up { (v / step + 1) * step } else { (v - 1).div_euclid(step) * step };
+    n.clamp(0, MONEY_MAX)
 }

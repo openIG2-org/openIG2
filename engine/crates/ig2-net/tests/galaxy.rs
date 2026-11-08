@@ -551,3 +551,53 @@ fn a_custom_game_in_the_start_data_and_the_save() {
         assert_eq!(ig2_net::state_hash(&v15.restore(&rules).unwrap().0, &[]), ig2_net::state_hash(&none, &[]), "older saves still load");
     });
 }
+
+#[test]
+fn a_room_custom_game_reaches_every_seat_and_the_start() {
+    use ig2_net::galaxy::{RoomCustom, Seat};
+    use ig2_sim::game::new_game::{Aggressiveness, Side, StartRelation};
+    use ig2_sim::save::va;
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else { return };
+    let rules = common::game_rules(&inst);
+    common::with_start_data(&inst, |data| {
+        let mut h = LobbyHost::new_galaxy(settings(), 0xC057, RULES, "Host");
+        assert!(h.set_options(GalaxyOptions { ais: 2, ..GalaxyOptions::default() }));
+        let mut a = join(&mut h, "Alice");
+        pump(&mut h, &mut [&mut a], |h, c| h.state().members.len() == 2 && synced(h, c));
+        let ais = h.state().ais();
+        let humans: Vec<u8> = (0..2).map(|m| h.state().empire_of(m).unwrap()).collect();
+        let mut custom = RoomCustom::new(70, 31337, Seat { money: 40000, tech: 1, planets: 2, aggression: 1, relation: 1 });
+        custom.seats[humans[1] as usize - 1].money = 250_000;
+        custom.seats[ais[0] as usize - 1] = Seat { money: 9000, tech: 3, planets: 4, aggression: 2, relation: 0 };
+        let o = GalaxyOptions { custom: Some(custom), ..h.state().galaxy.unwrap() };
+        assert!(h.set_options(o));
+        pump(&mut h, &mut [&mut a], synced);
+        assert_eq!(a.state.as_ref().unwrap().galaxy.unwrap().custom, Some(custom), "the joiner sees the custom game");
+        a.ready(true);
+        pump(&mut h, &mut [&mut a], |h, _| h.state().members[1].ready);
+        assert!(h.set_ready(0, true));
+
+        let mut hs = HostSession::start_galaxy(h, data, &rules, SessionSettings::default(), 555, 0).ok().expect("the room starts");
+        let mut c = started(a, data, &rules).unwrap();
+        for g in [&hs.own.game, &c.peer.game] {
+            let cg = g.state.custom.as_ref().expect("a custom start");
+            assert_eq!((cg.seed, g.state.planet_count()), (31337, 70), "the host's seed and planets");
+            assert!(humans.iter().all(|&e| cg.empires[e as usize - 1].side == Side::Human));
+            assert!(ais.iter().all(|&e| cg.empires[e as usize - 1].side == Side::Computer));
+            let e = cg.empires[ais[0] as usize - 1].clone();
+            assert_eq!((e.tech, e.aggressiveness, e.relations[humans[0] as usize]), (3, Aggressiveness::High, StartRelation::Hostile));
+            assert_eq!(g.state.mem.f64(va::MONEY + 8 * humans[1] as u32), 250_000.0, "the joiner's seat money");
+            assert_eq!(g.state.mem.f64(va::MONEY + 8 * ais[0] as u32), 9000.0);
+        }
+        let mut now = Duration::ZERO;
+        while hs.own.turn < 100 || c.peer.turn < 100 {
+            now += Duration::from_millis(10);
+            hs.pump(now, (hs.own.turn < 100) as usize).unwrap();
+            hs.own.events.clear();
+            c.pump(now, (c.peer.turn < 100) as usize).unwrap();
+            c.peer.events.clear();
+            assert!(now < Duration::from_secs(300), "stalled at {}", hs.own.turn);
+        }
+        assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
+    });
+}

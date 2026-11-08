@@ -383,6 +383,11 @@ impl<'r> HostSession<'r> {
             }
         }
         let mut galaxy = GalaxyStart { story, ..GalaxyStart::new(ticks, options, races, st.ais()) };
+        // ADR 0085 §4: the room's custom game, its own seed.
+        if let Some(c) = options.custom {
+            galaxy.custom = Some(c.game(races, &galaxy.ais, options.difficulty, humans[0]));
+            galaxy.seed = c.seed;
+        }
         let game = galaxy.build_hashed(data, rules, humans[0], &humans, lobby.session());
         let fingerprint = lobby.rules();
         let started = lobby.start_galaxy(galaxy, &settings)?;

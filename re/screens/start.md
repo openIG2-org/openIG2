@@ -125,6 +125,18 @@ the client ids and IP strings. Other types: 1 chat, 3 the seed, 4 "start now", 5
   the start state's hash against the host's (`session::Error::StartMismatch`). The seed is `rand() % 0x7fff` after
   `srand(ticks)` on the host. `ticks` (the `NEWGAME_Diplomacy` reseed) is the host's and shared (ours: lockstep
   needs one state; deviation 223).
+- Ours (ADR 0085 §4, lobby protocol 14): `GalaxyOptions::custom` (`None` = the original) is a custom game, the host's:
+  the galaxy's planets (20..150, in place of the four steps) and seed (in place of `FRISSIT_Start`'s), and per seat
+  (`RoomCustom::seats`, empires 1..8) start money, technology 0..3, start planets 1..8, a computer's aggressiveness and
+  the start relation towards every other empire. Holders, races and computer levels stay the room's. It travels with
+  the room's state, so every seat shows it; any change clears every ready flag. The start: `RoomCustom::game` builds
+  the sim's `CustomGame` (computers = the AI slots, the rest out until `GalaxyStart::build` makes the humans' seats
+  human; the game's difficulty the computers' mean level, the population the nearest to the first human's start
+  planets), `GalaxyStart::seed` becomes the room's seed and every machine runs `Game::start_custom` in place of
+  `start_mp_galaxy`, then writes the room's battle and speed switches (0xBAE558, 0xBAE55C). The galaxy shape is the
+  skirmish start's. A seat's first values are the skirmish menu's step 2 money (`ScenarioKezdoPenzek` exe 0x9140b8)
+  and technology 2. The page: the switch, the seed (stepper, New seed) and Empires, which shows the seats' values in
+  the seats' panel (`mp_lobby::page`).
 
 ## 5. Our connection screen
 

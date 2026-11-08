@@ -271,6 +271,9 @@ const TABLE: &[(&str, &str)] = &[
     ("Galaxy", "Galaxis"),
     ("Seed", "Kezdőszám"),
     ("New seed", "Új kezdőszám"),
+    // The classic skirmish panel's label and the multiplayer room's switch (ADR 0085 §4, §5).
+    ("Advanced", "Haladó"),
+    ("on", "be"),
     ("The same seed and settings make the same galaxy.", "Ugyanaz a kezdőszám és beállítás ugyanazt a galaxist adja."),
     ("Computer", "Gép"),
     ("Aggressiveness", "Agresszivitás"),

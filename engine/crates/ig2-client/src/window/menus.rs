@@ -527,6 +527,7 @@ impl App {
         }
         if let Some(f) = &mut self.front {
             f.s.settings = self.settings.int(crate::display::MENU_SETTINGS) != Some(0);
+            f.s.advanced = self.settings.int(crate::display::ENHANCED_AI) == Some(1);
             f.s.flow = self.settings.int(crate::menu_flow::KEY) == Some(1);
             f.s.history = d.statistics;
             // ADR 0082: the main menu follows the interface at once.

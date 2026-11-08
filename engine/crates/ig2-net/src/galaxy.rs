@@ -39,11 +39,97 @@ pub struct GalaxyOptions {
     /// Ours (ADR 0045, enhanced; off = the original): the computer empires play the enhanced ruleset
     /// (`Game::enhanced_ai`).
     pub enhanced_ai: bool,
+    /// Ours (ADR 0085 §4; `None` = the original): a custom game, the galaxy's planet count and seed and each seat's
+    /// start values; the seats' holders, races and computer levels stay the room's.
+    pub custom: Option<RoomCustom>,
 }
 
 impl Default for GalaxyOptions {
     fn default() -> Self {
-        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false, difficulty: [1; 8], enhanced_ai: false }
+        Self { planets: 40, ais: 2, shape: 1, battle_status: 0, host_time: false, formation: false, spectators: false, difficulty: [1; 8], enhanced_ai: false, custom: None }
+    }
+}
+
+/// A room's custom game (ADR 0085 §4): what the host sets beyond the room's own options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomCustom {
+    /// `HanyBolygo`, `CUSTOM_PLANETS` (20..=150).
+    pub planets: u8,
+    /// `RandomInit`'s seed (in place of `FRISSIT_Start`'s).
+    pub seed: u32,
+    /// Empires 1..=8 (index 0 = empire 1).
+    pub seats: [Seat; 8],
+}
+
+/// One seat's start values in a [`RoomCustom`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Seat {
+    pub money: i32,
+    /// 0..=3 (`ScirmishTalalmanyFejlesztes`'s levels).
+    pub tech: u8,
+    /// Start planets 1..=8.
+    pub planets: u8,
+    /// A computer's aggressiveness: 0 low, 1 normal (the original's), 2 high.
+    pub aggression: u8,
+    /// The start relation towards every other empire: 0 hostile, 1 neutral (the original's), 2 friendly.
+    pub relation: u8,
+}
+
+/// The custom planet counts and start planets a room offers.
+pub const CUSTOM_PLANETS: (u8, u8) = (20, 150);
+pub const START_PLANETS: (u8, u8) = (1, 8);
+/// The highest start money a room offers (the Custom game page's).
+pub const MONEY_MAX: i32 = 1_000_000;
+
+impl RoomCustom {
+    /// Every seat with `seat`'s values.
+    pub fn new(planets: u8, seed: u32, seat: Seat) -> Self {
+        Self { planets, seed, seats: [seat; 8] }.clamped()
+    }
+
+    pub fn clamped(mut self) -> Self {
+        self.planets = self.planets.clamp(CUSTOM_PLANETS.0, CUSTOM_PLANETS.1);
+        for s in &mut self.seats {
+            s.money = s.money.clamp(0, MONEY_MAX);
+            s.tech = s.tech.min(3);
+            s.planets = s.planets.clamp(START_PLANETS.0, START_PLANETS.1);
+            s.aggression = s.aggression.min(2);
+            s.relation = s.relation.min(2);
+        }
+        self
+    }
+
+    /// The sim's custom game for the room: `ais` the computer seats (the rest of 1..=8 out of the game until
+    /// [`GalaxyStart::build`] makes the humans' seats human), `races` and `difficulty` the room's. The game's difficulty
+    /// is the computers' mean level and the population the one whose original count comes nearest the first human's
+    /// start planets (as the Custom game page's, `ig2-client::custom_game::Settings::custom`).
+    pub fn game(&self, races: [u8; 8], ais: &[u8], difficulty: [u8; 8], first_human: u8) -> CustomGame {
+        use ig2_sim::game::new_game::{skirmish_start_planets, Aggressiveness, CustomEmpire, StartRelation};
+        let c = self.clamped();
+        let planets = c.planets as i32;
+        let levels: Vec<i32> = ais.iter().map(|&e| difficulty[(e as usize).clamp(1, 8) - 1].clamp(1, 3) as i32).collect();
+        let mean = levels.iter().sum::<i32>() as f32 / levels.len().max(1) as f32;
+        let me = c.seats[(first_human as usize).clamp(1, 8) - 1].planets as i32;
+        let population = [2, 1, 3, 0].into_iter().min_by_key(|&p| (skirmish_start_planets(p, planets, ais.len() as i32) - me).abs()).unwrap_or(2);
+        let empires = std::array::from_fn(|i| {
+            let s = c.seats[i];
+            let e = i as u8 + 1;
+            let mut relations = [[StartRelation::Hostile, StartRelation::Neutral, StartRelation::Friendly][s.relation as usize]; 9];
+            relations[i + 1] = StartRelation::Neutral;
+            CustomEmpire {
+                side: if ais.contains(&e) { Side::Computer } else { Side::Off },
+                race: races[i],
+                name: None,
+                money: s.money,
+                tech: s.tech as i32,
+                planets: s.planets as i32,
+                level: if ais.contains(&e) { nehezseg(difficulty[i]) } else { 0 },
+                start: None,
+                aggressiveness: [Aggressiveness::Low, Aggressiveness::Normal, Aggressiveness::High][s.aggression as usize],
+                relations,
+            }
+        });
+        CustomGame { seed: c.seed, ticks: c.seed, random_id: 1, planets, difficulty: (mean.round() as i32).clamp(1, 3), population, en: first_human.clamp(1, 8) as i32, drawn_opponents: None, empires }
     }
 }
 
@@ -60,6 +146,7 @@ impl GalaxyOptions {
             spectators: self.spectators,
             difficulty: self.difficulty.map(|d| d.clamp(1, 3)),
             enhanced_ai: self.enhanced_ai,
+            custom: self.custom.map(RoomCustom::clamped),
         }
     }
 }
@@ -142,6 +229,10 @@ impl GalaxyStart {
                 }
             }
             game.start_custom(&c, data);
+            // The room's switches `start_mp_galaxy` writes; the skirmish start has no others.
+            let m = &mut game.state.mem;
+            m.set_i32(0xBAE558, self.options.battle_status as i32);
+            m.set_i32(0xBAE55C, self.options.host_time as i32);
         } else {
             game.start_mp_galaxy(&cfg, data);
         }
@@ -206,8 +297,8 @@ mod tests {
 
     #[test]
     fn options_are_clamped() {
-        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true, difficulty: [0, 1, 2, 3, 4, 9, 1, 1], enhanced_ai: true }.clamped();
-        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true, difficulty: [1, 1, 2, 3, 3, 3, 1, 1], enhanced_ai: true });
+        let o = GalaxyOptions { planets: 33, ais: 9, shape: 0, battle_status: 7, host_time: true, formation: true, spectators: true, difficulty: [0, 1, 2, 3, 4, 9, 1, 1], enhanced_ai: true, custom: None }.clamped();
+        assert_eq!(o, GalaxyOptions { planets: 40, ais: 6, shape: 1, battle_status: 3, host_time: true, formation: true, spectators: true, difficulty: [1, 1, 2, 3, 3, 3, 1, 1], enhanced_ai: true, custom: None });
         assert_eq!([1, 2, 3].map(nehezseg), [1, 2, 4]);
     }
 }
