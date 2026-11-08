@@ -12,7 +12,7 @@ How an idea moves:
 4. **Shipped**: the option exists; the row names its setting and ADR.
 
 Ideas have no number; a row gets one when it is proposed. Numbers are shared with `re/deviations.md` (one
-counter): a proposed row takes the next free number there (484).
+counter): a proposed row takes the next free number there (547).
 
 ## Decisions
 
@@ -33,6 +33,7 @@ counter): a proposed row takes the next free number there (484).
 | 2026-11-01 | No console window beside the game. |
 | 2026-11-01 | CI runs on pull requests, by hand and before every release, not on every push; a release follows every finished bigger package, with its changelog. |
 | 2026-11-01 | Every original screen and in-game UI element gets a modern version on the egui layer: close to the original's layout and flow, yet its own modern look; the classic look keeps the original. Planned, not started. |
+| 2026-11-08 | A custom game with every start setting (galaxy, each empire's race, money, technology, planets, level, aggressiveness, relations, the start position), in the modern and, with the enhanced ruleset, the classic interface: accepted (row 546, ADR 0085). |
 
 ## Ideas
 
@@ -56,6 +57,7 @@ Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shippe
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 546 | new game (custom game) | a Custom game page (modern: beside Quick game; classic with the enhanced ruleset: an "Advanced" label on the skirmish panel) sets the galaxy's planet count (20..150) and seed, and per empire the race, name, start money, technology, start planets, computer level, aggressiveness and start relations, and the start position (random or a star picked on a preview of the map); the multiplayer room takes the same settings; the exe's skirmish has seven settings from fixed tables, the same for every computer empire; the original's values start as the exe's skirmish; classic ruleset = the exe's panel only. Not started | yes | ADR 0085, new-game.md §13.1 |
 | 527 | space battle HUD | under the modern starmap HUD (`Interface`: Modern; `--screen spacewar --battle … --script … --modern` in snapshots) the battle's 2D HUD is on the design kit: the metal top bar, a weapon rail at the right edge with the original's turning weapon icons, names and reload charge bars (the formations in the formation phase), a ship info key, the selection card at the bottom left (selected units, guns, or the battle overview with the fighters' stance slider), the ship info as a panel with the unit's model, the radar on a metal navigation plate with the six camera keys, the retreat question as a popup by its key (the ship info slides out from under the rail; the battlefield beyond the 4:3 picture takes selection and orders); the 3D battle is the original's and every control is the original's hot-spot (same orders, keys, both buttons, lockstep); with "Modern cursors" the battle pointer is the modern set; off = the original's HUD (ADR 0077) | yes | ADR 0077 |
 | 519 | starmap, fleet info and transfer panels, planet settings menus | under the modern starmap HUD (`Interface`: Modern; `--modern --panel fleet --select-fleet F` and `--panel transfer:F1,F2` in snapshots) the fleet info panel and the transfer panel are the design boards' panels on the design kit: unit cards with the original's turning models cut into picture wells, the selected design's model, data table and pod list, the capacity bar, round transfer buttons with count displays, the sale menu as a kit list, the original's tooltips in the kit's look; the tax, autobuild and priority menus open on their own field with the value marked, the production view's planet list under its plate; the vehicles' panel stays the original's; off = the original's panels (ADR 0077) | yes | ADR 0077 |
 | 517 | main menu | the Interface setting (`Interface`, Remake row under Interface; Modern by default; ADR 0082; `--modern` in snapshots) draws the grouped menu (ADR 0059, turned on with it) as a designed egui page over the game's scene: the title, a deep panel of entries in groups with Continue showing the newest save's name and date, sub-menus with Back, the version; the exe has its three rings of labels; off = the original's rings (ADR 0078) | yes | ADR 0078 |
