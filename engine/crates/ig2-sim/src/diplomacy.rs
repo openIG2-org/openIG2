@@ -520,6 +520,8 @@ pub struct DiplomacyContext {
     pub all_techs: bool,
     /// Ours (ADR 0045 part 3): the empire is computer-played in an enhanced game (`diplomacy::enhanced`).
     pub enhanced: [bool; EMPIRES],
+    /// Ours (ADR 0085): each empire's aggressiveness (`new-game.md` §13.3; normal = the original).
+    pub aggression: [crate::game::new_game::Aggressiveness; EMPIRES],
 }
 
 impl DiplomacyContext {
@@ -1131,7 +1133,7 @@ impl Diplomacy {
                 level::NAP => pick = Some((cat::NEGOTIATE, negotiate::BREAK_NAP)),
                 _ => {}
             }
-            if Self::rnd(w, 100) < 51
+            if Self::rnd(w, 100) < w.ctx.aggression[a].war_chance()
                 && (lvl(self) == level::NEUTRAL || w.ctx.difficulty(a) > 2)
                 && self.target(w, a) == b
                 && self.known_since[a][b] < 0

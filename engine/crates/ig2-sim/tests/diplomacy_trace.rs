@@ -194,6 +194,7 @@ fn context(s: &Regions, g: &Value) -> DiplomacyContext {
         kidnap: s.get("kidnap").map_or([0; 18], |k| std::array::from_fn(|i| i32_at(k, 4 * i))),
         all_techs: gi("alltechs") != 0,
         enhanced: [false; EMPIRES],
+        aggression: Default::default(),
     }
 }
 

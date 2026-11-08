@@ -456,6 +456,8 @@ Wars with dead empires end: for u in 1..=ProgramPlayers2, u ≠ e, level[e][u] =
 If `StoryAdat+0xb0 == 0` or MP, `MI_HannyalHarcol(e) == 0`, `t = MI_KitAkarTamadni(e) > 0` and
 `BirodalomMiotaIsmeri[e][t] < 0`: `rndlog(10, 1, 720) == 1` or `BirodalomHanyBolygo[e] == 0` or (`Nehezseg == 4`,
 t human and a second `rndlog(10, 1, 720) == 1`) → `ElkuldHaduzenet(e, t)`.
+A custom game's aggressiveness scales the war draw above and the ground strength wanted in §11.4: new-game.md §13.3.
+
 ### 11.4 Target
 If `BirodalomTamadhat[e]`, `M > 0` and not (Ev 0x917 and Honap 3): `kind = 0, tgt = 0, best = 1e10f`.
 **Fleets** (only if e owns planets): f in 1..=n with owner u ≠ 0xff, story id 0, level[e][u] == 1, `f.+0x19+e`,

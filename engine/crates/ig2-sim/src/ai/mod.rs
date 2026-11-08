@@ -206,6 +206,8 @@ pub struct AiContext {
     pub design_debug: bool,
     /// Ours (ADR 0045): the computer empires play the enhanced ruleset ([`enhanced`]; `Game::enhanced_ai`).
     pub enhanced: bool,
+    /// Ours (ADR 0085): each empire's aggressiveness (`new-game.md` §13.3; normal = the original).
+    pub aggression: [crate::game::new_game::Aggressiveness; EMPIRES],
 }
 
 /// Effects for the UI or other systems.

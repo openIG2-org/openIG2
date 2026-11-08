@@ -1516,6 +1516,11 @@ impl SaveState {
         self.ai_difficulty.map(|d| if d > 0 { d } else { n })
     }
 
+    /// Each empire's aggressiveness (ADR 0085, `new-game.md` §13.3): a custom game's, else the original's.
+    pub fn aggression(&self) -> [crate::game::new_game::Aggressiveness; EMPIRES] {
+        std::array::from_fn(|e| self.custom.as_ref().and_then(|c| c.empire(e)).map_or_else(Default::default, |c| c.aggressiveness))
+    }
+
     /// `InfoCharts`, `InfoChartsSmoothed` (`info-messages.md` §1).
     pub fn info_charts(&self) -> Charts {
         Charts::from_bytes(&self.mem.read(va::INFO_CHARTS, crate::info::SIZE), &self.mem.read(va::INFO_SMOOTHED, crate::info::SIZE))

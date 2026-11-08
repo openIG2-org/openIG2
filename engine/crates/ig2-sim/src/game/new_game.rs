@@ -162,9 +162,9 @@ pub struct CustomEmpire {
     pub level: i32,
     /// The start planet: `None` the original's draw, `Some(p)` planet p.
     pub start: Option<usize>,
-    /// Part 4 (ADR 0085 §3): stored only.
+    /// The AI's attack decisions (spec §13.3).
     pub aggressiveness: Aggressiveness,
-    /// The start relation towards each empire (index 1..=8; part 4: stored only).
+    /// The start relation towards each empire (index 1..=8; spec §13.3).
     pub relations: [StartRelation; 9],
 }
 
@@ -184,6 +184,33 @@ pub enum Aggressiveness {
     #[default]
     Normal,
     High,
+}
+
+impl Aggressiveness {
+    /// `FRISSIT_MI_FLOTTAK`'s war declaration, `rndlog(10, 1, n) == 1` (spec §13.3; the original's 720).
+    pub fn war_days(self) -> i32 {
+        match self {
+            Self::Low => 1440,
+            Self::Normal => 720,
+            Self::High => 360,
+        }
+    }
+    /// `MI_DIPLOMACY` step i's declaration, `rnd(1, 100) < n` (the original's 51).
+    pub fn war_chance(self) -> i32 {
+        match self {
+            Self::Low => 26,
+            Self::Normal => 51,
+            Self::High => 76,
+        }
+    }
+    /// The factor on a planet's defence in the main fleet's planet targets (`ai-empire.md` §11.4; the original's 1).
+    pub fn defence(self) -> f32 {
+        match self {
+            Self::Low => 1.5,
+            Self::Normal => 1.0,
+            Self::High => 0.75,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1214,11 +1241,42 @@ impl<'r> Game<'r> {
                 m.set_i32(va::LAST_CONTACT + 4 * (9 * a + b), 0);
             }
         }
+        self.start_relations();
         self.diplomacy_daily(false);
         let m = self.m();
         for e in 1..=pp2 {
             if m.i32(va::EMPIRE_PLANETS + 4 * e) == 0 {
                 m.set_u8(va::EMPIRE_ALIVE + e, 0);
+            }
+        }
+    }
+
+    /// A custom game's start relations (spec §13.3), after `INIT_MI`'s reset: a hostile side makes the pair's war
+    /// (`st_SetHaborusViszony`), two friendly sides a pact (`st_SetNonagressionViszony`).
+    fn start_relations(&mut self) {
+        let Some(c) = self.state.custom.clone() else { return };
+        let side = |e: usize| c.empire(e).filter(|x| x.side != Side::Off);
+        for a in 1..=8 {
+            for b in a + 1..=8 {
+                let (Some(x), Some(y)) = (side(a), side(b)) else { continue };
+                let (ra, rb) = (x.relations[b], y.relations[a]);
+                if ra == StartRelation::Hostile || rb == StartRelation::Hostile {
+                    let m = self.m();
+                    for (u, v, r) in [(a, b, ra), (b, a, rb)] {
+                        let at = va::RELATIONS + (0x2d2 * u + 0x26 * v) as u32;
+                        if r == StartRelation::Hostile {
+                            let v = (m.i16(at + 4) as i32).wrapping_sub(10_000) as i16;
+                            m.write(at + 4, &v.to_le_bytes());
+                        }
+                        m.set_u8(at + 0x25, 1);
+                    }
+                } else if ra == StartRelation::Friendly && rb == StartRelation::Friendly {
+                    self.with_diplomacy(|d, w| d.make_peace(w, a, b));
+                    let m = self.m();
+                    for (u, v) in [(a, b), (b, a)] {
+                        m.set_u8(va::RELATIONS + (0x2d2 * u + 0x26 * v) as u32 + 0x25, 4);
+                    }
+                }
             }
         }
     }

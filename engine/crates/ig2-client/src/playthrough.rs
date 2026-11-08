@@ -7,7 +7,7 @@
 //! and what the game asked of the client (videos, battles, the end).
 //! In a campaign it also plays the story's part of the player ([`story`]).
 //!
-//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]`, runs
+//! `ig2-client --playthrough <run>[,<run>…] [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced] [--aggression low|normal|high]`, runs
 //! `campaign:C[:D[:L]]`, `scenario:<file|all>`, `skirmish[:RACE[:AIS]]`, `mp[:AIS[:PLANETS]]` ([`mp`]), or `all`.
 
 mod mp;
@@ -18,6 +18,7 @@ use std::fmt::Write as _;
 use ig2_formats::Install;
 use ig2_net::Command;
 use ig2_sim::game::{choice_count, choice_disabled, choice_part, Game, GameOver, MessageOrder, RealTimeEvent};
+use ig2_sim::game::new_game::{Aggressiveness, Side};
 use ig2_sim::save::va;
 use ig2_sim::time::Speed;
 
@@ -74,11 +75,13 @@ pub struct Limits {
     pub growth: i32,
     /// The computer empires play the enhanced ruleset (`Game::enhanced_ai`, ADR 0045).
     pub enhanced_ai: bool,
+    /// A skirmish's computer empires' aggressiveness (ADR 0085, `re/rules/new-game.md` §13.3).
+    pub aggression: Aggressiveness,
 }
 
 impl Default for Limits {
     fn default() -> Self {
-        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200, replay: false, growth: 0, enhanced_ai: false }
+        Self { ticks: 400_000, seed: 4242, save_every: 6, stall: 120, autopilot: true, compare_every: 200, replay: false, growth: 0, enhanced_ai: false, aggression: Aggressiveness::Normal }
     }
 }
 
@@ -232,6 +235,11 @@ impl Harness {
         let en = w.game.state.mem.i32(va::EN).clamp(1, 18) as usize;
         report.human = en;
         w.game.enhanced_ai = limits.enhanced_ai;
+        if let Some(c) = &mut w.game.state.custom {
+            for e in c.empires.iter_mut().filter(|e| e.side == Side::Computer) {
+                e.aggressiveness = limits.aggression;
+            }
+        }
         if limits.autopilot {
             w.game.autopilot(en);
         }
@@ -542,6 +550,9 @@ fn months(g: &Game) -> i32 {
 pub(super) struct Treaties {
     levels: Vec<[(u8, u8); 19]>,
     count: [[i32; 5]; 19],
+    /// Each planet's owner, and the planets each empire took from another empire.
+    owners: Vec<u8>,
+    taken: [i32; 19],
 }
 
 impl Treaties {
@@ -559,6 +570,15 @@ impl Treaties {
             }
         }
         self.levels = now;
+        let owners: Vec<u8> = g.state.colony().planets.iter().map(|p| p.owner).collect();
+        if self.owners.len() == owners.len() {
+            for (&o0, &o1) in self.owners.iter().zip(&owners) {
+                if o0 != o1 && (1..19).contains(&(o0 as usize)) && (1..19).contains(&(o1 as usize)) {
+                    self.taken[o1 as usize] += 1;
+                }
+            }
+        }
+        self.owners = owners;
     }
 }
 
@@ -576,7 +596,7 @@ pub(super) fn growth(g: &Game, run: &str, seed: u32, month: i32, treaties: &Trea
         let m = ai.main_fleet[e];
         let main = combat.fleets.get(m.max(0) as usize).map_or([0; 6], |f| { let t = f.totals; [m, t.ships, t.attack, t.ground, t.capacity, t.ground_strength] });
         let wars = (1..19).filter(|&u| u != e && relations[e][u].level == 1).count();
-        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} built {} lost {} battles {} capacity {capacity:?} main {main:?} wars {wars} diplomacy {:?} research {} labs {labs:?} open {open:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.stats.built[i], g.stats.lost[i], r.battles, treaties.count[e], g.state.mem.i32(va::RESEARCHING + 4 * e as u32));
+        println!("growth {run} seed {seed} month {month} empire {e} planets {} population {} techs {} credits {} ships {} built {} lost {} battles {} capacity {capacity:?} main {main:?} wars {wars} taken {} diplomacy {:?} research {} labs {labs:?} open {open:?}", r.planets, r.population, r.techs, r.credits, r.ships, g.stats.built[i], g.stats.lost[i], r.battles, treaties.taken[e], treaties.count[e], g.state.mem.i32(va::RESEARCHING + 4 * e as u32));
     }
 }
 
@@ -658,10 +678,10 @@ pub fn parse_runs(spec: &str, scenarios: impl Fn() -> Vec<String>) -> Result<Vec
     Ok(runs)
 }
 
-/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]`: every run's report; an
+/// `ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced] [--aggression low|normal|high]`: every run's report; an
 /// error when one failed.
 pub fn main(args: &[String]) -> Result<(), String> {
-    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]")?;
+    let spec = args.first().ok_or("usage: --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced] [--aggression low|normal|high]")?;
     let mut limits = Limits::default();
     let mut seeds = vec![limits.seed];
     let mut it = args[1..].iter();
@@ -677,6 +697,7 @@ pub fn main(args: &[String]) -> Result<(), String> {
             "--replay" => limits.replay = n(v)? != 0,
             "--growth" => limits.growth = n(v)? as i32,
             "--ai" => limits.enhanced_ai = match v.as_str() { "classic" => false, "enhanced" => true, _ => return Err(format!("--ai {v}: classic or enhanced")) },
+            "--aggression" => limits.aggression = match v.as_str() { "low" => Aggressiveness::Low, "normal" => Aggressiveness::Normal, "high" => Aggressiveness::High, _ => return Err(format!("--aggression {v}: low, normal or high")) },
             "--human" => limits.autopilot = match v.as_str() { "ai" => true, "idle" => false, _ => return Err(format!("--human {v}: ai or idle")) },
             _ => return Err(format!("{a}: unknown")),
         }

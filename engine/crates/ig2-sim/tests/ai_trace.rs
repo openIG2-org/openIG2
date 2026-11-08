@@ -446,6 +446,7 @@ fn decode(s: &Regions, g: &Value) -> Decoded {
         ai_off: gi("aioff") != 0,
         design_debug: gi("ddebug") != 0,
         enhanced: false,
+        aggression: Default::default(),
     };
     let econ = EconomyContext {
         multiplayer: sctx.multiplayer,

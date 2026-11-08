@@ -109,7 +109,7 @@ frame or an input script's frames without a window; it is used by the capture co
 `engine/crates/ig2-client/src/main.rs`.
 
 ## Play-through harness
-`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced]` plays whole games
+`ig2-client --playthrough <runs> [--ticks N] [--seed S[,S…]] [--save-every M] [--stall M] [--human ai|idle] [--compare-every N] [--replay 0|1] [--growth M] [--ai classic|enhanced] [--aggression low|normal|high]` plays whole games
 headless at
 the fastest speed on the player's path (`World::tick`, the commands a screen sends), with the sim's AI playing the
 human's empire (`Game::autopilot`). Runs: `campaign:C[:D[:L]]` (campaign 1..=3, difficulty 1/2/4, storyline 1/2; 0 or
@@ -136,11 +136,11 @@ difficulty 1 every campaign has seeds that end won (`video Won`: the race's win 
 `misc/end_campaign_win.bik`), and campaign 2 storyline 1 also ends in story 863's own end (`Over(Ended)`,
 `politikus_win.bik`).
 `--growth M` prints a `growth` line per living empire every M game months (planets, population, techs, credits,
-ships, ships built and lost, battles won, the ship and vehicle capacity and garrisons, the main fleet's slot, ships,
+ships, ships built and lost, battles won, planets taken from another empire (`taken`), the ship and vehicle capacity and garrisons, the main fleet's slot, ships,
 attack, vehicles, room and ground strength, the wars, the running research, the lab buildings and the open techs with
 the labs they need): the curves the
 computer empires' rulesets are compared by (`re/rules/ai-empire.md` §15). `--ai enhanced` plays the computer empires
-with the enhanced ruleset (ADR 0045; in `mp` runs the room's option), `classic` (the default) with the original's.
+with the enhanced ruleset (ADR 0045; in `mp` runs the room's option), `classic` (the default) with the original's. `--aggression` sets every computer empire's custom-game aggressiveness (default `normal` = the original).
 `--human idle` keeps the human human and idle instead: every battle it is in runs in real time (the harness lets
 the units fight it out) and the diplomacy questions reach its inbox. The exit code is 1 when a run failed (a panic,
 a stuck clock, a broken invariant; a stall is reported, not failed). `IG2_PLAYTHROUGH_DEBUG=1` prints each inbox visit, the story planets (id:planet/owner/view) and 840's v(8400).

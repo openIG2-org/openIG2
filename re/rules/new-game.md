@@ -359,7 +359,8 @@ that value; a value equal to the original's changes nothing and draws nothing.
 | computer level (ADR 0033) | 0, the game's `Nehezseg` | `SaveState::ai_difficulty[e]` before step 13 (as the MP room's); step 24's hard bonus (+1 tech level) tests the empire's own level |
 | start planets | `InitScirmishBolygok`'s count (§3: 1 / by planets / `HanyBolygo / 15` / `HanyBolygo / (HanyGepiJatekos + 3)`) | step 25: the empire's count; the colonies past the original's count draw on streams 15 and 16 in place of 1 and 5 (both seeded by `RandomInit`, used by no exe call site, `time-and-rng.md` §3.1), so the later empires' colonies stay the seed's; a colony with no free planet left is not made |
 | start position | random (`Generate_StarData` step 3) | a star p: after step 3's picks (all their draws as the original's) the empire's `BirodalomBolygo` becomes p and the empire that had p, if any, takes the empire's own pick; then steps 4 and 7 as the exe |
-| aggressiveness, start relations | normal, neutral | stored only (part 4: ADR 0085 §3) |
+| start relations | neutral (`INIT_MI`'s reset: level 3, the words 5000 / 0) | §13.3 |
+| aggressiveness | normal | §13.3 |
 
 The `CustomGame` is kept in `SaveState::custom` (our save, snapshot format 16) and travels in the multiplayer start
 data (`GalaxyStart::custom`: every machine builds the same start with `start_custom` and the room's humans).
@@ -375,6 +376,37 @@ the galaxy's +x to the left and +y up as on the starmap's minimap (`minimap_targ
 `CustomEmpire::start` (any planet: step 3 has no filter either); "Random" sets it back to `None`. The choice is kept
 with the other settings (`CustomGame` in our settings file: `planets,seed,start`, 0 = random) and dropped when a new
 preview's planet positions differ from the last one's (another seed or planet count: planet p is another star).
+
+### 13.3 Start relations and aggressiveness (ours, ADR 0085 §3): ported
+**Start relations.** `INIT_MI` (exe 0x5ade70, `ai-empire.md` §13) resets every `Viszony[a][b]` (`diplomacy.md` §2) to
+the neutral record (level 3) and then runs `FRISSIT_Viszony` once. A custom game's relations are written between the
+two, for each pair a < b of 1..=8 with both empires in the game, with the two effects the original's own story uses:
+- **hostile** (either side's choice towards the other): `st_SetHaborusViszony` (exe 0x602820): both levels 1 (war)
+  and, for each side x that chose hostile towards y, `Viszony[x][y].v2 −= 10000` (i16; `FRISSIT_Viszony`'s pass 2
+  clamps it to 0, so x's overall opinion of y starts near 0 and climbs back 1 a day, `diplomacy.md` §3.3). A war needs
+  one side, as a declaration does; the empires need not have met (as the story's call).
+- **friendly** (both sides' choice): `st_SetNonagressionViszony` (exe 0x602860): `BirodalomBeketKot` (exe 0x53b280,
+  `diplomacy.md` §8.2: no attack orders exist yet; both empires' `BirodalomMiotaIsmeri` rows at least 600), then both
+  levels 4 (non-aggression pact).
+- one friendly and one neutral side, or both neutral: the original's record, nothing written.
+
+The pass of `FRISSIT_Viszony` that follows recomputes the opinions (`v17`, level 1 caps it at 3000, level 4 floors it
+at 4000) as for any war or pact. With every pair neutral the start is the original's byte for byte.
+
+**Aggressiveness** (per computer empire e; normal = the original's numbers, so every recorded game is unchanged and
+the draws are the same in count and stream):
+
+| Where | Original (normal) | low | high |
+|---|---|---|---|
+| `FRISSIT_MI_FLOTTAK` (exe 0x50b1c0) §11.3, the war declaration: `rndlog(10, 1, n) == 1` (both draws) | n = 720 | 1440 | 360 |
+| `MI_DIPLOMACY` (exe 0x4c7060) step i, the declaration after a bad exchange: `rnd(1, 100) < n` | n = 51 | 26 | 76 |
+| §11.4 the main fleet's planet targets: `def = (int)((f32)(ErodEro[p] + p.+0x5c) · g)`, `g` = 1.2 (`Nehezseg > 2`) or 1.0 | `g` | `g · 1.5` | `g · 0.75` |
+
+`def` feeds every strength test of the planet loop (`def ≤ M.+0x68`, `def · 1.5`, `def · 2.0`, the score's `def · 5`),
+so a low empire invades only with 1.5 times the ground strength the original wants, a high one with three quarters.
+`MI_KitAkarTamadni` (whom to attack) and the fleet targets are unchanged. Port: `Aggressiveness::{war_days,
+war_chance, defence}` (`game/new_game.rs`), read through `AiContext::aggression` and `DiplomacyContext::aggression`
+(`SaveState::aggression`, from `SaveState::custom`).
 
 ## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported
 Exe decompile (`_local/decomp/design/exe/004b19d0_DesignPoenosanElnevez.c`): `n = special + (e·100 + hull)·10`;

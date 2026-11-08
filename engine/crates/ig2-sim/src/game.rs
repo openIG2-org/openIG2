@@ -1291,6 +1291,7 @@ impl<'r> Game<'r> {
                 let ai: [bool; EMPIRES] = m.flags(va::AI_EMPIRE);
                 std::array::from_fn(|e| self.enhanced_ai && ai[e] && !g.human[e])
             },
+            aggression: self.state.aggression(),
         }
     }
 
@@ -1647,6 +1648,7 @@ impl<'r> Game<'r> {
             ai_off: m.i32(va::AI_OFF) != 0,
             design_debug: m.i32(va::DESIGN_DEBUG) != 0,
             enhanced: self.enhanced_ai,
+            aggression: self.state.aggression(),
         };
         let sctx = self.spy_context(&g);
         let econ = self.economy_context(&g);

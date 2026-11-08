@@ -7,7 +7,7 @@ mod common;
 
 use ig2_formats::text::Lang;
 use ig2_formats::Install;
-use ig2_sim::game::new_game::{CustomGame, NewSkirmish, Side, StartData};
+use ig2_sim::game::new_game::{Aggressiveness, CustomGame, NewSkirmish, Side, StartData, StartRelation};
 use ig2_sim::game::{Game, GameRules};
 use ig2_sim::save::{va, PLANET_SIZE, TECH_SIZE, TECHS};
 
@@ -157,5 +157,50 @@ fn a_chosen_start_planet() {
         let g = start(&c, data, rules);
         assert_eq!((home(&g, 1), home(&g, 3)), (free, h3));
         assert_eq!(planet(&g, free)[0x20], 1);
+    });
+}
+
+/// `Viszony[a][b]`: (level, story attitude v2, overall opinion v17).
+fn relation(g: &Game, a: u32, b: u32) -> (u8, i16, i16) {
+    let at = va::RELATIONS + 0x2d2 * a + 0x26 * b;
+    (g.state.mem.u8(at + 0x25), g.state.mem.i16(at + 4), g.state.mem.i16(at + 0x22))
+}
+
+#[test]
+fn start_relations() {
+    with(|data, rules| {
+        let neutral = start(&chosen(), data, rules);
+        let mut c = chosen();
+        c.empires[0].relations[2] = StartRelation::Hostile; // one side is enough for a war
+        c.empires[1].relations[3] = StartRelation::Friendly; // both sides for a pact
+        c.empires[2].relations[2] = StartRelation::Friendly;
+        c.empires[0].relations[3] = StartRelation::Friendly; // 3 stays neutral towards 1
+        let g = start(&c, data, rules);
+        let (war, back) = (relation(&g, 1, 2), relation(&g, 2, 1));
+        assert_eq!((war.0, back.0), (1, 1), "st_SetHaborusViszony: war both ways");
+        assert!((0..10).contains(&war.1), "the hostile side's attitude −10000, clamped to 0, then 1 a day back");
+        assert_eq!(back.1, relation(&neutral, 2, 1).1, "the neutral side's attitude unchanged");
+        assert!(war.2 <= 3000 && back.2 <= 3000, "level 1 caps the opinion");
+        assert_eq!((relation(&g, 2, 3).0, relation(&g, 3, 2).0), (4, 4), "st_SetNonagressionViszony");
+        assert!(relation(&g, 2, 3).2 >= 4000, "level 4 floors the opinion");
+        // One friendly side: the original's record (the opinion moves with the shared friends, diplomacy.md §3.3).
+        let lv = |g: &Game, a, b| (relation(g, a, b).0, relation(g, a, b).1);
+        assert_eq!((lv(&g, 1, 3), lv(&g, 3, 1)), (lv(&neutral, 1, 3), lv(&neutral, 3, 1)));
+    });
+}
+
+#[test]
+fn aggressiveness_normal_is_the_original() {
+    let n = Aggressiveness::Normal;
+    assert_eq!((n.war_days(), n.war_chance(), n.defence()), (720, 51, 1.0), "ai-empire.md §11.3, diplomacy.md §4 step i, §11.4");
+    let (lo, hi) = (Aggressiveness::Low, Aggressiveness::High);
+    assert!(lo.war_days() > 720 && hi.war_days() < 720 && lo.war_chance() < 51 && hi.war_chance() > 51);
+    assert!(lo.defence() > 1.0 && hi.defence() < 1.0);
+    with(|data, rules| {
+        let mut c = chosen();
+        c.empires[2].aggressiveness = Aggressiveness::High;
+        let g = start(&c, data, rules);
+        let a = g.state.aggression();
+        assert_eq!((a[1], a[2], a[3], a[9]), (n, n, Aggressiveness::High, n), "the empire's own, the rest the original's");
     });
 }

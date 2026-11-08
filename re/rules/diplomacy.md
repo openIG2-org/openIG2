@@ -188,6 +188,7 @@ Runs only if AI isn't off and (diplomacy is on or MP). `P = ProgramPlayers`.
 | k | always | one rnd(1,100), unused |
 
 (With S false the exe jumps from a/b/c/d straight to f and from i to k: the same draws as the ELF.)
+A custom game's aggressiveness scales step i's war chance, and its start relations set the first levels: new-game.md §13.3.
 If `cat ≥ 0`: `last[a·9+b] = 0`, then `ElkuldUzenetMI(a, b, false, cat, sub, third)` (§5).
 
 `ElkuldHaduzenet(a, b)`: race 5 on either side, or diplomacy off in SP → `DiplomaciaMegtamadas(a, b, true, 0)`;

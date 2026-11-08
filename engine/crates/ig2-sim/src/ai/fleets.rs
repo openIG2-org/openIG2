@@ -534,7 +534,8 @@ impl AiState {
             if t > 0 && w.known_since[e][t] < 0 {
                 let diff = w.spy.ctx.difficulty(e);
                 // Enhanced (ADR 0045): a clearly stronger empire doesn't wait for the 1-in-720 day (the draws stay).
-                let roll = w.r(1, 720) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, 720) == 1);
+                let n = w.ctx.aggression[e].war_days();
+                let roll = w.r(1, n) == 1 || w.planet_count[e] == 0 || (diff == 4 && w.human(t) && w.r(1, n) == 1);
                 // Enhanced: a cease-fire or a pact is kept (part 3).
                 if (roll && !(w.ctx.enhanced && enhanced::pact(w, e, t))) || (w.ctx.enhanced && enhanced::war_ready(w, e, t, &self.main_fleet)) {
                     hooks.declare_war(w, e, t);
@@ -598,7 +599,7 @@ impl AiState {
                 }
             }
             let fleet_kind = kind;
-            let g = if w.spy.ctx.difficulty(e) > 2 { 1.2f32 } else { 1.0 };
+            let g = (if w.spy.ctx.difficulty(e) > 2 { 1.2f32 } else { 1.0 }) * w.ctx.aggression[e].defence();
             let (cx, cy) = (self.centre_x[e] as f32, self.centre_y[e] as f32);
             let no_planets = w.planet_count[e] == 0;
             let mut best = 1e10f32;

@@ -11,6 +11,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - New game: a Custom game page (modern interface) sets the galaxy's planet count and seed and, per empire, the race, name, money, technology, start planets and, for computers, the level, aggressiveness and start relation.
 - The game is now `openIG2.exe` (`./openIG2` on Linux and macOS) and the install check `openIG2-check.exe`, which has its own icon.
 - Groundwork for the Custom game (a generated galaxy with per-empire race, money, technology and start planets): saves and multiplayer start data can now hold its settings; the page itself follows. Saves from earlier versions still load.
+- Custom game settings: each computer empire's aggressiveness (low, normal, high) changes how readily it declares war and how much ground strength it wants before invading, and each empire's start relation towards another (hostile, neutral, friendly) starts the game at war or with a non-aggression pact; normal is the original's behaviour.
 - Install: the Steam release of Imperium Galactica II now works as well as the GOG one, and is found automatically in your Steam libraries.
 - Multiplayer, Internet: without a relay server set, typing still goes into the join field instead of jumping to the relay field.
 - Modern interface: one simple line-icon look everywhere (the top bar, the speed and camera keys, the round buttons, the radial menu, the settings): Lucide's icons, with a tank, a colony dome and a side view drawn to match, each the same size, centred and drawn without seams.

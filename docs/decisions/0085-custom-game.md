@@ -1,6 +1,6 @@
 # ADR 0085: Custom game, a generated galaxy with every start setting
 
-Date: 2026-11-08. Status: accepted, parts 1 (sim), 2 (the modern page: `ig2-client::custom_game`) and 3 (the map preview, the chosen start star) done. Row 546 of `docs/ENHANCEMENTS.md`. Builds on the skirmish start
+Date: 2026-11-08. Status: accepted, parts 1 (sim), 2 (the modern page: `ig2-client::custom_game`), 3 (the map preview, the chosen start star) and 4 (aggressiveness, start relations) done. Row 546 of `docs/ENHANCEMENTS.md`. Builds on the skirmish start
 (`re/rules/new-game.md` §13.1, `Game::start_skirmish` / `NewSkirmish`), the quick game (ADR 0039), the computer levels
 (ADR 0033) and the enhanced AI (ADR 0045).
 
@@ -52,3 +52,24 @@ friendly those opponents are, how large the galaxy is and where they start.
   make games the original never had; the page shows them as they are, without a warning.
 - No exe capture exists for the new values; the tests hold them, and the original's values keep their exe-recorded
   starts.
+
+## Measured (part 4)
+The rules are `re/rules/new-game.md` §13.3: a hostile side starts the pair at war (`st_SetHaborusViszony`), two
+friendly sides start a non-aggression pact (`st_SetNonagressionViszony`); aggressiveness low / high halves / doubles
+the AI's daily war declaration odds (1 in 1440 / 360 for the original's 720; `MI_DIPLOMACY`'s 51 % becomes 26 / 76 %)
+and multiplies a planet's defence in the main fleet's invasion tests by 1.5 / 0.75. Normal is the original's numbers:
+the recorded replays stay byte-exact.
+
+`ig2-client --playthrough skirmish:1:3 --seed 1..8 --ticks 13000 --growth 12 --aggression low|normal|high` (classic
+AI, the human on autopilot at normal, three computer opponents, about 11 years); per game at the last month:
+
+| Aggressiveness | Wars started | Planets the computers took from other empires | Planets per computer | Computers alive |
+|---|---|---|---|---|
+| low | 0.94 | 3.50 | 7.06 | 2.75 |
+| normal | 1.19 | 5.50 | 6.94 | 2.75 |
+| high | 1.06 | 6.75 | 8.02 | 2.62 |
+
+The invasions scale as intended (low takes about two thirds of normal's planets, high a fifth more). The war count
+barely moves: the classic AI fights one war at a time (`MI_KitAkarTamadni` picks nobody while `e` is at war) and
+waits for a target it has known long enough, so about one war starts in nearly every game whatever the odds (7, 8 and 8 of the 8 games); what
+aggressiveness changes is how hard that war is fought. A dead empire's wars drop out of the count (the halves).
