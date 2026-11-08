@@ -14,6 +14,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
 - Modding: a step-by-step "Your first mod" guide (`docs/modding/first-mod.md`) makes, checks, switches on and shares a small mod.
+- Modding: `openIG2-check` in the release writes your install's rule values (`--dump-rules`) and text lines (`--dump-texts`, in the form of a mod's `texts.<lang>.toml`) for your own use, and `--package FOLDER` checks a mod and makes its zip, checksum and index entry. The dumps are the game's data: never share them.
 - Multiplayer room: every galaxy setting, the Custom game switch, its seed and the Empires button included, fits on the screen without scrolling.
 - Multiplayer: the host can switch a room to a Custom game (planets, seed and, per seat, money, technology, start planets, aggressiveness and start relation); every player sees the settings and the game starts with them. With the enhanced ruleset the classic skirmish panel has an "Advanced" label that opens the Custom game page.
 - New game, Custom game: a map of the galaxy under the empires table shows every star and the empires' start planets; click a star to start there, or press "Random start".

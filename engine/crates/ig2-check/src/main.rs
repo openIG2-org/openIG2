@@ -11,14 +11,18 @@
 //! Modder tools (ADR 0086 §5): `--dump-rules FILE` writes the install's rule tables (RON, the ids and values a
 //! `rules.toml` names) and `--dump-texts FILE` every patchable text file's keys and lines (a `texts.<lang>.toml`),
 //! instead of the checks. Both hold the game's data: for the player's own use, never to be shared.
+//! `--package FOLDER` checks a mod folder and writes its zip, the zip's SHA-256 and its mod index entry (ADR 0086
+//! §1.2, [`package`]); without an install (none given or found) it runs the format checks only.
 
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use ig2_formats::text::{self, Lang};
 use ig2_formats::Install;
+
+mod package;
 
 /// One kind of file and how its files fared.
 struct Group {
@@ -396,6 +400,9 @@ fn videos(inst: &Install, g: &mut Group, quick: bool) {
 const HELP: &str = "\
 openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...
     loads every file of your Imperium Galactica II install and its mods and reports what fails
+openIG2-check [INSTALL_DIR] --package FOLDER
+    checks the mod in FOLDER and writes <id>-<version>.zip, its .sha256 and <id>-<version>.toml (the mod index
+    entry; fill in its download URL) here; without an install, only the checks that need none
 openIG2-check [INSTALL_DIR] [--dump-rules FILE] [--dump-texts FILE]
     modder tools: writes your own install's rule ids and values (RON) or every text file's keys and lines (in the
     form of a mod's texts.<lang>.toml) to FILE. The files hold the game's data: they are for your own use and must
@@ -421,6 +428,13 @@ fn write_texts(inst: &Install, out: &std::path::Path) -> Result<String, String> 
     Ok(format!("wrote {}: {} text files ({name})", out.display(), files.len()))
 }
 
+/// The install as the client finds it (`ig2_rules::install`), or where it looked.
+fn found_install() -> Result<PathBuf, Vec<(ig2_rules::install::Candidate, ig2_rules::install::Verdict)>> {
+    let file = ig2_formats::options::Options::load();
+    let remembered = file.get(ig2_rules::install::SETTINGS_KEY).filter(|s| !s.is_empty()).map(PathBuf::from);
+    ig2_rules::install::find(remembered.as_deref()).map(|c| c.path)
+}
+
 /// `OPENIG2_VERSION` at build time (the release's MAJOR.MINOR.N), else the repository's `VERSION` with `-dev`.
 fn version() -> String {
     option_env!("OPENIG2_VERSION").map_or_else(|| format!("{}-dev", include_str!("../../../../VERSION").trim()), str::to_owned)
@@ -430,18 +444,22 @@ fn main() {
     let mut root = None;
     let mut quick = false;
     let mut given: Option<Vec<String>> = None;
-    let (mut dump_rules, mut dump_texts) = (None, None);
+    let (mut dump_rules, mut dump_texts, mut pack) = (None, None, None);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--quick" => quick = true,
             "--mod" => given.get_or_insert_with(Vec::new).extend(args.next()),
-            "--dump-rules" | "--dump-texts" => {
+            "--dump-rules" | "--dump-texts" | "--package" => {
                 let Some(file) = args.next() else {
-                    eprintln!("openIG2-check: {a} needs a file name");
+                    eprintln!("openIG2-check: {a} needs a file or folder name");
                     std::process::exit(2);
                 };
-                *if a == "--dump-rules" { &mut dump_rules } else { &mut dump_texts } = Some(PathBuf::from(file));
+                *match a.as_str() {
+                    "--dump-rules" => &mut dump_rules,
+                    "--dump-texts" => &mut dump_texts,
+                    _ => &mut pack,
+                } = Some(PathBuf::from(file));
             }
             "--help" | "-h" => {
                 println!("{HELP}");
@@ -450,22 +468,39 @@ fn main() {
             _ => root = Some(PathBuf::from(a)),
         }
     }
-    let root = match root {
-        Some(r) => r,
-        None => {
-            let file = ig2_formats::options::Options::load();
-            let remembered = file.get(ig2_rules::install::SETTINGS_KEY).filter(|s| !s.is_empty()).map(PathBuf::from);
-            match ig2_rules::install::find(remembered.as_deref()) {
-                Ok(c) => c.path,
-                Err(tried) => {
-                    eprintln!("openIG2-check: no Imperium Galactica II install found; give its folder as the argument. Looked in:");
-                    for (c, v) in tried.iter().filter(|(_, v)| *v != ig2_rules::install::Verdict::Missing) {
-                        eprintln!("  {} ({}): {}", c.path.display(), c.source.label(), v.describe());
-                    }
-                    std::process::exit(2);
-                }
+    if let Some(folder) = pack {
+        let install = root.or_else(|| found_install().ok()).filter(|r| matches!(ig2_rules::install::check(r), ig2_rules::install::Verdict::Ok | ig2_rules::install::Verdict::WrongBuild(_)));
+        println!("openIG2-check {}: packaging {}", version(), folder.display());
+        std::panic::set_hook(Box::new(|_| {}));
+        match catch_unwind(AssertUnwindSafe(|| package::package(&folder, install.as_deref(), Path::new(".")))) {
+            Ok(Ok(p)) => {
+                p.notes.iter().for_each(|n| println!("    {n}"));
+                println!("wrote {} ({} bytes, SHA-256 {}), {}.sha256 and {}", p.zip.display(), p.size, p.sha256, p.zip.display(), p.entry.display());
+            }
+            Ok(Err(e)) => {
+                eprintln!("openIG2-check: {} can't be packaged:", folder.display());
+                e.lines().for_each(|l| eprintln!("    {l}"));
+                std::process::exit(1);
+            }
+            Err(_) => {
+                eprintln!("openIG2-check: a loader panicked while checking {}", folder.display());
+                std::process::exit(1);
             }
         }
+        return;
+    }
+    let root = match root {
+        Some(r) => r,
+        None => match found_install() {
+            Ok(r) => r,
+            Err(tried) => {
+                eprintln!("openIG2-check: no Imperium Galactica II install found; give its folder as the argument. Looked in:");
+                for (c, v) in tried.iter().filter(|(_, v)| *v != ig2_rules::install::Verdict::Missing) {
+                    eprintln!("  {} ({}): {}", c.path.display(), c.source.label(), v.describe());
+                }
+                std::process::exit(2);
+            }
+        },
     };
     println!("openIG2-check {}: {}", version(), root.display());
     let verdict = ig2_rules::install::check(&root);

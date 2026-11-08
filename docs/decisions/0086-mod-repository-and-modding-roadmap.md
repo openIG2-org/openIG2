@@ -146,7 +146,7 @@ repository's docs page). Planned walk-throughs, each a page in `docs/modding/` w
 
 ### 5. Modder tools in the release
 
-`openIG2-check --dump-rules <file>` (today `ig2-rules-dump`, only in a source build) and `--dump-texts <file>` (every
+`openIG2-check --dump-rules <file>` (the same as `ig2-rules-dump` of a source build) and `--dump-texts <file>` (every
 text file's keys and lines) write the player's own install's values and keys for their own use; the files are never
 shared (they hold the game's data), which the tutorials say.
 

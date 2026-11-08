@@ -2198,6 +2198,8 @@ dependencies = [
  "ig2-sim",
  "lewton",
  "openh264",
+ "sha2 0.11.0",
+ "toml_edit",
 ]
 
 [[package]]

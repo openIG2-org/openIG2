@@ -259,6 +259,9 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    ```
 3. Zip the folder (Windows: right click → Send to → Compressed folder; one top folder inside the zip is fine) and
    share the zip. Check it first: `openIG2-check --quick` lists the files your mod replaces or adds, and loads them.
+   `openIG2-check --package <folder>` checks the mod and writes `<id>-<version>.zip`, its SHA-256 and the mod index
+   entry (it needs `version`, `requires` and `license` in `mod.toml`; only TOML, PNG, text and the game's data
+   formats, no programs, scripts or archives, and no file copied from the install; fill in the entry's download URL).
 
 Where mods are read: the `mods` folder beside the executable and the one beside the settings files
 (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or `IG2_OPTIONS_DIR\mods`); a mod in the first wins over one of the same
