@@ -101,30 +101,271 @@ pub struct Mod {
     pub dir: PathBuf,
 }
 
-/// A mod's `mod.toml` (ADR 0068 §3): every key optional.
+/// A mod's `mod.toml` (ADR 0068 §3, version 2: ADR 0086 §2): every key optional, a version-1 file is a valid one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModInfo {
     pub name: Option<String>,
     pub author: Option<String>,
+    /// Semantic versioning by convention; any text is kept (old files), [`Version::parse`] reads its numbers.
     pub version: Option<String>,
     pub description: Option<String>,
     /// A PNG in the mod (its path there).
     pub picture: Option<String>,
-    /// The openIG2 version it was made for (MAJOR.MINOR).
+    /// The openIG2 version it was made for (MAJOR.MINOR): a hint only, [`ModInfo::requires`] is the rule.
     pub game: Option<String>,
+    /// The stable name other mods' `depends` and `conflicts` use: lower-case letters, digits, `-` and `_`.
+    pub id: Option<String>,
+    /// The openIG2 versions the mod loads on.
+    pub requires: Option<VersionReq>,
+    /// The mods it needs (id, their versions), in the file's order.
+    pub depends: Vec<(String, VersionReq)>,
+    /// The mods it can't load beside (ids).
+    pub conflicts: Vec<String>,
+    /// An SPDX licence expression.
+    pub license: Option<String>,
+    pub kind: ModKind,
+}
+
+/// What a mod changes (`kind` in `mod.toml`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ModKind {
+    /// Anything (the default).
+    #[default]
+    Full,
+    /// Looks only (`kind = "visual"`): its replaced and added files stay out of the multiplayer fingerprint, as a
+    /// `hires/` pack's do; its `rules.toml`, `stories.toml` and text patches still count.
+    Visual,
+}
+
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
 }
 
 impl ModInfo {
     pub fn parse(text: &str) -> std::result::Result<Self, String> {
         let doc: toml_edit::DocumentMut = text.parse().map_err(|e: toml_edit::TomlError| format!("{MOD_FILE}: {}", e.message()))?;
+        let quoted = |k: &str| format!("{MOD_FILE}: {k} must be a text in quotes");
         let key = |k: &str| -> std::result::Result<Option<String>, String> {
             match doc.get(k) {
                 None => Ok(None),
-                Some(v) => v.as_str().map(|s| Some(s.trim().to_owned())).ok_or_else(|| format!("{MOD_FILE}: {k} must be a text in quotes")),
+                Some(v) => v.as_str().map(|s| Some(s.trim().to_owned())).ok_or_else(|| quoted(k)),
             }
         };
-        Ok(Self { name: key("name")?, author: key("author")?, version: key("version")?, description: key("description")?, picture: key("picture")?, game: key("game")? })
+        let range = |k: &str, s: &str| VersionReq::parse(s).map_err(|e| format!("{MOD_FILE}: {k}: {e}"));
+        let id = key("id")?;
+        if let Some(id) = id.as_deref().filter(|id| !valid_id(id)) {
+            return Err(format!("{MOD_FILE}: id \"{id}\" may only have lower-case letters, digits, - and _"));
+        }
+        let requires = key("requires")?.map(|s| range("requires", &s)).transpose()?;
+        let mut depends = Vec::new();
+        if let Some(v) = doc.get("depends") {
+            let t = v.as_table_like().ok_or_else(|| format!("{MOD_FILE}: depends must be a table of mod = \"versions\""))?;
+            for (dep, v) in t.iter() {
+                let s = v.as_str().ok_or_else(|| quoted(&format!("depends.{dep}")))?;
+                depends.push((dep.to_owned(), range(&format!("depends.{dep}"), s)?));
+            }
+        }
+        let conflicts = match doc.get("conflicts") {
+            None => Vec::new(),
+            Some(v) => {
+                let a = v.as_array().ok_or_else(|| format!("{MOD_FILE}: conflicts must be a list of mod ids"))?;
+                a.iter().map(|v| v.as_str().map(|s| s.trim().to_owned()).ok_or_else(|| quoted("conflicts"))).collect::<std::result::Result<_, _>>()?
+            }
+        };
+        let kind = match key("kind")?.as_deref() {
+            None | Some("full") => ModKind::Full,
+            Some("visual") => ModKind::Visual,
+            Some(k) => return Err(format!("{MOD_FILE}: kind \"{k}\" isn't \"visual\" or \"full\"")),
+        };
+        Ok(Self {
+            name: key("name")?,
+            author: key("author")?,
+            version: key("version")?,
+            description: key("description")?,
+            picture: key("picture")?,
+            game: key("game")?,
+            id,
+            requires,
+            depends,
+            conflicts,
+            license: key("license")?,
+            kind,
+        })
     }
+
+    /// The mod's id: `id`, else the folder's or zip's name in lower case.
+    pub fn id_or(&self, folder: &str) -> String {
+        self.id.clone().unwrap_or_else(|| folder.to_lowercase())
+    }
+}
+
+/// A version's numbers (MAJOR.MINOR.PATCH, missing ones 0); a pre-release or build suffix (`-dev`, `+x`) is ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Version(pub [u64; 3]);
+
+impl Version {
+    /// `1`, `1.2`, `0.7.12`, `0.7-dev`; `None` for anything else.
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::parts(s).map(|(v, _)| v)
+    }
+
+    /// The version and how many numbers it gave.
+    fn parts(s: &str) -> Option<(Self, usize)> {
+        let s = s.trim().trim_start_matches('v');
+        let core = s.split(['-', '+']).next()?;
+        let mut v = [0; 3];
+        let mut n = 0;
+        for p in core.split('.') {
+            *v.get_mut(n)? = p.parse().ok()?;
+            n += 1;
+        }
+        Some((Self(v), n))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Eq,
+    Gt,
+    Ge,
+    Lt,
+    Le,
+    Caret,
+    Tilde,
+}
+
+/// A version range (ADR 0086 §2), Cargo's rules: comparators joined by commas, all of which must hold, each `>=`, `>`,
+/// `<=`, `<`, `=`, `^`, `~` or none (as `^`) before a version of one to three numbers; `*` or nothing is any version.
+/// A partial version compares on its numbers only: `<=1.2` takes 1.2.9, `=0.7` every 0.7.N.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionReq {
+    text: String,
+    parts: Vec<(Op, Version, usize)>,
+}
+
+impl VersionReq {
+    pub fn parse(s: &str) -> std::result::Result<Self, String> {
+        let text = s.trim().to_owned();
+        let mut parts = Vec::new();
+        if text != "*" && !text.is_empty() {
+            for c in text.split(',') {
+                let c = c.trim();
+                let (op, rest) = [(">=", Op::Ge), ("<=", Op::Le), (">", Op::Gt), ("<", Op::Lt), ("=", Op::Eq), ("^", Op::Caret), ("~", Op::Tilde)]
+                    .into_iter()
+                    .find_map(|(p, op)| c.strip_prefix(p).map(|r| (op, r)))
+                    .unwrap_or((Op::Caret, c));
+                let (v, n) = Version::parts(rest).filter(|&(_, n)| n > 0).ok_or_else(|| format!("\"{c}\" isn't a version like 1.2 or >=0.7"))?;
+                parts.push((op, v, n));
+            }
+        }
+        Ok(Self { text, parts })
+    }
+
+    pub fn matches(&self, v: Version) -> bool {
+        self.parts.iter().all(|&(op, want, n)| {
+            let cmp = v.0[..n].cmp(&want.0[..n]);
+            match op {
+                Op::Eq => cmp.is_eq(),
+                Op::Gt => cmp.is_gt(),
+                Op::Ge => cmp.is_ge(),
+                Op::Lt => cmp.is_lt(),
+                Op::Le => cmp.is_le(),
+                // ^: the numbers up to the first non-zero one stay; ~: MAJOR.MINOR (MAJOR alone if only it's given).
+                Op::Caret => {
+                    let k = want.0[..n].iter().position(|&x| x != 0).unwrap_or(n - 1);
+                    v >= want && v.0[..=k] == want.0[..=k]
+                }
+                Op::Tilde => v >= want && v.0[..n.min(2)] == want.0[..n.min(2)],
+            }
+        })
+    }
+
+    /// Whether the version text `v` is in the range (a text [`Version::parse`] can't read isn't).
+    pub fn matches_text(&self, v: &str) -> bool {
+        Version::parse(v).is_some_and(|v| self.matches(v))
+    }
+
+    /// Any version.
+    pub fn is_any(&self) -> bool {
+        self.parts.is_empty()
+    }
+}
+
+impl std::fmt::Display for VersionReq {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.is_any() { "*" } else { &self.text })
+    }
+}
+
+/// Why a mod can't load beside the others (ADR 0086 §2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// Its `requires` excludes the running openIG2.
+    Version(VersionReq),
+    /// A mod it depends on isn't enabled (the id, the versions it needs).
+    Missing(String, VersionReq),
+    /// A mod it depends on is enabled in a version outside the range (the id, the range, that mod's version).
+    DependencyVersion(String, VersionReq, Option<String>),
+    /// It and an enabled mod (that id) exclude each other.
+    Conflict(String),
+    /// An enabled mod above it has the same id.
+    Duplicate(String),
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Version(r) => write!(f, "needs openIG2 {r}"),
+            Self::Missing(id, r) if r.is_any() => write!(f, "needs the mod {id}"),
+            Self::Missing(id, r) => write!(f, "needs the mod {id} {r}"),
+            Self::DependencyVersion(id, r, v) => write!(f, "needs the mod {id} {r}, not {}", v.as_deref().unwrap_or("an unversioned one")),
+            Self::Conflict(id) => write!(f, "can't load beside {id}"),
+            Self::Duplicate(id) => write!(f, "another enabled mod is {id} too"),
+        }
+    }
+}
+
+/// Why each of `enabled` (id, `mod.toml`; highest priority first) can't load beside the others on openIG2 `version`;
+/// `None` loads. Only enabled mods count: a refused one is still another's dependency or conflict.
+pub fn refusals(enabled: &[(String, &ModInfo)], version: &str) -> Vec<Option<Refusal>> {
+    let running = Version::parse(version);
+    enabled
+        .iter()
+        .enumerate()
+        .map(|(i, (id, info))| {
+            if let Some(r) = info.requires.as_ref().filter(|r| !running.is_some_and(|v| r.matches(v))) {
+                return Some(Refusal::Version(r.clone()));
+            }
+            if enabled[..i].iter().any(|(o, _)| o == id) {
+                return Some(Refusal::Duplicate(id.clone()));
+            }
+            for (dep, range) in &info.depends {
+                match enabled.iter().find(|(o, _)| o == dep) {
+                    None => return Some(Refusal::Missing(dep.clone(), range.clone())),
+                    Some((_, d)) if !range.is_any() && !d.version.as_deref().is_some_and(|v| range.matches_text(v)) => {
+                        return Some(Refusal::DependencyVersion(dep.clone(), range.clone(), d.version.clone()));
+                    }
+                    Some(_) => {}
+                }
+            }
+            let other = enabled.iter().enumerate().find(|&(j, (o, oi))| j != i && o != id && (info.conflicts.contains(o) || oi.conflicts.contains(id)));
+            other.map(|(_, (o, _))| Refusal::Conflict(o.clone()))
+        })
+        .collect()
+}
+
+/// `mods` (id, `mod.toml`; highest priority first) reordered so each mod sits above the mods it depends on, the
+/// order kept otherwise (ADR 0086 §2): the indices, highest priority first. A cycle keeps the cycle's given order.
+pub fn dependency_order(mods: &[(String, &ModInfo)]) -> Vec<usize> {
+    let mut left: Vec<usize> = (0..mods.len()).collect();
+    let mut out = Vec::with_capacity(mods.len());
+    while !left.is_empty() {
+        // The first mod no remaining one needs; the first one in a cycle.
+        let needed = |&i: &usize| left.iter().any(|&j| j != i && mods[j].1.depends.iter().any(|(d, _)| *d == mods[i].0));
+        let at = left.iter().position(|i| !needed(i)).unwrap_or(0);
+        out.push(left.remove(at));
+    }
+    out
 }
 
 impl Mod {
@@ -704,6 +945,70 @@ mod tests {
         assert!(ModInfo::parse("name = ").is_err());
         let names: Vec<String> = vec!["b".into(), "a".into()];
         assert_eq!(Mod::parse_enabled(&Mod::enabled_text(&names)), names);
+    }
+
+    #[test]
+    fn mod_toml_2_fields() {
+        // A version-1 file: the new fields at their defaults, the folder's name as the id.
+        let old = ModInfo::parse("name = \"Old\"\nversion = \"1.2\"\ngame = \"0.7\"\n").unwrap();
+        assert_eq!((old.id_or("Old-Mod"), old.requires.is_none(), old.depends.len(), old.kind), ("old-mod".to_string(), true, 0, ModKind::Full));
+        let t = "id = \"zorg_race-2\"\nversion = \"1.4.0\"\nrequires = \">=0.7, <0.9\"\nlicense = \"CC-BY-4.0\"\nkind = \"visual\"\n\
+                 conflicts = [\"other\"]\n[depends]\nbase = \">=1.2\"\nany = \"*\"\n";
+        let i = ModInfo::parse(t).unwrap();
+        assert_eq!((i.id_or("x"), i.license.as_deref(), i.kind, i.conflicts.as_slice()), ("zorg_race-2".to_string(), Some("CC-BY-4.0"), ModKind::Visual, ["other".to_string()].as_slice()));
+        assert_eq!(i.depends.iter().map(|(d, r)| format!("{d} {r}")).collect::<Vec<_>>(), ["base >=1.2", "any *"]);
+        assert_eq!(i.requires.unwrap().to_string(), ">=0.7, <0.9");
+        // The inline table works as well; wrong shapes say which key.
+        assert_eq!(ModInfo::parse("depends = { \"a\" = \"1\" }").unwrap().depends[0].0, "a");
+        for (bad, key) in [("id = \"Big\"", "id"), ("requires = \"soon\"", "requires"), ("depends = [\"a\"]", "depends"), ("depends = { a = 1 }", "depends.a"), ("conflicts = \"a\"", "conflicts"), ("kind = \"sound\"", "kind")] {
+            assert!(ModInfo::parse(bad).unwrap_err().contains(key), "{bad}");
+        }
+    }
+
+    #[test]
+    fn version_ranges() {
+        let r = |s: &str| VersionReq::parse(s).unwrap();
+        let yes = |s: &str, v: &str| r(s).matches_text(v);
+        assert_eq!(Version::parse("0.7-dev"), Some(Version([0, 7, 0])));
+        assert_eq!((Version::parse("1.2.3.4"), Version::parse("x"), Version::parse("")), (None, None, None));
+        assert!(yes(">=0.7, <0.9", "0.7.12") && yes(">=0.7, <0.9", "0.8") && !yes(">=0.7, <0.9", "0.9.0") && !yes(">=0.7, <0.9", "0.6.99"));
+        // Partial versions compare on their numbers.
+        assert!(yes("<=1.2", "1.2.9") && !yes(">1.2", "1.2.9") && yes(">1.2", "1.3") && yes("=0.7", "0.7.40") && !yes("=0.7", "0.8"));
+        // Caret (also a bare version) and tilde, as Cargo.
+        assert!(yes("1.2", "1.9.0") && !yes("1.2", "2.0") && !yes("1.2", "1.1"));
+        assert!(yes("^0.7", "0.7.3") && !yes("^0.7", "0.8") && yes("^0.0.3", "0.0.3") && !yes("^0.0.3", "0.0.4"));
+        assert!(yes("~1.2.3", "1.2.9") && !yes("~1.2.3", "1.3") && yes("~1", "1.9"));
+        assert!(r("*").is_any() && r("").is_any() && yes("*", "0.1") && !yes("*", "beta"));
+        assert!(VersionReq::parse(">=").is_err() && VersionReq::parse("1.2, x").is_err());
+    }
+
+    #[test]
+    fn refusals_and_dependency_order() {
+        let info = |t: &str| ModInfo::parse(t).unwrap();
+        let (base, needs, newer, old_game, foe, plain) = (
+            info("version = \"1.3\""),
+            info("[depends]\nbase = \">=1.2\""),
+            info("[depends]\nbase = \">=2\""),
+            info("requires = \"<0.7\""),
+            info("conflicts = [\"plain\"]"),
+            info(""),
+        );
+        fn set<'a>(v: &[(&str, &'a ModInfo)]) -> Vec<(String, &'a ModInfo)> {
+            v.iter().map(|&(i, m)| (i.to_string(), m)).collect()
+        }
+        let why = |v: &[(&str, &ModInfo)]| refusals(&set(v), "0.7.5").into_iter().map(|r| r.map(|r| r.to_string())).collect::<Vec<_>>();
+        assert_eq!(why(&[("needs", &needs), ("base", &base), ("plain", &plain)]), [None, None, None]);
+        assert_eq!(why(&[("needs", &needs)]), [Some("needs the mod base >=1.2".to_string())]);
+        assert_eq!(why(&[("newer", &newer), ("base", &base)])[0].as_deref(), Some("needs the mod base >=2, not 1.3"));
+        assert_eq!(why(&[("old", &old_game)])[0].as_deref(), Some("needs openIG2 <0.7"));
+        // A conflict refuses both sides; the same id twice refuses the lower one.
+        assert_eq!(why(&[("plain", &plain), ("foe", &foe)]), [Some("can't load beside foe".to_string()), Some("can't load beside plain".to_string())]);
+        assert_eq!(why(&[("base", &base), ("base", &plain)])[1].as_deref(), Some("another enabled mod is base too"));
+        // Dependencies go under the mods that need them, the rest keeps its order.
+        let all = set(&[("base", &base), ("plain", &plain), ("needs", &needs), ("foe", &foe)]);
+        assert_eq!(dependency_order(&all), [1, 2, 0, 3]);
+        let cycle = (info("[depends]\nb = \"*\""), info("[depends]\na = \"*\""));
+        assert_eq!(dependency_order(&set(&[("a", &cycle.0), ("b", &cycle.1)])), [0, 1]);
     }
 
     /// Files a host hands over in memory (how a browser feeds its copy of the install).
