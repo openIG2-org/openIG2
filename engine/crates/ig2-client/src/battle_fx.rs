@@ -87,13 +87,20 @@ pub struct Layers {
     down: V3,
     /// Lives are given at 20 ticks a second and scaled by this.
     pace: f32,
+    /// What the light (all but smoke) is scaled by: 1 in space, less on the ground war's bright terrain.
+    gain: f32,
     seed: u32,
 }
 
 impl Layers {
     /// `down`: the unit vector gravity pulls along (zero in space); `hz`: the ticks a second [`Layers::step`] runs at.
     pub fn new(down: V3, hz: f32) -> Self {
-        Self { bits: Vec::new(), columns: Vec::new(), down, pace: hz / 20.0, seed: 0x9e37_79b9 }
+        Self { bits: Vec::new(), columns: Vec::new(), down, pace: hz / 20.0, gain: 1.0, seed: 0x9e37_79b9 }
+    }
+
+    /// The same layers with their light scaled by `gain`.
+    pub fn dimmed(self, gain: f32) -> Self {
+        Self { gain, ..self }
     }
 
     /// xorshift32 in 0..1 (our own stream: the classic effects' draws are untouched).
@@ -131,6 +138,7 @@ impl Layers {
         // Per-tick motion given at 20 Hz: a faster clock moves less a tick.
         let (vel, fall) = (vel.map(|v| v / self.pace), fall / (self.pace * self.pace));
         let drag = drag.powf(1.0 / self.pace);
+        let rgb = if sprite == Sprite::Smoke { rgb } else { rgb.map(|c| c * self.gain) };
         self.bits.push(Bit { sprite, pos, vel, drag, fall, age: 0, life, size, rgb });
     }
 
@@ -273,6 +281,18 @@ mod tests {
         }
         l.step();
         assert_eq!(l.bits.len(), CAP);
+    }
+
+    #[test]
+    fn dimmed_layers_scale_the_light_not_the_smoke() {
+        let (mut full, mut dim) = (Layers::new([0.0; 3], 20.0), Layers::new([0.0; 3], 20.0).dimmed(0.5));
+        full.blast([0.0; 3], 10.0);
+        dim.blast([0.0; 3], 10.0);
+        for (f, d) in full.bits.iter().zip(&dim.bits) {
+            let k = if f.sprite == Sprite::Smoke { 1.0 } else { 0.5 };
+            assert_eq!(d.rgb, f.rgb.map(|c| c * k));
+            assert_eq!((d.size, d.life), (f.size, f.life));
+        }
     }
 
     #[test]

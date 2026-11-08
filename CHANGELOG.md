@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
 - The game is now `openIG2.exe` (`./openIG2` on Linux and macOS) and the install check `openIG2-check.exe`, which has its own icon.
 - Groundwork for the Custom game (a generated galaxy with per-empire race, money, technology and start planets): saves and multiplayer start data can now hold its settings; the page itself follows. Saves from earlier versions still load.

@@ -11,6 +11,8 @@ type V3 = [f32; 3];
 
 /// A flash lives 25 frames of `robbanas.bmp`'s 5 × 5 sheet (`loadanimtexture("robbanas.bmp", 0x19)`).
 pub const FLASH_FRAMES: i32 = 25;
+/// The enhanced layers' light in the ground war (ADR 0057): dimmer than in space so the units stay readable.
+const GROUND_GAIN: f32 = 0.6;
 
 /// A particle of owner 0 (`ParticleOwner::AddParticle` exe 0x45d270): velocity, position (height, x, y), colour,
 /// fade `T`, size and type.
@@ -132,7 +134,7 @@ impl WarFx {
     pub fn event(&mut self, e: &GroundEvent, counter: f32) {
         if let Some(x) = self.layers() {
             match *e {
-                GroundEvent::Flash { at, size } => x.blast(at.map(|v| v as f32), size as f32 * 4.0),
+                GroundEvent::Flash { at, size } => x.blast(at.map(|v| v as f32), size as f32 * 2.0),
                 GroundEvent::HitFlash { to, size, .. } => x.hit(to, size as f32 * 1.5),
                 _ => {}
             }
@@ -171,7 +173,7 @@ impl WarFx {
     pub fn layers(&mut self) -> Option<&mut crate::battle_fx::Layers> {
         if crate::battle_fx::enhanced() != self.extra.is_some() {
             // The ground war's up is −height.
-            self.extra = crate::battle_fx::enhanced().then(|| crate::battle_fx::Layers::new([1.0, 0.0, 0.0], 20.0));
+            self.extra = crate::battle_fx::enhanced().then(|| crate::battle_fx::Layers::new([1.0, 0.0, 0.0], 20.0).dimmed(GROUND_GAIN));
         }
         self.extra.as_mut()
     }

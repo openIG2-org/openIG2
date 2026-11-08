@@ -45,3 +45,8 @@ install's own textures or from pictures the client draws itself.
   options on they glow; neither depends on the other.
 - On snowy planets the added glows saturate against the white ground and show little; the smoke still shows.
 - Shield hits on the ground: the ground war has no shields, so only the space battle shows them.
+
+## Amendment (2026-11-08)
+The ground war's blast radius is the flash size ×2 (it was ×4) and its enhanced light (glows, rings, sparks,
+embers; not the smoke) is drawn at a gain of 0.6, so the units on the ground stay readable beside a blast (player
+report). Hits (×1.5) and the space battle are unchanged.
