@@ -22,11 +22,12 @@ name = "My first mod"
 author = "Your name"
 version = "1.0"
 description = "A welcome line and a gift of 5000 credits on day 2."
-game = "0.7"
+requires = ">=0.7"
 ```
 
-Every line is optional; the Mods page shows them. `game` is the openIG2 version the mod was made for: the page warns
-when it differs from the one running.
+Every line is optional; the Mods page shows them. `requires` says which openIG2 versions the mod works with (`">=0.7"`
+means 0.7 or newer); the page won't load it on a version outside that range and tells you why. Older mods use `game =
+"0.7"` instead, which is still read but only shown as a hint.
 
 ## 3. Add a story: `stories.toml`
 

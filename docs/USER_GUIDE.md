@@ -255,8 +255,17 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    version = "1.0"
    description = "Sharper main menu labels."
    picture = "picture.png"   # a PNG in the mod, shown on the Mods page
-   game = "0.7"              # the openIG2 version it was made for
+   id = "sharp-menu"         # lower-case letters, digits, - and _; default: the folder or zip name
+   requires = ">=0.7, <0.9"  # the openIG2 versions it works with (>=, >, <=, <, =, ^, ~, *; commas join)
+   depends = { "base-pack" = ">=1.2" }   # mods it needs (a [depends] table works too)
+   conflicts = ["other-menu"]            # mods it can't be used with
+   license = "CC-BY-4.0"     # SPDX text
+   kind = "visual"           # look only: its files stay out of the multiplayer check
    ```
+   `version` is free text (semantic versioning by convention). The older `game = "0.7"` is still read, but only as a
+   hint. The Mods page lists a mod's dependencies under it and switches them on and off with it; a mod with a
+   missing dependency, a version outside a range, a conflict or the same `id` as another shows "Can't load: it ...",
+   and Apply waits until you switch it off. At start such a mod is skipped and named on stderr.
 3. Zip the folder (Windows: right click → Send to → Compressed folder; one top folder inside the zip is fine) and
    share the zip. Check it first: `openIG2-check --quick` lists the files your mod replaces or adds, and loads them.
    `openIG2-check --package <folder>` checks the mod and writes `<id>-<version>.zip`, its SHA-256 and the mod index

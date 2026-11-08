@@ -123,6 +123,9 @@ New, optional fields (old files stay valid): `id` (a stable lower-case name; def
 multiplayer fingerprint, as `hires/` today). The Mods page orders dependencies under the mods that need them, refuses
 a mod whose dependency is missing or whose range excludes this version, and says why.
 
+Port status: shipped (row 547): `ModInfo`, `Version`, `VersionReq`, `refusals()` and `dependency_order()` in
+`ig2_formats::vfs`; the Mods page and the start-up load use them; §4's link is on the page.
+
 ### 3. Multiplayer
 
 The room's admission message gains the host's mod list (id, version, SHA-256); a joiner whose mods differ sees which

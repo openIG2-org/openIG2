@@ -1,6 +1,7 @@
 //! Ours (ADR 0068 §5): the mod manager, an egui page (ADR 0062) over the main menu in the Options page's style: every
 //! mod in the mods folders with its `mod.toml`, a switch and a priority, the checks `ig2-check` runs on a mod, the
-//! files two enabled mods both have; Apply writes `enabled.txt`, which the next start loads.
+//! files two enabled mods both have; Apply writes `enabled.txt`, which the next start loads. `mod.toml` 2 (ADR 0086
+//! §2): a mod's dependencies sit under it and switch on and off with it, a mod that can't load says why.
 
 use std::collections::HashMap;
 
@@ -12,6 +13,8 @@ const PAGE: [f32; 2] = [860.0, 500.0];
 const PICTURE: [f32; 2] = [112.0, 72.0];
 /// The largest picture shown (either side, pixels).
 const MAX_PICTURE: u32 = 2048;
+/// The first modding tutorial (ADR 0086 §4) on the repository's page.
+const HOW_TO: &str = "https://github.com/openIG2-org/openIG2/blob/main/docs/modding/first-mod.md";
 
 /// `--mod` chose this run's mods (set when the install opens).
 pub static GIVEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -53,6 +56,10 @@ pub enum Act {
 struct Row {
     m: Mod,
     info: Result<ModInfo, String>,
+    /// [`ModInfo::id_or`].
+    id: String,
+    /// Why it can't load beside the enabled mods (an enabled row), or why it can't be switched on (a disabled one).
+    refused: Option<String>,
     on: bool,
     /// What the mod's checks found wrong.
     problems: Vec<String>,
@@ -62,6 +69,15 @@ struct Row {
     loads: bool,
     /// Its files another enabled mod above it provides too (that mod, how many).
     lost: Vec<(String, usize)>,
+    /// What a broken `mod.toml` counts as.
+    fallback: ModInfo,
+}
+
+impl Row {
+    fn new(m: Mod, info: Result<ModInfo, String>, on: bool, problems: Vec<String>, files: Vec<String>, loads: bool) -> Self {
+        let id = info.as_ref().map_or_else(|_| m.name.to_lowercase(), |i| i.id_or(&m.name));
+        Self { m, info, id, refused: None, fallback: ModInfo::default(), on, problems, files, loads, lost: Vec::new() }
+    }
 }
 
 pub struct ModsPage {
@@ -132,15 +148,87 @@ impl ModsPage {
                 match m.check() {
                     Ok(()) => {
                         let (problems, files) = check(install, &rules, &m);
-                        Row { info: m.info(), on, problems, files, loads: true, lost: Vec::new(), m }
+                        let info = m.info();
+                        Row::new(m, info, on, problems, files, true)
                     }
-                    Err(e) => Row { info: Ok(ModInfo::default()), on, problems: vec![e], files: Vec::new(), loads: false, lost: Vec::new(), m },
+                    Err(e) => Row::new(m, Ok(ModInfo::default()), on, vec![e], Vec::new(), false),
                 }
             })
             .collect();
         let mut page = Self { rows, saved, loaded: install.mods().iter().map(|m| m.name.clone()).collect(), given, failed, pictures: HashMap::new(), error: None, focus: None, scroll: false };
-        page.conflicts();
+        page.refresh();
         page
+    }
+
+    /// The rows `set` as [`ig2_formats::vfs::refusals`] takes them (a broken `mod.toml` as an empty one).
+    fn ids(&self, set: &[usize]) -> Vec<(String, &ModInfo)> {
+        set.iter().map(|&i| (self.rows[i].id.clone(), self.rows[i].info.as_ref().unwrap_or(&self.rows[i].fallback))).collect()
+    }
+
+    fn on(&self) -> Vec<usize> {
+        (0..self.rows.len()).filter(|&i| self.rows[i].on).collect()
+    }
+
+    fn depends(&self, i: usize) -> &[(String, ig2_formats::vfs::VersionReq)] {
+        self.rows[i].info.as_ref().map_or(&[], |inf| inf.depends.as_slice())
+    }
+
+    /// Row `i` and the disabled rows it needs, each once, `i` first: what switching it on switches on; why, when a
+    /// dependency is in no row.
+    fn needs(&self, i: usize) -> Result<Vec<usize>, String> {
+        let mut out = vec![i];
+        let mut k = 0;
+        while k < out.len() {
+            for (dep, range) in self.depends(out[k]) {
+                if self.rows.iter().any(|r| r.on && &r.id == dep) {
+                    continue;
+                }
+                let j = self.rows.iter().position(|r| &r.id == dep && r.loads).ok_or_else(|| ig2_formats::vfs::Refusal::Missing(dep.clone(), range.clone()).to_string())?;
+                if !out.contains(&j) {
+                    out.push(j);
+                }
+            }
+            k += 1;
+        }
+        Ok(out)
+    }
+
+    /// Why row `i` (disabled) can't be switched on: a dependency in no row, or a refusal of it or of a dependency it
+    /// brings, among the enabled ones.
+    fn blocked(&self, i: usize) -> Option<String> {
+        let add = match self.needs(i) {
+            Ok(a) => a,
+            Err(e) => return Some(e),
+        };
+        let set: Vec<usize> = self.on().into_iter().chain(add.iter().copied()).collect();
+        let why = ig2_formats::vfs::refusals(&self.ids(&set), crate::version());
+        set.iter().zip(why).find_map(|(j, r)| r.filter(|_| add.contains(j)).map(|r| if *j == i { r.to_string() } else { format!("{}: {r}", self.rows[*j].id) }))
+    }
+
+    /// After a change: the enabled rows in dependency order (ADR 0086 §2), each row's refusal and lost files.
+    fn refresh(&mut self) {
+        let on = self.on();
+        let order = ig2_formats::vfs::dependency_order(&self.ids(&on));
+        let mut rows: Vec<Option<Row>> = std::mem::take(&mut self.rows).into_iter().map(Some).collect();
+        let mut sorted: Vec<Row> = order.iter().filter_map(|&k| rows[on[k]].take()).collect();
+        sorted.extend(rows.into_iter().flatten());
+        self.rows = sorted;
+        let on = self.on();
+        let why = ig2_formats::vfs::refusals(&self.ids(&on), crate::version());
+        for (&i, r) in on.iter().zip(why) {
+            self.rows[i].refused = r.map(|r| r.to_string());
+        }
+        for i in 0..self.rows.len() {
+            if !self.rows[i].on {
+                self.rows[i].refused = self.blocked(i);
+            }
+        }
+        self.conflicts();
+    }
+
+    /// An enabled mod can't load: Apply waits.
+    fn any_refused(&self) -> bool {
+        self.rows.iter().any(|r| r.on && r.refused.is_some())
     }
 
     fn enabled(&self) -> Vec<String> {
@@ -189,17 +277,39 @@ impl ModsPage {
         let j = i as isize + by;
         if j >= 0 && (j as usize) < self.rows.len() && self.rows[j as usize].on {
             self.rows.swap(i, j as usize);
-            self.conflicts();
+            self.refresh();
         }
     }
 
-    /// Switch row `i`: an enabled mod goes last among the enabled, a disabled one first among the disabled.
+    /// Switch row `i`: a disabled mod goes last among the enabled with the mods it needs under it, an enabled one
+    /// first among the disabled with the enabled mods that need it; a mod that can't be switched on stays off.
     fn toggle(&mut self, i: usize) {
-        let mut r = self.rows.remove(i);
-        r.on = !r.on;
+        let rows: Vec<usize> = if self.rows[i].on {
+            // It and every enabled mod needing it, transitively.
+            let mut off = vec![i];
+            while let Some(j) = (0..self.rows.len()).find(|&j| self.rows[j].on && !off.contains(&j) && self.depends(j).iter().any(|(d, _)| off.iter().any(|&k| &self.rows[k].id == d))) {
+                off.push(j);
+            }
+            off
+        } else if self.rows[i].refused.is_some() {
+            return;
+        } else {
+            self.needs(i).unwrap_or_default()
+        };
+        let on = !self.rows[i].on;
+        let mut moved: Vec<Option<Row>> = Vec::new();
+        let mut rest: Vec<Option<Row>> = std::mem::take(&mut self.rows).into_iter().map(Some).collect();
+        for &k in &rows {
+            moved.push(rest[k].take());
+        }
+        let mut moved: Vec<Row> = moved.into_iter().flatten().collect();
+        for r in &mut moved {
+            r.on = on;
+        }
+        self.rows = rest.into_iter().flatten().collect();
         let at = self.rows.iter().position(|r| !r.on).unwrap_or(self.rows.len());
-        self.rows.insert(at, r);
-        self.conflicts();
+        self.rows.splice(at..at, moved);
+        self.refresh();
     }
 
     /// Write `enabled.txt` (ADR 0068 §4).
@@ -243,7 +353,7 @@ impl ModsPage {
         };
         match key.as_ref() {
             Key::Named(NamedKey::Escape) => Some(Act::Back),
-            Key::Named(NamedKey::Enter) if self.pending() => {
+            Key::Named(NamedKey::Enter) if self.pending() && !self.any_refused() => {
                 self.apply();
                 Some(Act::Click)
             }
@@ -321,6 +431,9 @@ impl ModsPage {
                                     if let Some(v) = &info.version {
                                         ui.label(egui::RichText::new(v).weak());
                                     }
+                                    if info.kind == ig2_formats::vfs::ModKind::Visual {
+                                        ui.label(egui::RichText::new(tr("look only")).small().weak()).on_hover_text(tr("Changes only how the game looks: multiplayer rooms don't need it."));
+                                    }
                                     if r.on {
                                         let rank = self_rank(enabled, i);
                                         ui.label(egui::RichText::new(rank).small().color(ui.visuals().hyperlink_color));
@@ -332,8 +445,16 @@ impl ModsPage {
                                 if let Some(d) = &info.description {
                                     ui.add(egui::Label::new(d).wrap());
                                 }
+                                if !info.depends.is_empty() {
+                                    let deps: Vec<String> = info.depends.iter().map(|(d, v)| if v.is_any() { d.clone() } else { format!("{d} {v}") }).collect();
+                                    ui.label(egui::RichText::new(format!("{} {}", tr("Needs:"), deps.join(", "))).small());
+                                }
                                 let kind = if r.m.is_zip() { tr("zip") } else { tr("folder") };
-                                ui.label(egui::RichText::new(format!("{} ({kind})", r.m.dir.display())).small().weak());
+                                let licence = info.license.as_deref().map_or(String::new(), |l| format!(", {l}"));
+                                ui.label(egui::RichText::new(format!("{} ({kind}{licence})", r.m.dir.display())).small().weak());
+                                if let Some(why) = &r.refused {
+                                    ui.add(egui::Label::new(egui::RichText::new(format!("{} {why}", tr("Can't load: it"))).small().color(bad)).wrap());
+                                }
                                 if let Some(g) = info.game.as_deref().filter(|g| !crate::version().starts_with(&format!("{g}.")) && !crate::version().starts_with(&format!("{g}-"))) {
                                     ui.label(egui::RichText::new(format!("{} {g}", tr("Made for openIG2"))).small().color(hot));
                                 }
@@ -349,7 +470,8 @@ impl ModsPage {
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 let mut on = r.on;
-                                if crate::gui::switch(ui, &mut on).on_hover_text(tr("Load this mod at the next start.")).clicked() {
+                                let can = r.on || r.refused.is_none();
+                                if ui.add_enabled_ui(can, |ui| crate::gui::switch(ui, &mut on)).inner.on_hover_text(tr("Load this mod at the next start.")).clicked() {
                                     toggle = Some(i);
                                 }
                                 if r.on {
@@ -392,6 +514,8 @@ impl ModsPage {
                 } else if let Some(e) = self.failed.as_ref().filter(|_| !self.pending()) {
                     let line = format!("{} {e}", tr("The mods failed to load; the game started without them:"));
                     ui.add(egui::Label::new(egui::RichText::new(line).color(bad)).truncate()).on_hover_text(e);
+                } else if self.any_refused() {
+                    ui.label(egui::RichText::new(tr("A mod can't load: switch it off or add what it needs.")).color(bad));
                 } else if self.given {
                     ui.label(egui::RichText::new(tr("This run's mods come from --mod; the list applies without it.")).color(hot));
                 } else if self.pending() {
@@ -403,7 +527,7 @@ impl ModsPage {
             ui.separator();
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::gui::primary(ui, self.pending(), tr("Apply")).on_hover_text(tr("Save the list of enabled mods.")).clicked() {
+                    if crate::gui::primary(ui, self.pending() && !self.any_refused(), tr("Apply")).on_hover_text(tr("Save the list of enabled mods.")).clicked() {
                         self.apply();
                         acts.push(Act::Click);
                     }
@@ -415,6 +539,12 @@ impl ModsPage {
                     }
                     if crate::gui::secondary(ui, tr("Open mods folder")).on_hover_text(tr("The mods folder beside the game: drop a mod's .zip file here.")).clicked() {
                         if let Err(e) = open_folder() {
+                            self.error = Some(e);
+                        }
+                        acts.push(Act::Click);
+                    }
+                    if crate::gui::secondary(ui, tr("How to make a mod")).on_hover_text(tr("The modding tutorial on the openIG2 website, in your browser.")).clicked() {
+                        if let Err(e) = open(std::ffi::OsStr::new(HOW_TO)) {
                             self.error = Some(e);
                         }
                         acts.push(Act::Click);
@@ -446,6 +576,11 @@ fn self_rank(enabled: usize, i: usize) -> String {
 fn open_folder() -> Result<(), String> {
     let dir = Mod::exe_folder().ok_or_else(|| "no mods folder here".to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    open(dir.as_os_str())
+}
+
+/// A folder or a web address in the system's file manager or browser.
+fn open(what: &std::ffi::OsStr) -> Result<(), String> {
     let opener = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {
@@ -453,7 +588,7 @@ fn open_folder() -> Result<(), String> {
     } else {
         "xdg-open"
     };
-    std::process::Command::new(opener).arg(&dir).spawn().map(|_| ()).map_err(|e| format!("{opener}: {e}"))
+    std::process::Command::new(opener).arg(what).spawn().map(|_| ()).map_err(|e| format!("{opener}: {e}"))
 }
 
 /// The game again with this run's arguments (ADR 0068 §5); the caller then quits.
@@ -468,12 +603,12 @@ mod tests {
 
     fn row(name: &str, on: bool, files: &[&str]) -> Row {
         let m = Mod { name: name.into(), dir: name.into() };
-        Row { m, info: Ok(ModInfo::default()), on, problems: Vec::new(), files: files.iter().map(|f| f.to_string()).collect(), loads: name != "broken", lost: Vec::new() }
+        Row::new(m, Ok(ModInfo::default()), on, Vec::new(), files.iter().map(|f| f.to_string()).collect(), name != "broken")
     }
 
     fn page(rows: Vec<Row>) -> ModsPage {
         let mut p = ModsPage { rows, saved: Vec::new(), loaded: Vec::new(), given: false, failed: None, pictures: HashMap::new(), error: None, focus: None, scroll: false };
-        p.conflicts();
+        p.refresh();
         p
     }
 
@@ -504,6 +639,44 @@ mod tests {
         p.rows.push(row("broken", true, &[]));
         p.saved.push("broken".into());
         assert!(!p.restart_needed());
+    }
+
+    fn with(name: &str, on: bool, toml: &str) -> Row {
+        Row::new(Mod { name: name.into(), dir: name.into() }, ModInfo::parse(toml), on, Vec::new(), Vec::new(), true)
+    }
+
+    fn names(p: &ModsPage) -> Vec<(&str, bool)> {
+        p.rows.iter().map(|r| (r.m.name.as_str(), r.on)).collect()
+    }
+
+    #[test]
+    fn dependencies_switch_with_their_mods() {
+        let needs = "[depends]
+base = \">=1.2\"";
+        let mut p = page(vec![with("plain", true, ""), with("Needs", false, needs), with("base", false, "version = \"1.4\""), with("lonely", false, "depends = { gone = \"*\" }")]);
+        // Off rows say why they can't be switched on; the switch then does nothing.
+        assert_eq!(p.rows[3].refused.as_deref(), Some("needs the mod gone"));
+        p.toggle(3);
+        assert_eq!(p.enabled(), ["plain"]);
+        // On: its dependency comes along, under it.
+        p.toggle(1);
+        assert_eq!(names(&p), [("plain", true), ("Needs", true), ("base", true), ("lonely", false)]);
+        assert!(!p.any_refused());
+        // The dependency moved above its mod goes back under it.
+        p.shift(2, -1);
+        assert_eq!(p.enabled(), ["plain", "Needs", "base"]);
+        // Off: the mods needing it go off too.
+        p.toggle(2);
+        assert_eq!(names(&p), [("plain", true), ("base", false), ("Needs", false), ("lonely", false)]);
+        // A list written by hand: the mod without its dependency is refused, Apply waits.
+        let mut p = page(vec![with("needs", true, needs), with("old", false, "requires = \"<0.1\""), with("base", false, "version = \"1.1\"")]);
+        assert_eq!(p.rows[0].refused.as_deref(), Some("needs the mod base >=1.2"));
+        assert!(p.any_refused() && p.key(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter), false) == Some(Act::Back));
+        assert_eq!(p.rows[1].refused.as_deref(), Some("needs openIG2 <0.1"));
+        // Switching the too old dependency on: refused with its reason.
+        assert_eq!(p.rows[2].refused.as_deref(), None);
+        p.toggle(2);
+        assert_eq!(p.rows[0].refused.as_deref(), Some("needs the mod base >=1.2, not 1.1"));
     }
 
     #[test]

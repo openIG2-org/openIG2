@@ -321,6 +321,13 @@ mod tests {
         assert_eq!(ratio(packed.origin), ratio(other.origin));
         // Display only: a pack stays out of the room's fingerprint.
         assert_eq!(crate::mods_fingerprint(&modded), None);
+        // A file beside the pack counts, unless the mod says it's a look-only one (ADR 0086 §2).
+        let open = || Install::open_with_mods(install.root(), Lang::En, vec![Mod { name: "pack".into(), dir: dir.clone() }]).unwrap();
+        std::fs::create_dir_all(dir.join("dataraw")).unwrap();
+        std::fs::write(dir.join("dataraw/look.txt"), "x").unwrap();
+        assert!(crate::mods_fingerprint(&open()).is_some());
+        std::fs::write(dir.join(ig2_formats::vfs::MOD_FILE), "kind = \"visual\"\n").unwrap();
+        assert_eq!(crate::mods_fingerprint(&open()), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

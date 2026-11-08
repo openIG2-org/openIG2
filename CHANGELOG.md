@@ -13,6 +13,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Modern design screen: the blueprint list no longer shows a tooltip box over the rows below the pointer, so a click on any blueprint selects it.
 - Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
+- Modding: a mod's `mod.toml` can name an `id`, a `version`, the openIG2 versions it `requires`, the mods it `depends` on or `conflicts` with, a `license` and `kind = "visual"` (look only, so it doesn't change the multiplayer check). The Mods page puts a mod's dependencies under it and switches them on together, switches off the mods that need one you turn off, says why a mod "Can't load", and has a "How to make a mod" button.
 - Modding: a step-by-step "Your first mod" guide (`docs/modding/first-mod.md`) makes, checks, switches on and shares a small mod.
 - Modding: `openIG2-check` in the release writes your install's rule values (`--dump-rules`) and text lines (`--dump-texts`, in the form of a mod's `texts.<lang>.toml`) for your own use, and `--package FOLDER` checks a mod and makes its zip, checksum and index entry. The dumps are the game's data: never share them.
 - Multiplayer room: every galaxy setting, the Custom game switch, its seed and the Empires button included, fits on the screen without scrolling.

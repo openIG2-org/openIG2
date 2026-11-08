@@ -768,15 +768,33 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
     for (n, why) in missing {
         eprintln!("ig2-client: mod {n} not loaded: {why}");
     }
-    mods
+    // A mod the Mods page would refuse (ADR 0086 §2) isn't loaded either, nor then the mods that need it.
+    let mut mods = mods;
+    loop {
+        let infos: Vec<_> = mods.iter().map(|m| m.info().unwrap_or_default()).collect();
+        let ids: Vec<_> = mods.iter().zip(&infos).map(|(m, i)| (i.id_or(&m.name), i)).collect();
+        let refused = ig2_formats::vfs::refusals(&ids, version());
+        if refused.iter().all(Option::is_none) {
+            return mods;
+        }
+        for (m, why) in mods.iter().zip(&refused) {
+            if let Some(why) = why {
+                eprintln!("ig2-client: mod {} not loaded: it {why}", m.name);
+            }
+        }
+        let mut keep = refused.iter().map(Option::is_none);
+        mods.retain(|_| keep.next().unwrap_or(true));
+    }
 }
 
 /// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files
 /// but a pack's pictures and models (only drawn, ADR 0054 §7), each `rules.toml` as `rules.toml#<k>` in the order
 /// they apply (ADR 0044 §9), each text patch as `texts.<lang>.toml#<k>` likewise (§13) and each `stories.toml` as
-/// `stories.toml#<k>` in the order they run (ADR 0061 §6); `None` without mods.
+/// `stories.toml#<k>` in the order they run (ADR 0061 §6); a `kind = "visual"` mod's files are left out as a pack's
+/// are (ADR 0086 §2), its patches not; `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
-    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR)).map(|f| (f.path.to_owned(), install.read_file(f.file).unwrap_or_default())).collect();
+    let visual: Vec<&str> = install.mods().iter().filter(|m| m.info().is_ok_and(|i| i.kind == ig2_formats::vfs::ModKind::Visual)).map(|m| m.name.as_str()).collect();
+    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR) && !visual.contains(&f.mod_name)).map(|f| (f.path.to_owned(), install.read_file(f.file).unwrap_or_default())).collect();
     files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
     files.extend(install.text_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, f, b))| (format!("{f}#{k}"), b)));
     files.extend(install.story_files().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("{}#{k}", ig2_formats::vfs::STORY_FILE), b)));
