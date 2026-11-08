@@ -887,6 +887,13 @@ impl MainScr {
         }
     }
 
+    /// Back from the Options screens (the Load page's Back or Esc, Settings' Back) on the modern menu: the scene
+    /// goes on and the rings are in place again (`MainScr_Belep` step 5 keeps the scene with `Cel = 1.0`; ours,
+    /// ADR 0078, without the original's fly-in from `MainKorokTavolsag` 10), so the panel comes back.
+    pub fn back_from_options(&mut self) {
+        (self.tav, self.cel) = (1.0, 1.0);
+    }
+
     /// Our MP screens were left: the multiplayer set comes back.
     pub fn close_mp(&mut self) {
         self.mp = false;
@@ -1366,6 +1373,10 @@ mod tests {
         assert_eq!((s.race.as_ref().map(|r| (r.level, r.start_game)), s.cel, s.panel()), (Some((2, true)), 5.0, None));
         let mut s = flowing();
         assert_eq!((s.press(main(Item::Load)), s.cel), (Some(Act::LoadGame), 6.0));
+        // Back from the Load page: the panel again.
+        s.tick();
+        s.back_from_options();
+        assert_eq!(s.panel(), Some(Panel::Main));
         let mut s = flowing();
         s.press(main(Item::Tutorial));
         assert_eq!(s.panel(), Some(Panel::Tutorial));

@@ -18,6 +18,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Colony screen: the mouse wheel zooms within the zoom keys' range and glides to a stop at the nearest and farthest view instead of jumping back (issue #88).
 - Modern main menu: its pages (sub-menus, new game, settings, load, statistics, replays, mods, multiplayer) slide and fade in and out one after the other, as the modern in-game screens do (issue #91).
 - Modern main menu: back from Settings or Load game the menu carries on where it was (its scene and music keep running) instead of starting over (issue #93).
+- Modern main menu: leaving the Load game page with Back or Esc shows the main menu again instead of an empty screen (issue #102).
 - Modern main menu: the mouse pointer is drawn over the menu panels and pages instead of behind them (issue #92).
 - Modern starmap: the selection card's tooltip lists its mouse actions one per row, each with a small left, right or both-buttons mouse, instead of one dense line; the shared look has this tooltip for any control with several mouse actions (issue #80).
 - Modern starmap: renaming a planet or fleet types into the selection card's own text field, without the classic rename text drawn behind and beside the card (issue #79).
