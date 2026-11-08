@@ -240,7 +240,7 @@ A mod changes the game with your own files: a sharper texture, another text, ano
 3. Restart the game (Restart now on the same page). The page shows each mod's problems in red and the files another
    mod above it overrides; a broken mod is skipped and the game starts without it.
 
-**Making a mod** in three steps:
+**Making a mod** in three steps (new to modding? [Your first mod](modding/first-mod.md) walks through one from start to finish):
 1. Make a folder named after your mod and put each file at the same path it has in the install:
    `sharp-menu\dataraw\textures\main\eng\unselected\0_credits_bmp.pvr` replaces the install's
    `dataraw\textures\main\eng\unselected\0_credits_bmp.pvr`. Names are not case-sensitive. A mod's file also beats
