@@ -206,7 +206,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
             let kf = Font::DATA.sized(14.0).weight(Weight::Regular).tracking(0.06);
             let kw = Text::new(&r.kind, kf).right().color(if on { k.ink_silver } else { k.ink_muted }).baseline(base).paint(ui, inner.with_min_x(inner.right() - inner.width() * 0.45)).width;
             Text::new(&r.name, Font::BODY).color(if r.off { k.ink_muted } else { k.ink }).baseline(base).paint(ui, inner.with_max_x(inner.right() - kw - 12.0));
-            let resp = ds::tip(resp, ds::tip_text(&v.tips, 9));
+            // No tooltip: it stood over the rows below the pointer.
             if ds::pressed(&resp) {
                 acts.push(Act::Row(r.n));
             }
@@ -471,6 +471,31 @@ mod tests {
             assert!((l.width() - LIST_W).abs() < 1.0 && (p.width() - PARTS_W).abs() < 1.0 && (pr.width() - LIST_W).abs() < 1.0, "{w}: {l:?} {p:?}");
             assert!(l.right() < d.left() && d.right() < p.left(), "{w}: {l:?} {d:?} {p:?}");
             assert!(l.bottom() < pr.top() && (c.left() > pr.right() - 1.0 || c.bottom() < pr.top()), "{w}: {c:?}");
+        }
+    }
+
+    /// A press anywhere on a row picks that row, the pointer having just moved there from the row above.
+    #[test]
+    fn a_press_on_a_row_picks_it() {
+        let mut v = view("Laser");
+        (v.editing, v.popup) = (false, None);
+        let (ctx, _) = run(&v, &mut State::default(), 1920.0);
+        ctx.set_style(crate::gui::style(&crate::theme::Theme::modern()));
+        let list = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-list"))).unwrap();
+        let screen = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0)));
+        let button = |at, pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let first = list.top() + 16.0 + 26.0 + 8.0;
+        let mut st = State::default();
+        let mut t = 1.0;
+        for k in 0..26 * 6 {
+            let at = pos2(list.left() + 100.0 + (k % 7) as f32 * 30.0, first + 1.0 + k as f32);
+            let mut acts = Vec::new();
+            for e in [vec![egui::Event::PointerMoved(pos2(at.x, at.y - 13.0))], vec![], vec![egui::Event::PointerMoved(at), button(at, true)], vec![button(at, false)]] {
+                t += 1.0 / 60.0;
+                let _ = ctx.run(egui::RawInput { screen_rect: screen, time: Some(t), events: e, ..Default::default() }, |ctx| acts.extend(show(ctx, &v, &mut st)));
+            }
+            let want = 1 + ((at.y - first) / 26.0) as usize;
+            assert!(acts.contains(&Act::Row(want)), "{at:?}: {acts:?}");
         }
     }
 }
