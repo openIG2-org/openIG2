@@ -25,7 +25,9 @@ Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2
   whatever the game language: `Tervek0[k − 1]` name = `strncpy(GetString(17, 7, k), 0x14)` (k = 1..47);
   `Talalmanyok0[t]` name = `strncpy(GetString(17, 8 + (t − 1) / 48, (t − 1) % 48 + 1), 0x10)` (t = 1..192);
   `Faj_Nev[r]` = (17, 1, r + 5); `AlapFlottaNev` from (17, 5, 46) of the same file (the AI conquerors are named
-  "Flotta 1" on an English install).
+  "Flotta 1" on an English install). Port: `Tervek0` and `Talalmanyok0` names come from the game language's
+  `txt17` instead (ADR 0017 §4; Hungarian line where the slot is empty or "-"), since the exe's own English saves
+  keep the Hungarian names ("Vadász", "Romboló"…); a Hungarian install is identical. Race and fleet names stay as above.
 - **The exe's `NEWGAME_Research`** does reset `ResearchTerulet` = 3, `ResearchOldForgato` = 3 and `ResearchTalalmany`
   = 0x21 (seen in every save).
 - **`LoadScenario(map, 1)`** (the campaign map) loads neither `RandSeed` nor the relations: the streams after the

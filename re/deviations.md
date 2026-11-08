@@ -129,6 +129,7 @@ rows (fixed, settled, not reachable, not reproduced) live in git history
 | 534 | help page, modern | the search field takes the keys while it is focused (pause, speed, O and M do not act while typing; the F-keys still pass); the wheel scrolls the topic (the original ignores it); the original's tooltips on its spots are gone | yes | help.md §10, ADR 0078 |
 | 535 | match history, modern | the history table scrolls; the classic screen pages with Newer and Older | yes | game-end.md §11, ADR 0034, ADR 0078 |
 | 544 | design, modern screen | Redesign edits the chosen design in place (the exe's modify, spot 3: OK keeps or refits the units) and only New makes a design; the exe's Redesign (spot 2, a numbered copy) has no modern button and `r` acts as Enter. A name another listed design has is refused: OK keeps the edit open, a typed name is not written while it matches. The exe takes any name; the classic screen keeps all of it | yes | design.md §14, ADR 0075 |
+| 546 | new game, starting designs and techs | the starting ship designs and the tech names are written in the game language's `txt17` (Hungarian line where that slot is empty or "-"); the exe writes the Hungarian names in every language (its English saves list "Vadász", "Romboló"). A Hungarian install is identical; race names and the first fleet name stay as the exe writes them | yes | new-game.md, ADR 0017 |
 
 ## Enhanced
 

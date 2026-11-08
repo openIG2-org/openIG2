@@ -27,7 +27,9 @@ pub struct StartTexts {
 impl StartTexts {
     /// `StringReadAll` (exe 0x531e40) writes the **Hungarian** `txt17` names into the exe's tables whatever the
     /// language (the race, tech and design names, `AlapFlottaNev`); the constellations `_s(0x1d, k)` and the message
-    /// kinds (`LoadMessagesFile`) are the install's language.
+    /// kinds (`LoadMessagesFile`) are the install's language. The tech and design names here are the game language's
+    /// (ADR 0017 §4: an English game's starting designs aren't Hungarian); a slot that language leaves empty keeps the
+    /// Hungarian name. A Hungarian install gets the exe's bytes; every peer of a room shares the language.
     pub fn read(inst: &Install) -> Result<Self, String> {
         let exe = inst.read_raw("ig2.exe").map_err(|e| e.to_string())?;
         let mut hu = UiStrings::default();
@@ -35,6 +37,11 @@ impl StartTexts {
             hu.add_file(&text::decode(&b, Lang::Hu));
         }
         let hu_bytes = |s: &str| Lang::Hu.encoding().encode(s).0.into_owned();
+        let local = crate::ui::names_txt17(inst, true);
+        let name = |section: u16, k: u16| match local.get(0x11, section, k) {
+            l if l.is_empty() || l == b"-" => hu_bytes(hu.get(0x11, section, k)),
+            l => l,
+        };
         let enc = |s: &str| inst.lang().encoding().encode(s).0.into_owned();
         let mut keyed = KeyedStrings::default();
         if let Ok(b) = inst.read("dataraw/text/s_stname.txt") {
@@ -42,7 +49,7 @@ impl StartTexts {
         }
         let kinds = inst.read("dataraw/uzenetek/uzenetek.txt").map(|b| dialogue::parse_message_index(&text::decode(&b, inst.lang())).len()).unwrap_or(0);
         let mut tech_names: Vec<Vec<u8>> =
-            (0..193u16).map(|t| if t == 0 { Vec::new() } else { hu_bytes(hu.get(0x11, 8 + (t - 1) / 48, (t - 1) % 48 + 1)) }).collect();
+            (0..193u16).map(|t| if t == 0 { Vec::new() } else { name(8 + (t - 1) / 48, (t - 1) % 48 + 1) }).collect();
         let mut tables = Vec::new();
         if !inst.rule_patches().map_err(|e| e.to_string())?.is_empty() {
             let r = ig2_rules::Rules::from_install(inst).map_err(|e| e.to_string())?;
@@ -60,7 +67,7 @@ impl StartTexts {
             race_names: (0..20).map(|r| hu_bytes(hu.get(0x11, 1, r + 5))).collect(),
             constellations: (1..=15).map(|k| enc(keyed.get(29, k).unwrap_or(""))).collect(),
             tech_names,
-            design_names: (0..47u16).map(|k| hu_bytes(hu.get(0x11, 7, k + 1))).collect(),
+            design_names: (0..47u16).map(|k| name(7, k + 1)).collect(),
             fleet_name: hu_bytes(hu.get(17, 5, 46)),
             design_texts: design_texts(inst),
             message_kinds: kinds as i32,
@@ -180,6 +187,34 @@ pub fn parse_campaign(v: &str) -> Result<NewCampaign, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The starting designs are named in the game's language (ADR 0017 §4), in a campaign and a skirmish: the human's
+    /// design templates carry the language's `txt17` 7/k, not the Hungarian line (Hungarian: the exe's bytes; skips
+    /// without the install).
+    #[test]
+    fn starting_designs_are_named_in_the_games_language() {
+        for lang in [Lang::En, Lang::De, Lang::Hu] {
+            let Some(Ok(inst)) = Install::from_env(lang) else { return };
+            let (rules, _) = crate::rules::load(&inst).unwrap();
+            let local = crate::ui::names_txt17(&inst, true);
+            let hu = crate::ui::names_txt17(&inst, false);
+            let sk = NewSkirmish { en: 3, ais: 4, random_id: 1, tech: 1, planets: 40, money: 20000, difficulty: 2, population: 1, seed: 4242, ticks: 4242 };
+            let games = [campaign(&inst, &parse_campaign("1").unwrap(), &rules).unwrap(), skirmish(&inst, &sk, &rules).unwrap()];
+            for g in &games {
+                let en = g.state.mem.i32(ig2_sim::save::va::EN) as usize;
+                let listed: Vec<usize> = (1..47).filter(|&i| g.state.designs[en][i][0x18] != 0).collect();
+                assert!(!listed.is_empty(), "{lang:?}: no listed design");
+                for i in listed {
+                    let name: Vec<u8> = g.state.designs[en][i][..0x14].iter().copied().take_while(|&b| b != 0).collect();
+                    let want = local.get(0x11, 7, i as u16 + 1);
+                    assert_eq!(name, want[..want.len().min(0x14)], "{lang:?} design {i}");
+                    if lang != Lang::Hu {
+                        assert_ne!(name, hu.get(0x11, 7, i as u16 + 1), "{lang:?} design {i} is still Hungarian");
+                    }
+                }
+            }
+        }
+    }
 
     /// A new campaign with the test mod (ADR 0069, `ig2-rules/tests/mods/fusion`): the start copies the mod's tech
     /// record (unknown to every empire, the mod's research cost) and patched building kinds from the rules, not the

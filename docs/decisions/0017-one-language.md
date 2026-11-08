@@ -29,14 +29,18 @@ The project wants one language on every screen.
    them as text would need laid-out labels on the 3D rings and strings we would have to write ourselves; that is a
    separate proposal if the maintainers want it.
 4. The rules don't change. Names the game writes into its own state stay as the exe writes them in both modes:
-   the new game's race, tech and design names and the first fleet's name (`StringReadAll` into the exe's tables,
-   saved), and the empire names the game's posts quote (`Game::empire_names`, shipped in the multiplayer snapshot).
-   They are saved and must be byte-identical on every peer and against the exe's replays, so a message can still
-   name an empire in Hungarian; only the tables the screens draw from switch.
+   the new game's race names and the first fleet's name (`StringReadAll` into the exe's tables, saved), and the
+   empire names the game's posts quote (`Game::empire_names`, shipped in the multiplayer snapshot). They are saved
+   and must be byte-identical on every peer and against the exe's replays, so a message can still name an empire in
+   Hungarian; only the tables the screens draw from switch.
+   Amendment (2026-11-08): the new game's tech and design-template names (the starting ship designs) now follow the
+   install language in every mode, not the option: they come from the game language's `txt17.txt` (the Hungarian
+   line where that slot is empty or "-"). Every peer of a room shares the install language already (ADR 0014), so
+   rooms stay in step; a Hungarian install is identical to the exe, whose own English saves keep the Hungarian names.
 
 ## Consequences
 - Multiplayer: each player sees the screens' names in their own language; nothing new crosses the wire.
-- Making the game-state names (point 4) follow the language too would need them out of the saved state (drawn from
+- Making the remaining game-state names (point 4: races, first fleet, empire names in posts) follow the language too would need them out of the saved state (drawn from
   indices at display time); a later step if the maintainers want it.
 - Lines formatted with these names can be longer in some languages ("Solarian Federation" against "Emberi
   Szövetség"); the exe's own field widths and clipping still apply.
