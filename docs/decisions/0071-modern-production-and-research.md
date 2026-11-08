@@ -68,7 +68,7 @@ research boards (1920 × 1080 at 100 % UI scale, one design pixel one point; 4:3
   with each design's unit price, the slot's design selected, a ninth station muted. Exit is the board's plate at
   the bottom right. The panels slide in from their sides; under 4:3 the panels go under the plate.
 - **Research screen**: the category's techs (top left, deep panel) with their status at the right (done, the bar
-  and per cent, the cost, locked); the auto-research switches as settings rows under it; the shown tech at the
+  and per cent, the cost, locked); the auto-research switches as one compact strip (heading and three plates) right above the category tiles, the list taking all the height down to it; the shown tech at the
   right (name, lines, prerequisites with the owned ones in info blue, labs red when short, days), the funding as
   two plates (normal, double money: the urgent button), start or stop, the running project with its jump; the
   twelve categories as tiles in three groups at the bottom (ships and weapons with the special one, buildings,

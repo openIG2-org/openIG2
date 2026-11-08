@@ -134,6 +134,8 @@ pub struct State {
 const LIST_W: f32 = 460.0;
 const INFO_W: f32 = 470.0;
 const TILE_H: f32 = 44.0;
+/// The auto switches' strip: its pads, the heading, the gap and the plates.
+const AUTO_H: f32 = 32.0 + 18.0 + 8.0 + 32.0;
 /// A status word (500 14 / 0.1 em), a tile's name (15 / 0.06 em).
 const STATUS: Font = Font::DATA.sized(14.0).tracking(0.10).upper(true);
 const TILE: Font = Font::DATA.sized(15.0).tracking(0.06);
@@ -152,14 +154,15 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         categories(ui, v, screen.width() - 2.0 * ds::EDGE, &mut acts)
     });
     let room = nav.response.rect.top() - 16.0 - top;
-    let list = egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
-        ds::entrance(ui);
-        ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 240.0).max(26.0 * 4.0), &mut acts));
-    });
-    let auto_top = (list.response.rect.bottom() + 16.0).max(top + 272.0);
-    egui::Area::new(egui::Id::new("rmh-auto")).fixed_pos(pos2(ds::EDGE, auto_top)).fade_in(false).show(ctx, |ui| {
+    // The auto switches as one strip right over the tiles; the list takes all the height above it.
+    egui::Area::new(egui::Id::new("rmh-auto")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, nav.response.rect.top() - 16.0 - screen.bottom())).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
+    });
+    egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
+        ds::entrance(ui);
+        // The panel's pads, the title row and its gap, the strip and the gap over it.
+        ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 32.0 - 34.0 - AUTO_H - 16.0).max(26.0 * 4.0), &mut acts));
     });
     egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
@@ -181,7 +184,8 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     let cw = Text::new(&count, Font::LABEL).layout(ui.ctx(), w * 0.45).width;
     Text::new(&count, Font::LABEL).right().color(k.ink_muted).baseline(base).paint(ui, r.with_min_x(r.right() - cw));
     Text::new(area.map_or("", |a| a.name.as_str()), Font::PANEL_TITLE).baseline(base).paint(ui, r.with_max_x(r.right() - cw - 12.0));
-    egui::ScrollArea::vertical().max_height(height).auto_shrink([false, true]).show(ui, |ui| {
+    // At least `height` once it scrolls: the area keeps its last size, so the first frame's guess would stick.
+    egui::ScrollArea::vertical().max_height(height).min_scrolled_height(height).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for t in &v.techs {
             let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
@@ -217,27 +221,24 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     });
 }
 
-/// The auto-research switches as settings rows (`.sw`) with an on/off plate.
+/// The auto-research switches: their heading over one row of three plates, lit while on.
 fn auto(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let w = LIST_W - 32.0;
     ui.set_width(w);
-    ui.spacing_mut().item_spacing.y = 8.0;
+    ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
     Text::new(&v.labels.auto, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0));
-    for (i, (name, on)) in v.auto.iter().enumerate() {
-        let (r, _) = ui.allocate_exact_size(vec2(w, 40.0), Sense::hover());
-        let p = ui.painter();
-        p.rect_filled(r, ds::RADIUS_PLATE, k.glass_raised);
-        ds::rim(p, r, ds::RADIUS_PLATE, k.rim);
-        let f = Font::DATA.tracking(0.08);
-        Text::new(name, f).baseline(ds::fit::baseline(r, f)).paint(ui, r.shrink2(vec2(10.0, 0.0)).with_max_x(r.right() - 90.0));
-        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_max(pos2(r.right() - 10.0 - 90.0, r.top() + 6.0), pos2(r.right() - 10.0, r.bottom() - 6.0))).layout(egui::Layout::right_to_left(egui::Align::Center)));
-        let label = if *on { &v.labels.on } else { &v.labels.off };
-        let b = c.add(Plate::new(label).width(56.0).pad(10.0).height(28.0).primary(*on).font(Plate::FONT.sized(13.0).tracking(0.12)));
-        if ds::tip(b, &v.tips[3 + i]).clicked() {
-            acts.push(Act::Auto(i));
+    ui.horizontal(|ui| {
+        let pw = (w - 2.0 * 8.0) / 3.0;
+        for (i, (name, on)) in v.auto.iter().enumerate() {
+            let state = if *on { &v.labels.on } else { &v.labels.off };
+            let label = format!("{name} \u{b7} {state}");
+            let b = ui.add_sized(vec2(pw, 32.0), Plate::new(&label).width(pw).pad(8.0).height(32.0).primary(*on).font(Plate::FONT.sized(13.0).tracking(0.08)));
+            if ds::tip(b, &v.tips[3 + i]).clicked() {
+                acts.push(Act::Auto(i));
+            }
         }
-    }
+    });
 }
 
 /// The shown tech: its name, its lines, the table (prerequisites, labs, days), the funding, start or stop, the
@@ -527,12 +528,16 @@ mod tests {
     use super::*;
 
     fn run(v: &View, st: &mut State, events: Vec<egui::Event>, width: f32) -> (egui::Context, Vec<Act>) {
+        run_at(v, st, events, vec2(width, 1080.0))
+    }
+
+    fn run_at(v: &View, st: &mut State, events: Vec<egui::Event>, size: egui::Vec2) -> (egui::Context, Vec<Act>) {
         let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
         ds::set_motion(false);
         let mut acts = Vec::new();
         for i in 0..4 {
             let ev = if i == 3 { events.clone() } else { Vec::new() };
-            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 1080.0))), events: ev, ..Default::default() };
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)), events: ev, ..Default::default() };
             let _ = ctx.run(input, |ctx| acts = show(ctx, v, st));
         }
         (ctx, acts)
@@ -581,6 +586,22 @@ mod tests {
             assert!((l.width() - LIST_W).abs() < 1.0 && (i.width() - INFO_W).abs() < 1.0, "{w}: {l:?} {i:?}");
             assert!(l.bottom() < a.top() && a.bottom() < n.top() && i.bottom() < n.top(), "{w}");
             assert!(i.right() <= w - ds::EDGE + 0.5 && n.right() <= w - ds::EDGE + 0.5, "{w}: {n:?}");
+        }
+    }
+
+    /// A long category fills the height down to the auto strip, which sits right over the tiles (#104).
+    #[test]
+    fn the_list_takes_the_height_over_the_auto_strip() {
+        let mut v = view("Ion");
+        v.techs = (1..=12).map(|f| Tech { field: f, name: format!("Tech {f}"), status: 5, pct: 100, ..Default::default() }).collect();
+        for (h, rows) in [(600.0, 6.0), (720.0, 10.0), (1080.0, 12.0)] {
+            let (ctx, _) = run_at(&v, &mut State::default(), Vec::new(), vec2(1920.0, h));
+            let r = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+            let (l, a, n) = (r("rmh-list"), r("rmh-auto"), r("rmh-areas"));
+            eprintln!("{h}: list {l:?} auto {a:?} areas {n:?}");
+            assert!(l.bottom() < a.top() && a.bottom() < n.top(), "{h}");
+            assert!((n.top() - a.bottom() - 16.0).abs() < 1.0, "{h}: the strip sits over the tiles");
+            assert!(l.height() - 32.0 - 34.0 >= rows * 26.0 - 1.0, "{h}: {} rows", (l.height() - 66.0) / 26.0);
         }
     }
 
