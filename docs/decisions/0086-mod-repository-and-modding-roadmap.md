@@ -1,9 +1,9 @@
 # ADR 0086: a mod repository, modding tutorials and what to open to mods next
 
-Date: 2026-11-08 (hosting revised the same day). Status: **proposed** (draft for the maintainers' decision; nothing outward-facing is built until it
-is accepted). Extends ADR 0044 (file overrides, rule and text patches), ADR 0061 (story mods), ADR 0068 (zip mods,
+Date: 2026-11-08. Status: **accepted** (2026-11-08; nothing outward-facing exists yet: the maintainers make the
+index repository and the key, §1.5). Extends ADR 0044 (file overrides, rule and text patches), ADR 0061 (story mods), ADR 0068 (zip mods,
 `mod.toml`, the Mods page) and ADR 0069 (new techs, buildings, hulls, weapons, tanks, races, planet types). The
-packages are the proposal rows 547–559 in `docs/ENHANCEMENTS.md`.
+packages are rows 547–553 (accepted) and the proposals 554–561 in `docs/ENHANCEMENTS.md`.
 
 ## Context
 
@@ -36,127 +36,84 @@ What is missing:
 3. **Reach.** Defences, ship and tank research fields, scenarios as data, sounds and models for new entries, the AI's
    weights, new languages and the browser build are still closed; logic beyond the story rules needs code.
 
-## Decision (proposed)
+## Decision
 
-### 1. The mod repository: a Thunderstore community, read and written from the client
+### 1. The mod repository: a GitHub index, read in the client
 
-The wish is a mod.io-like experience (browse, install, update, upload and rate from inside the game, with
-moderation) that is free for the project and the players and free to use, copy and move. Researched 2026-11-08; the
-service terms below are as their public pages state them, and every service's answer to "will you take this
-project" is still to be asked (§1.4).
+#### 1.1 Options considered
 
-#### 1.1 The options
+Researched 2026-11-08 from the services' public pages (terms change; recheck before relying on them):
 
-- **mod.io.** A closed-source commercial service with a REST API, SDKs and a web site. Its documentation says the
-  core features "will always be free". Money comes from premium features, SaaS contracts with large studios and a
-  marketplace cut. The API is free for permitted users under its API Access Terms, which require mod.io's branding
-  wherever the API is used. Reading needs a per-game API key. Every write (subscribe, rate, report, upload) needs a
-  player account, made by an emailed code or a platform or OpenID sign-in. Moderation tools are part of it (four
-  layers, content approval, reports), and there is a separate test environment (`test.mod.io`). Adding a game is a web
-  form; the public pages don't say whether an unofficial engine for someone else's game is accepted, so it must be
-  asked. AGPL fit: the client may call a closed service, but the per-game read key would be in the public source,
-  which needs mod.io's OK. Players pay nothing; the marketplace (paid mods) would stay off.
-- **Thunderstore** (thunderstore.io; backend `thunderstore-io/Thunderstore`, **AGPL-3.0**, Django + PostgreSQL +
-  Redis + S3-compatible storage, Docker Compose). A free, ad-supported mod site hosting many games in "communities"
-  (Lethal Company, Risk of Rain 2, Valheim and others), most of them without the game's developer taking part. A new
-  community is requested on its Discord and added by a pull request to its public `ecosystem-schema` repository. The
-  stated requirement is existing mod authors' interest, ideally with mods ready to upload; developer permission
-  isn't listed. Downloading needs no account. Uploading needs a GitHub or Discord sign-in on the site, or a team's
-  service-account token for tools. Packages are zips with `manifest.json` (name, `version_number`, description,
-  website, dependencies), `icon.png` and `README.md`. Pages show download counts and likes. The free mod managers
-  r2modman (MIT) and Gale (GPL-3.0) already read its API. Moderation is the site's staff plus moderators per
-  community, who can be the project's own people.
-- **Modrinth** (backend `labrinth`, **AGPL-3.0**, Rust; web front end AGPL-3.0, app GPL-3.0). The most polished open
-  platform, but its data model is Minecraft's (loaders, game versions) and the hosted site takes Minecraft content
-  only. Self-hosting it means forking and reshaping it: weeks of work and a fork to keep up with.
-- **ModHost** (MIT, Rust + Svelte). A small self-hostable mod host for any game, in beta, with a handful of stars.
-  Too young to rely on.
-- **A GitHub index** (this ADR's first draft): a public repository of TOML entries, CI checks and a signed
-  `index.json`. Free and fully ours, but no in-client upload, ratings or subscriptions without our own server.
-- **Self-hosting** one of the open backends. Free-tier storage covers the files: Cloudflare R2 has 10 GB-month free
-  and no egress charge; Backblaze B2 has 10 GB free and egress up to three times the stored amount. The application
-  needs a small VPS (a few euros a month at Hetzner or similar), backups of the database, updates, and someone on
-  duty for moderation, abuse and GDPR requests. It isn't free in money or time.
+- **mod.io**: a closed commercial service with a full REST API (browse, subscribe, rate, report, upload) and its own
+  moderation tools; core features documented as free, money from premium features and a paid-mods marketplace. Every
+  write needs a player account; its API terms require mod.io's branding wherever the API is used; whether it takes an
+  unofficial engine for someone else's game, and whether the read key may sit in public source, isn't stated.
+- **Thunderstore** (thunderstore.io; backend AGPL-3.0, Django, PostgreSQL, Redis, S3 storage): a free, ad-supported
+  multi-game mod site; new games are requested on its Discord; downloads need no account, uploads a GitHub or
+  Discord sign-in or a team token; likes and download counts. A free fit, but a third party's site and rules.
+- **Modrinth's backend** (`labrinth`, AGPL-3.0, Rust): shaped around Minecraft (loaders, game versions); a fork to
+  keep up with. **ModHost** (MIT, Rust): small and in beta.
+- **Self-hosting a full portal**: a small VPS and free-tier storage (Cloudflare R2: 10 GB free, no egress charge),
+  plus backups, updates, moderation and GDPR duty.
+- **A GitHub index** (chosen): plain files and pull requests, free, nothing to run, nothing locked in; a GitHub
+  account and a pull request are a small step for an author.
 
-#### 1.2 Compared
+#### 1.2 Decision
 
-| | mod.io | Thunderstore, hosted | Thunderstore, self-hosted | GitHub index |
-|---|---|---|---|---|
-| Cost now | none | none | a VPS (€4–10 a month) + R2 free tier | none |
-| Cost at growth | free core; terms can change | none (their ads pay) | storage beyond 10 GB, bigger VPS | none (GitHub limits per file 2 GiB) |
-| Freedom to use, fork | closed service, their terms | AGPL backend; the packages are plain zips anyone can mirror | ours entirely | plain files |
-| In-client API | full REST: browse, subscribe, rate, report, upload | REST: list and download without an account; upload with a token | same as hosted | read a JSON file |
-| Ratings, subscriptions | both, server-side | likes and download counts; "installed" is kept by the client | same | none |
-| Moderation | their tools and staff, plus ours | their staff plus community moderators we name | all ours | review before merge, all ours |
-| Safety | their scan; we still enforce data-only and hashes | we enforce data-only and hashes on download | we can add server-side checks | CI checks, signed index |
-| Privacy, GDPR | an account (email) for any write; mod.io is the controller | no account to download; the site sees the address | we are the controller | GitHub sees the address |
-| Lock-in | high: API and accounts are theirs | low: the same backend can be run by us, mods move as they are | none | none |
-| Approval | to be asked; unofficial engine unclear | to be asked; stated requirement is mod-author interest | none | none |
+**The GitHub index**, read and installed from the Mods page; publishing is a pull request. Download counts and
+likes can come later from a small companion service the maintainers host (§1.4); the index never depends on it.
 
-#### 1.3 Recommendation
+- **The index**: a public repository (`openIG2-org/mods`) with one file per mod release,
+  `mods/<id>/<version>.toml`: id, name, author, version, `requires` (openIG2 range), `depends`, `conflicts`,
+  licence (SPDX), description, picture URL, download URL, size and SHA-256. The download is a release asset of the
+  author's own repository (or of the index repository when the author has none). The maintainers' CI checks every
+  pull request: the schema, the download's size and hash, the zip's safety rules, the file kinds (TOML, PNG, the
+  game's data formats; no executables, scripts or archives inside) and the format checks that need no install
+  (`openIG2-check --package` without an install: TOML parses, keys, story syntax). A merge builds one
+  `index.json` and signs it with the maintainers' Ed25519 key (minisign format).
+- **The client** (Mods page → Browse): the index is fetched over HTTPS only when the player opens Browse (an opt-in
+  network use, said on the page; never at start), its signature checked against the key built into the client, and
+  cached for offline use. Browse lists the mods compatible with this version (search, picture, description, author,
+  licence, size, dependencies), with Install, Update and Remove. A download is checked against the index's SHA-256
+  and the zip rules before it is moved into `mods/`; an update keeps the old zip until the new one is verified.
+  Installed mods that have a newer compatible release show "Update". Mods installed by hand keep working as today.
+- **Assets and licences**: the engine ships no original files, and the repository holds none either. No file from
+  the game, decoded, converted or upscaled from it, may be uploaded; only the author's own work under a licence that
+  allows sharing. Review asks for it; the client refuses a mod whose file is byte-identical to the install's (it
+  would change nothing anyway). A takedown is a revert of the index entry; the signed index drops it at the next
+  fetch.
+- **Uploading**: the author runs `openIG2-check --package <folder>` (or the Mods page's Package button): it checks
+  the mod, writes the zip, its SHA-256 and the index entry. Publishing is a pull request to the index with that entry;
+  the Mods page's Publish button opens the browser at the repository's "add file" page with the entry filled in. An
+  in-client sign-in (GitHub's device flow, so the client opens the pull request itself) is a later option.
 
-**A Thunderstore community, hosted on thunderstore.io**, used through its API from the Mods page. It is the
-closest free match to mod.io: browse, search, install, update and upload, likes and download counts, moderation
-with our own community moderators, and no account for players who only download. It is free to the project and the
-players, and it doesn't lock the project in: the backend is AGPL-3.0, the packages are plain zips, so the same client
-code works against our own instance if thunderstore.io ever stops fitting.
+#### 1.3 Signing key
 
-**Fallback if Thunderstore says no or the terms stop fitting: run the Thunderstore backend ourselves** (Docker
-Compose on a small VPS, files on Cloudflare R2's free tier, nightly database backups), with the same client code
-pointed at our address. Cost: a few euros a month and the moderation and GDPR duty. If even that is too much, the
-GitHub index of the first draft (no server, no cost, no in-client upload) remains the last resort.
+The maintainers make the private key and keep it outside every repository (offline, with a backup); CI signs with it
+through a repository secret, or a maintainer signs by hand at merge. The client embeds the public key and accepts a
+second one, so the key can be replaced: a release with the new key ships before the index switches to it.
 
-**mod.io is a later, optional second source**, only if mod.io agrees in writing that it takes an unofficial,
-open-source engine and that the read key may be public. Its subscriptions and server-side ratings are the one thing
-Thunderstore lacks; it isn't worth an account requirement and a closed dependency as the only source.
+#### 1.4 Later: a companion service for counts and likes
 
-#### 1.4 How it works
+An optional small service the maintainers host (it can share the project's own server, such as the rendezvous or web
+host): `POST` a download or a like for an index id, `GET` the totals for the ids on a page. The index stays the only
+source of what exists and where it downloads from; Browse shows the numbers when the service answers and works
+without it. Likes need some identity to stop ballot stuffing (one per install key or per GitHub sign-in); downloads
+are counted without one.
 
-- **One mod, two manifests.** A package is a zip holding `mod.toml` and the mod's files (as today) plus Thunderstore's
-  `manifest.json`, `icon.png` (256×256) and `README.md` at its root. The loader ignores those three files (they are no
-  game files and stay outside the multiplayer fingerprint), so the same zip works from the site and dropped in by hand.
-  `openIG2-check --package <folder>` writes all three from `mod.toml` (`id` → name, `version` → `version_number`,
-  `depends` → dependencies as `Author-Name-x.y.z`) and refuses what the site would refuse.
-- **Browse** (Mods page tab). Opens the community's package list over HTTPS only when the player opens the tab (an
-  opt-in network use, said on the page; never at start) and caches it for offline use. It shows the mods compatible
-  with this version (search, categories, icon, description, author, licence, size, likes, downloads, dependencies),
-  with Install, Update and Remove. A download is checked against its listed size, against the zip rules and the
-  data-only file kinds before it lands in `mods/`; its SHA-256 is recorded so a changed file is noticed. An update keeps
-  the old zip until the new one is verified. Mods installed by hand keep working as today.
-- **Rate and report.** "Like" and "Report" open the mod's page in the browser (both need the site's sign-in); the
-  client stores no account.
-- **Upload.** Package (above), then either the site's upload page (the Mods page opens it with the zip's folder) or,
-  for authors who want it, Upload in the client with a service-account token the author pastes once (kept in the
-  settings folder, never sent anywhere but the site).
-- **Server address.** The site's address and community name are one setting, so a self-hosted instance (the fallback)
-  or a test instance needs no code change.
-- **Assets and licences.** The engine ships no original files, and no upload may contain one: no file from the game,
-  decoded, converted or upscaled from it; only the author's own work under a licence that allows sharing. The
-  community's rules say so, the client refuses a mod with a file byte-identical to the install's, and our moderators
-  remove what breaks the rule.
+Running it makes the project the data controller for what it receives. The requests carry the player's address, so
+the service keeps addresses only for short-lived rate limiting, stores counts per id (and the like keys, deletable on
+request), has a privacy notice reachable from the Mods page, and is opt-in like Browse.
 
-#### 1.5 What needs the maintainers' approval or action
+#### 1.5 What the maintainers do
 
-Nothing below is done; each step is the maintainers' own:
-
-1. **Ask Thunderstore** (their Discord, `#game-requests`) for an openIG2 community: say it is a free, open-source
-   engine that ships no original files, and ask whether that is accepted, whether the client may use the API to list,
-   download and upload, and who may moderate. Approve the `ecosystem-schema` pull request text before it is opened.
-2. **Create the accounts**: a Thunderstore team for the project (GitHub or Discord sign-in) and, for the release
-   tooling, a service-account token kept out of the repository.
-3. **Name the community moderators** and approve the community's rules (data only, own work, no original files,
-   takedown on request).
-4. **Optional: ask mod.io in writing** whether it accepts an unofficial open-source engine, whether the read key may
-   sit in public source, and whether its branding rule fits the Mods page. Only if the answer is yes does a mod.io
-   source get its own proposal.
-5. **Only for the fallback**: choose a VPS and storage provider, the domain, who holds backups and keys, and the
-   privacy policy, since the project then becomes the data controller.
-
-Sources (read 2026-11-08): mod.io's API documentation (`docs.mod.io/restapi`), API Access Terms (`mod.io/apiterms`),
-Game Terms and its support pages on premium features and the marketplace; Thunderstore's wiki page "Adding a new
-game" and the `thunderstore-io/Thunderstore` repository; the `modrinth/labrinth` repository; the
-`redstonewizard08/modhost` repository; Cloudflare R2's and Backblaze B2's pricing pages. Terms change: recheck them
-before step 1.
+1. Create the `openIG2-org/mods` repository (its README holds the entry format and the rules below).
+2. Generate the Ed25519 signing key (minisign); keep the private key out of every repository; give the public key to
+   the client.
+3. Name the reviewers who merge entries and handle takedowns.
+4. Approve the rules for contributions: the author's own work only, under a licence that allows sharing; no file from
+   the game or derived from it; no executables or scripts; takedown on request.
+5. Later, only for §1.4: choose its host and approve its privacy notice.
 
 ### 2. `mod.toml`, version 2
 
@@ -169,8 +126,8 @@ a mod whose dependency is missing or whose range excludes this version, and says
 ### 3. Multiplayer
 
 The room's admission message gains the host's mod list (id, version, SHA-256); a joiner whose mods differ sees which
-ones, and "Download and join" installs the missing ones from the community (matched by name, version and SHA-256) (closing ADR 0068 §6's open item). This is
-a lobby protocol version bump; the fingerprint stays the authority.
+ones, and "Download and join" installs the missing ones from the index (matched by id, version and SHA-256), closing ADR 0068 §6's open
+item. This is a lobby protocol version bump; the fingerprint stays the authority.
 
 ### 4. Tutorials
 
@@ -199,24 +156,24 @@ Ordered by value for the effort; each is a proposal row with its size and risks:
 
 | # | What | Effort | Risk (determinism, multiplayer, saves) |
 |---|---|---|---|
-| 552 | Defences (kinds 28..=43) as `like` sources; extra research fields so the ship and tank categories take new techs | 1–2 weeks | new kinds already refuse to load without their mod; research field layout is part of the save |
-| 553 | Scenarios and galaxies as data: mod `.scn` files in the scenario list; a galaxy file (stars, planets, owners, start fleets) and custom-game presets | 2–3 weeks | start data only; the save holds the galaxy, so none after start |
-| 554 | Looks and sounds for new entries: `model`, `icon`, `sound` fields on new techs, buildings, hulls and weapons; music tracks added to the playlist | 2 weeks | presentation only; kept out of the sim's state |
-| 555 | The AI's weights as rule lists (research and build priorities, war and peace thresholds, aggressiveness) | 2–4 weeks | data in the fingerprint; the defaults must stay the original's exactly (replay tests) |
-| 556 | Story mods, later parts: planet info lines, videos by name, story texts as message parameters, new messages with their talking heads | 2 weeks | story state is in the save (format bump per new state) |
-| 557 | A sandboxed script layer (e.g. Rhai) for rules and events | months | the highest: determinism (no clock, no own RNG, bounded steps and memory), save state, speed; decided only after 552–556 show what stories can't do |
-| 558 | New languages as mods (all text files, the language in the options) | 2–3 weeks | none for the sim; the game's font covers one code page, so a language needs its glyphs |
-| 559 | Mods in the browser build (zips from the player's storage) | 1 week | as the desktop |
+| 554 | Defences (kinds 28..=43) as `like` sources; extra research fields so the ship and tank categories take new techs | 1–2 weeks | new kinds already refuse to load without their mod; research field layout is part of the save |
+| 555 | Scenarios and galaxies as data: mod `.scn` files in the scenario list; a galaxy file (stars, planets, owners, start fleets) and custom-game presets | 2–3 weeks | start data only; the save holds the galaxy, so none after start |
+| 556 | Looks and sounds for new entries: `model`, `icon`, `sound` fields on new techs, buildings, hulls and weapons; music tracks added to the playlist | 2 weeks | presentation only; kept out of the sim's state |
+| 557 | The AI's weights as rule lists (research and build priorities, war and peace thresholds, aggressiveness) | 2–4 weeks | data in the fingerprint; the defaults must stay the original's exactly (replay tests) |
+| 558 | Story mods, later parts: planet info lines, videos by name, story texts as message parameters, new messages with their talking heads | 2 weeks | story state is in the save (format bump per new state) |
+| 559 | A sandboxed script layer (e.g. Rhai) for rules and events | months | the highest: determinism (no clock, no own RNG, bounded steps and memory), save state, speed; decided only after 554–558 show what stories can't do |
+| 560 | New languages as mods (all text files, the language in the options) | 2–3 weeks | none for the sim; the game's font covers one code page, so a language needs its glyphs |
+| 561 | Mods in the browser build (zips from the player's storage) | 1 week | as the desktop |
 
 ## Consequences
 
 - Players install, update and remove mods from the Mods page; manual installs keep working; the game never needs the
   network unless the player opens Browse.
-- The project depends on thunderstore.io for hosting, with its own instance of the same AGPL backend as the way out;
-  it names community moderators and keeps the community's rules.
-- `mod.toml` grows; old mods stay valid; packages also carry Thunderstore's three files, which the loader ignores.
-- Rejected: mod.io as the only source (closed service, an account for every write, branding duty, acceptance
-  unclear; a later second source if it agrees); self-hosting from the start (cost and duty with no gain while the
-  hosted community is free); the GitHub index as the main way (no in-client upload or ratings; kept as last resort);
-  Modrinth's backend (Minecraft-shaped) and ModHost (too young); executable mods (native code, scripts outside a
-  sandbox).
+- The project maintains an index repository, its CI, a signing key (kept offline; the client embeds the public key
+  and accepts a second one for rotation) and a review and takedown routine.
+- Authors need a GitHub account and open a pull request (prepared by the client) to publish.
+- `mod.toml` grows; old mods stay valid.
+- Rejected: mod.io (closed service, an account for every write, branding duty, acceptance unclear); a Thunderstore
+  community (a third party's site and rules for what plain files do); a self-hosted full portal (cost and duty for
+  little gain; the optional companion service covers counts and likes); Modrinth's backend (Minecraft-shaped) and
+  ModHost (too young); executable mods (native code, scripts outside a sandbox).
