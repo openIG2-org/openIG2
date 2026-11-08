@@ -7,6 +7,7 @@ Getting the game from "every part works" to "a player can install it and play it
 
 - Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
+- Multiplayer room: every galaxy setting, the Custom game switch, its seed and the Empires button included, fits on the screen without scrolling.
 - Multiplayer: the host can switch a room to a Custom game (planets, seed and, per seat, money, technology, start planets, aggressiveness and start relation); every player sees the settings and the game starts with them. With the enhanced ruleset the classic skirmish panel has an "Advanced" label that opens the Custom game page.
 - New game, Custom game: a map of the galaxy under the empires table shows every star and the empires' start planets; click a star to start there, or press "Random start".
 - New game: a Custom game page (modern interface) sets the galaxy's planet count and seed and, per empire, the race, name, money, technology, start planets and, for computers, the level, aggressiveness and start relation.

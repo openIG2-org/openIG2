@@ -475,10 +475,11 @@ impl MpScreen {
             ui.min_rect().height()
         });
         // The galaxy's settings: four a row, the setting's name over its stepper (the host's).
-        let galaxy = Rect::from_min_size(Pos2::new(left.left(), left.top() + h + 36.0 + 30.0), Vec2::new(left.width(), 0.0));
+        // Down to the chat's bottom line; a taller seats' panel (the empires' table) leaves it short: it scrolls then.
+        let galaxy_top = left.top() + h + 36.0 + 24.0;
+        let galaxy = Rect::from_min_size(Pos2::new(left.left(), galaxy_top), Vec2::new(left.width(), (left.bottom() - galaxy_top).max(160.0)));
         place(ctx, "mp-galaxy", galaxy, ds::PanelKind::Glass, 0.88, [24.0, 20.0], op, |ui| {
-            // A custom game's rows can outgrow the column: the panel scrolls within it.
-            let max_h = (left.bottom() - galaxy.top() - 40.0).max(120.0);
+            let max_h = galaxy.height() - 40.0;
             egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
                 match st.galaxy {
                     Some(o) => {
@@ -502,14 +503,14 @@ impl MpScreen {
                         let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
                         for (r, four) in rows.chunks(4).enumerate() {
                             if r > 0 {
-                                ui.add_space(16.0);
+                                ui.add_space(SETTING_ROWS);
                             }
                             ui.horizontal_top(|ui| {
                                 ui.spacing_mut().item_spacing.x = 24.0;
                                 for (c, (name, value, down, up)) in four.iter().enumerate() {
-                                    ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                    ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
                                         ui.set_width(cell);
-                                        ui.spacing_mut().item_spacing.y = 12.0;
+                                        ui.spacing_mut().item_spacing.y = SETTING_GAP;
                                         label(ui, name.trim_end_matches(':'));
                                         let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
                                         let moved = (step < 0 && *down) || (step > 0 && *up);
@@ -641,14 +642,14 @@ impl MpScreen {
         let tr = |t: &str| crate::tr::text(texts.lang, t).to_string();
         // Without the install's start tables there is nothing to start a custom game from.
         let Some(seat) = self.custom_seat.or(o.custom.map(|c| c.seats[0])) else { return };
-        ui.add_space(16.0);
+        ui.add_space(SETTING_ROWS);
         let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
         let new_seed = || crate::new_game::wall_ticks() % 0x7fff;
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 24.0;
-            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(cell);
-                ui.spacing_mut().item_spacing.y = 12.0;
+                ui.spacing_mut().item_spacing.y = SETTING_GAP;
                 label(ui, &tr("Custom game"));
                 let on = o.custom.is_some();
                 let v = if on { tr("on") } else { tr("off (classic)") };
@@ -666,24 +667,24 @@ impl MpScreen {
                 ui.ctx().data_mut(|d| d.remove::<bool>(egui::Id::new(EMPIRES)));
                 return;
             };
-            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
                 ui.set_width(cell);
-                ui.spacing_mut().item_spacing.y = 12.0;
+                ui.spacing_mut().item_spacing.y = SETTING_GAP;
                 label(ui, &tr("Seed"));
                 let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, &c.seed.to_string(), cell - 64.0).1).inner;
                 if step != 0 {
                     acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { seed: c.seed.wrapping_add_signed(step.signum()), ..c }), ..o }));
                 }
             });
-            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.add_space(30.0);
+            ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(SETTING_H - 36.0);
                 if ui.add_enabled(host, ds::Plate::new(&tr("New seed")).width(cell).height(36.0)).clicked() {
                     acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { seed: new_seed(), ..c }), ..o }));
                 }
             });
             // The empires' start values open in the seats' panel (and back).
-            ui.allocate_ui_with_layout(Vec2::new(cell, 70.0), egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.add_space(30.0);
+            ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(SETTING_H - 36.0);
                 let id = egui::Id::new(EMPIRES);
                 let open = ui.ctx().data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
                 if ui.add(ds::Plate::new(&tr(if open { "Players" } else { "Empires" })).width(cell).height(36.0)).clicked() {
@@ -952,6 +953,12 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     println!("{}", out.display());
     Ok(())
 }
+
+/// A galaxy setting's cell (its name over its stepper), the gap between the two and between the cells' rows: tight
+/// enough that the custom game's third row fits under the eight seats at 1080 points.
+const SETTING_H: f32 = 62.0;
+const SETTING_GAP: f32 = 8.0;
+const SETTING_ROWS: f32 = 12.0;
 
 /// The egui memory key of the open custom game empires' table (ADR 0085 §4).
 const EMPIRES: &str = "mp-cg-empires";
