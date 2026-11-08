@@ -1342,4 +1342,13 @@ impl Rules {
     pub fn to_ron(&self) -> String {
         ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default()).expect("serialisable")
     }
+
+    /// Write `install`'s rule tables (its mods' patches applied) to `out` as RON and say what was written: the dump
+    /// of `ig2-rules-dump` and `openIG2-check --dump-rules`. The file holds the game's values: for the player's own
+    /// use, never to be shared.
+    pub fn dump(install: &ig2_formats::Install, out: &std::path::Path) -> std::result::Result<String, String> {
+        let rules = Self::from_install(install)?;
+        std::fs::write(out, rules.to_ron()).map_err(|e| format!("{}: {e}", out.display()))?;
+        Ok(format!("wrote {}: {} techs, {} buildings, {} pod types", out.display(), rules.techs.len(), rules.buildings.len(), rules.pod_types.len()))
+    }
 }

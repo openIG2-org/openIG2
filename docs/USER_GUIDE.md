@@ -270,8 +270,8 @@ deflated files only (what every zip tool writes), no passwords, no files outside
 `ig2.exe` can't be replaced: the rule tables are read from it. To change rules, put a `rules.toml` at the top of
 the mod folder (`mods\cheap-labs\rules.toml`); it sets single fields of the tables by name. A record is
 `[<table>.<id>]` with `field = value` lines; a list is `[<list>]` with `<index> = value` lines. The ids and the
-current values are in the file `cargo run --release -p ig2-rules --bin ig2-rules-dump <install> rules.ron` writes
-(keep it to yourself: it holds the game's values). An example (made-up numbers):
+current values are in the file `openIG2-check --dump-rules rules.ron` writes (keep it to yourself: it holds the
+game's values; a source build also has `cargo run --release -p ig2-rules --bin ig2-rules-dump <install> rules.ron`). An example (made-up numbers):
 
 ```toml
 # Tech 12 is cheaper and quicker to research.
@@ -309,7 +309,7 @@ key = "fusion_reactor"        # your own name for it; other entries use it
 category = 9                  # power plants (6 civil, 7 research, 8 military, 9 power plants)
 name = "Fusion reactor"
 description = ["A plant that fuses the colony's", "waste into energy."]
-prerequisites = [135]         # the Mezon plant's tech (numbers as ig2-rules-dump prints them)
+prerequisites = [135]         # the Mezon plant's tech (numbers as --dump-rules prints them)
 research_cost = 40000
 research_time = 120
 price = 9000
@@ -490,7 +490,9 @@ with the mod, the story and the entry named.
 To change or add single lines of text without replacing a whole file, put a `texts.en.toml` at the top of the mod
 folder, and `texts.de.toml`, `texts.fr.toml`, `texts.es.toml`, `texts.it.toml` or `texts.hu.toml` for other
 languages; a line your mod has no translation for shows its English one. Each `["<file>"]` heading names a game text
-file and the lines under it set that file's entries by their key (ADR 0044 §10). An example for a made-up race:
+file and the lines under it set that file's entries by their key (ADR 0044 §10). `openIG2-check --dump-texts
+texts.toml` writes every key and line of your install's texts in this form, to look keys up (keep it to yourself:
+it holds the game's texts; copy only the keys you change and write your own lines). An example for a made-up race:
 
 ```toml
 # Race names: line 900 is new, so it is added.

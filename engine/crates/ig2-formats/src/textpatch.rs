@@ -122,6 +122,56 @@ impl TextPatch {
     }
 }
 
+/// Every key and text of the patchable files, in a `texts.<lang>.toml` patch's own form (`openIG2-check
+/// --dump-texts`): `files` are (game path, decoded text) pairs; the others are skipped. A message part's lines are
+/// joined by `\n` and a diplomacy code's variants are an array, as a patch writes them. The output holds the game's
+/// texts: for the player's own use, never to be shared.
+pub fn dump<'a>(files: impl IntoIterator<Item = (&'a str, &'a str)>) -> String {
+    use crate::strings::{KeyedStrings, UiStrings};
+    let mut doc = DocumentMut::new();
+    for (path, text) in files {
+        let Some(k) = kind(path) else { continue };
+        let mut entries: Vec<(String, Vec<String>)> = Vec::new();
+        match k {
+            Kind::Ui => {
+                let mut t = UiStrings::default();
+                t.add_file(text);
+                entries.extend(t.entries.into_iter().map(|((f, s, i), v)| (format!("{f} {s} {i}"), vec![v])));
+            }
+            Kind::Keyed => {
+                let name = path.rsplit('/').next().unwrap_or(path);
+                let table = crate::strings::KEYED_TABLES.iter().find(|(f, _)| *f == name).map_or(0, |t| t.1);
+                let mut t = KeyedStrings::default();
+                t.add_file(table, text);
+                entries.extend(t.table(table).map(|(n, v)| (n.to_string(), vec![v.to_owned()])));
+            }
+            Kind::Phrases => {
+                for p in crate::diplomacy::PhraseFile::parse(text).phrases {
+                    let line = p.lines.join("\n");
+                    match entries.iter_mut().find(|(c, _)| *c == p.code) {
+                        Some((_, v)) => v.push(line),
+                        None => entries.push((p.code, vec![line])),
+                    }
+                }
+            }
+            Kind::Parts => {
+                let parts = crate::dialogue::parse_txt_script(text);
+                entries.extend(parts.into_iter().map(|p| (p.part.to_string(), vec![p.lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>().join("\n")])));
+            }
+        }
+        if entries.is_empty() {
+            continue;
+        }
+        let mut table = toml_edit::Table::new();
+        for (key, mut texts) in entries {
+            let v: Value = if texts.len() == 1 { texts.remove(0).into() } else { texts.into_iter().collect::<toml_edit::Array>().into() };
+            table.insert(&key, Item::Value(v));
+        }
+        doc.insert(path, Item::Table(table));
+    }
+    doc.to_string()
+}
+
 fn normal_key(k: Kind, key: &str) -> Result<String, String> {
     let num = |s: &str, max: u32| s.parse::<u32>().ok().filter(|n| (1..=max).contains(n)).ok_or(());
     match k {
@@ -297,6 +347,28 @@ mod tests {
         assert_eq!(parts[2].lines[0].text, "Bye");
         let missing = patch("[\"dataraw/uzenetek/txt0042.txt\"]\n7 = \"x\"\n").apply("dataraw/uzenetek/txt0042.txt", src).unwrap_err();
         assert!(missing.contains("part 7"), "{missing}");
+    }
+
+    #[test]
+    fn dump_reads_back_as_a_patch() {
+        let files = [
+            ("dataraw/text/txt03.txt", "3 1 1 \"Fix\" ;10\r\n3 1 2 \"Keep\"\r\n"),
+            ("dataraw/text/s_races.txt", "; races\r\n1 Alpha\r\n2 Beta\r\n"),
+            ("dataraw/diplomac/ajanlat.eng", "#001/000/003 ; note\r\n- Old one\r\n- More\r\n#001/000/003\r\n- Old two\r\nA001/000\r\n- Fallback\r\n"),
+            ("dataraw/uzenetek/txt0042.txt", "01 0000 03 EN\r\n+ Hello\r\n- flowing\r\n"),
+            ("dataraw/text/fleet.txt", "not patchable\r\n"),
+        ];
+        let out = dump(files);
+        assert!(!out.contains("fleet.txt"), "{out}");
+        let mut p = TextPatch::default();
+        assert_eq!(p.add(&out, "dump", Lang::En).unwrap(), 7, "{out}");
+        // Each file patched with its own dump reads as before.
+        for (path, src) in &files[..4] {
+            assert_eq!(dump([(*path, p.apply(path, src).unwrap().as_str())]), dump([(*path, *src)]), "{path}");
+        }
+        let f = PhraseFile::parse(&p.apply("dataraw/diplomac/ajanlat.eng", "").unwrap());
+        assert_eq!(f.variants("001/000/003").len(), 2);
+        assert_eq!(f.variants("001/000/003")[0].lines, ["Old one", "More"]);
     }
 
     #[test]

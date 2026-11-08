@@ -33,7 +33,8 @@ Settings, saves
 - Save slots are in the same folder (save<n>.ig2s; the original's save<n>.sav load too).
 - ig2-client.log in the same folder (Windows): the game's messages and errors from its last start;
   attach it to a bug report.
-- openIG2-check checks every file of your install and lists what fails.
+- openIG2-check checks every file of your install and lists what fails. For mod makers, --dump-rules FILE and
+  --dump-texts FILE write your install's rule values and text keys (for your own use only: never share them).
 
 Uninstall: delete this folder and, if you like, ig2-rework-options.dat and save*.ig2s.
 

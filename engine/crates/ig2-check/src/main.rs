@@ -7,6 +7,10 @@
 //! checked too, and listed with the install file each one replaces or the file it adds; each `rules.toml` and
 //! `texts.<lang>.toml` is checked on its own.
 //! Exit code 0 when everything loads, 1 when something fails, 2 when there is no install.
+//!
+//! Modder tools (ADR 0086 §5): `--dump-rules FILE` writes the install's rule tables (RON, the ids and values a
+//! `rules.toml` names) and `--dump-texts FILE` every patchable text file's keys and lines (a `texts.<lang>.toml`),
+//! instead of the checks. Both hold the game's data: for the player's own use, never to be shared.
 
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -389,6 +393,34 @@ fn videos(inst: &Install, g: &mut Group, quick: bool) {
     g.notes.extend(late);
 }
 
+const HELP: &str = "\
+openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...
+    loads every file of your Imperium Galactica II install and its mods and reports what fails
+openIG2-check [INSTALL_DIR] [--dump-rules FILE] [--dump-texts FILE]
+    modder tools: writes your own install's rule ids and values (RON) or every text file's keys and lines (in the
+    form of a mod's texts.<lang>.toml) to FILE. The files hold the game's data: they are for your own use and must
+    never be shared or put in a mod.";
+
+/// Every patchable text file of `inst` (its language), keys and lines, to `out` as a `texts.<lang>.toml`.
+fn write_texts(inst: &Install, out: &std::path::Path) -> Result<String, String> {
+    use ig2_formats::textpatch;
+    let files: Vec<(&str, String)> = inst
+        .all_files()
+        .into_iter()
+        .filter(|p| textpatch::kind(p).is_some())
+        .map(|p| decoded(inst, p).map(|t| (p, t)).map_err(|e| format!("{p}: {e}")))
+        .collect::<Result<_, _>>()?;
+    let name = textpatch::file_name(inst.lang());
+    let head = format!(
+        "# {name}: the keys and lines of your own install's texts (openIG2-check --dump-texts).\n\
+         # They are the game's data: for your own use, never share this file or put it in a mod; copy only the keys you\n\
+         # change into your mod's {name} and write your own lines.\n\n"
+    );
+    let body = textpatch::dump(files.iter().map(|(p, t)| (*p, t.as_str())));
+    std::fs::write(out, head + &body).map_err(|e| format!("{}: {e}", out.display()))?;
+    Ok(format!("wrote {}: {} text files ({name})", out.display(), files.len()))
+}
+
 /// `OPENIG2_VERSION` at build time (the release's MAJOR.MINOR.N), else the repository's `VERSION` with `-dev`.
 fn version() -> String {
     option_env!("OPENIG2_VERSION").map_or_else(|| format!("{}-dev", include_str!("../../../../VERSION").trim()), str::to_owned)
@@ -398,13 +430,21 @@ fn main() {
     let mut root = None;
     let mut quick = false;
     let mut given: Option<Vec<String>> = None;
+    let (mut dump_rules, mut dump_texts) = (None, None);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--quick" => quick = true,
             "--mod" => given.get_or_insert_with(Vec::new).extend(args.next()),
+            "--dump-rules" | "--dump-texts" => {
+                let Some(file) = args.next() else {
+                    eprintln!("openIG2-check: {a} needs a file name");
+                    std::process::exit(2);
+                };
+                *if a == "--dump-rules" { &mut dump_rules } else { &mut dump_texts } = Some(PathBuf::from(file));
+            }
             "--help" | "-h" => {
-                println!("openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...: loads every file of your Imperium Galactica II install and mods");
+                println!("{HELP}");
                 return;
             }
             _ => root = Some(PathBuf::from(a)),
@@ -434,6 +474,29 @@ fn main() {
         std::process::exit(2);
     }
     let lang = ig2_formats::locale::exe_language(&root).0;
+    if dump_rules.is_some() || dump_texts.is_some() {
+        let done = Install::open(&root, lang).map_err(|e| e.to_string()).and_then(|inst| {
+            let mut said = Vec::new();
+            if let Some(f) = &dump_rules {
+                said.push(ig2_rules::Rules::dump(&inst, f)?);
+            }
+            if let Some(f) = &dump_texts {
+                said.push(write_texts(&inst, f)?);
+            }
+            Ok(said)
+        });
+        match done {
+            Ok(said) => {
+                said.iter().for_each(|s| println!("{s}"));
+                println!("these files hold your game's data: keep them for your own use, never share them");
+            }
+            Err(e) => {
+                eprintln!("openIG2-check: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     let (mods, missing) = ig2_formats::vfs::Mod::enabled(given);
     let inst = match Install::open_with_mods(&root, lang, mods) {
         Ok(i) => i,
@@ -516,5 +579,24 @@ mod tests {
         g.check("c", || panic!("boom"));
         assert_eq!(g.ok, 1);
         assert_eq!(g.failed, [("b".to_string(), "bad".to_string()), ("c".to_string(), "loader panicked: boom".to_string())]);
+    }
+
+    /// The dumps of the install in `IG2_INSTALL_DIR` read back: the texts as a patch, the rules as RON.
+    #[test]
+    fn the_dumps_read_back() {
+        let Some(root) = std::env::var_os("IG2_INSTALL_DIR").map(PathBuf::from).filter(|r| r.join("ig2.exe").is_file()) else {
+            eprintln!("IG2_INSTALL_DIR not set: skipped");
+            return;
+        };
+        let inst = Install::open(&root, Lang::En).unwrap();
+        let dir = std::env::temp_dir().join(format!("openig2-check-dump-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let said = write_texts(&inst, &dir.join("texts.toml")).unwrap();
+        let toml = std::fs::read_to_string(dir.join("texts.toml")).unwrap();
+        let n = ig2_formats::textpatch::TextPatch::default().add(&toml, "dump", Lang::En).unwrap();
+        assert!(n > 1000 && toml.contains("[\"dataraw/text/s_races.txt\"]"), "{said}: {n} keys");
+        ig2_rules::Rules::dump(&inst, &dir.join("rules.ron")).unwrap();
+        assert!(std::fs::read_to_string(dir.join("rules.ron")).unwrap().contains("techs"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
