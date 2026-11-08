@@ -2,7 +2,7 @@
 //! 0x5bfbf0, click handler 0x5c0120), its AI pick (exe 0x5bd6c0) and the start every machine builds itself
 //! (`FRISSIT_Start` exe 0x5bc590 / `ReceiveStartData` 0x5bc9d0 → `InitNewGame(seed, 2, 0, 1)`).
 
-use ig2_sim::game::new_game::{NewMpGalaxy, StartData};
+use ig2_sim::game::new_game::{CustomGame, NewMpGalaxy, Side, StartData};
 use ig2_sim::game::{Game, GameRules, Libc};
 use serde::{Deserialize, Serialize};
 
@@ -86,6 +86,9 @@ pub struct GalaxyStart {
     /// `Multi_Send(0x65)` right after `InitNewGame` and every peer's `MULTIGET_Story` runs `StartStory(id, 0)`; here
     /// [`GalaxyStart::build`] starts it at the same point on every machine.
     pub story: i32,
+    /// Ours (ADR 0085): a custom game in place of the generated galaxy (its seed and ticks are this start's, its
+    /// humans the room's).
+    pub custom: Option<CustomGame>,
     /// [`state_hash`] of the built start state (the joiners check theirs against it).
     pub hash: u64,
 }
@@ -98,7 +101,7 @@ pub fn seed_from_ticks(ticks: u32) -> u32 {
 impl GalaxyStart {
     /// The host's start (the hash still 0: [`GalaxyStart::build`] fills it in).
     pub fn new(ticks: u32, options: GalaxyOptions, races: [u8; 8], ais: Vec<u8>) -> Self {
-        Self { seed: seed_from_ticks(ticks), ticks, options, races, ais, story: 0, hash: 0 }
+        Self { seed: seed_from_ticks(ticks), ticks, options, races, ais, story: 0, custom: None, hash: 0 }
     }
 
     /// The start state (spec §4): `Game::before_start`, `Game::start_mp_galaxy` with `host` (the host's empire) as
@@ -129,7 +132,19 @@ impl GalaxyStart {
             ai_difficulty: std::array::from_fn(|e| if (1..=8).contains(&e) { nehezseg(self.options.difficulty[e - 1]) } else { 0 }),
         };
         let mut game = Game::before_start(data, rules);
-        game.start_mp_galaxy(&cfg, data);
+        if let Some(c) = &self.custom {
+            let mut c = CustomGame { seed: self.seed, ticks: self.ticks, en: host as i32, ..c.clone() };
+            for (i, e) in c.empires.iter_mut().enumerate() {
+                if humans.contains(&(i as u8 + 1)) {
+                    e.side = Side::Human;
+                } else if e.side == Side::Human {
+                    e.side = Side::Computer;
+                }
+            }
+            game.start_custom(&c, data);
+        } else {
+            game.start_mp_galaxy(&cfg, data);
+        }
         game.start_multiplayer(host, humans);
         game.realtime.formation.on = self.options.formation;
         game.spectators = self.options.spectators;

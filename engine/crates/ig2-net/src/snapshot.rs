@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use ig2_sim::game::new_game::CustomGame;
 use ig2_sim::game::{Game, GameRules, Libc, MpFormation, RealTime, ViewMode};
 use ig2_sim::colony_side::EMPIRES;
 use ig2_sim::ground::Field;
@@ -20,7 +21,7 @@ use crate::wire::{self, ByteBuf, Bytes};
 
 /// The save file's magic and format version (bumped whenever an encoded type changes).
 pub const MAGIC: &[u8; 8] = b"IG2RSAVE";
-pub const VERSION: u16 = 15;
+pub const VERSION: u16 = 16;
 pub const HEADER: usize = 64;
 /// The largest state a save, a start or a replay's chunk may inflate to: the header's length is the sender's word.
 pub const MAX_STATE: usize = 64 << 20;
@@ -104,6 +105,8 @@ struct View<'a> {
     story_fixes: bool,
     /// `SaveState::mod_stories` (ADR 0061; since version 14, repeats and timers since version 15).
     mod_stories: &'a ModStoryState,
+    /// `SaveState::custom` (ADR 0085; since version 16: read as the version 15 state followed by it).
+    custom: &'a Option<CustomGame>,
 }
 
 /// The version 14 story mods' state (ADR 0061 part 1: no repeating stories, no timers).
@@ -206,6 +209,7 @@ fn view<'a>(g: &'a Game, pending: &'a [Command]) -> View<'a> {
         enhanced_ai: g.enhanced_ai,
         story_fixes: g.story_fixes,
         mod_stories: &s.mod_stories,
+        custom: &s.custom,
     }
 }
 
@@ -241,6 +245,7 @@ pub fn part_hashes(game: &Game, pending: &[Command]) -> Vec<(&'static str, u64)>
         ("enhanced_ai", encoded_hash(&v.enhanced_ai)),
         ("story_fixes", encoded_hash(&v.story_fixes)),
         ("mod_stories", encoded_hash(&v.mod_stories)),
+        ("custom", encoded_hash(&v.custom)),
     ]
 }
 
@@ -333,7 +338,9 @@ impl Snapshot {
     /// The game and its pending sim-originated commands. `uninit` stays `None`: appended records start zeroed, the
     /// same on every peer. The per-peer parts (`Game::local`, `Game::cosmetic`) are the joiner's to set.
     pub fn restore<'r>(&self, rules: &'r GameRules) -> Result<(Game<'r>, Vec<Command>), Error> {
-        let o: Owned = match wire::from_slice(&self.state) {
+        let (o, custom) = match wire::from_slice::<(Owned, Option<CustomGame>)>(&self.state) {
+            Ok(v) => v,
+            Err(_) => (match wire::from_slice(&self.state) {
             Ok(o) => o,
             Err(e) => wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, BTreeMap<u8, (i32, i32)>, MpFormation, bool, [i32; EMPIRES], [u8; EMPIRES], Stats, bool, bool, ModStoryState14>>(&self.state)
                 .map(|o| o.upgrade(|i| i, |t| t, |f| f, |s| s, |d| d, |a| a, |g| g, |h| h, |k| k, ModStoryState::from))
@@ -348,6 +355,7 @@ impl Snapshot {
                 .or_else(|_| wire::from_slice::<Owned<Vec<(u8, ByteBuf)>, (), (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|i| i, |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
                 .or_else(|_| wire::from_slice::<Owned<(), (), (), (), (), (), (), (), (), ()>>(&self.state).map(|o| o.upgrade(|()| Vec::new(), |()| BTreeMap::new(), |()| MpFormation::default(), |()| false, |()| [0; EMPIRES], |()| [0; EMPIRES], |()| Stats::default(), |()| false, |()| false, |()| ModStoryState::default())))
                 .map_err(|_| e)?,
+        }, None),
         };
         let mut s = SaveState::from_parts(Memory::from_runs(o.mem.into_iter().map(|(at, b)| (at, b.0)).collect()), o.template.into_iter().map(|(n, b)| (n, b.0)).collect());
         s.fleets = records(&o.fleets)?;
@@ -377,6 +385,7 @@ impl Snapshot {
         }
         s.transfer_panels = o.transfers;
         s.ai_difficulty = o.ai_difficulty;
+        s.custom = custom;
         let mut g = Game::new(s, rules);
         g.libc = Libc(o.libc);
         g.fleet_name = o.fleet_name.map(|b| b.0);
@@ -454,7 +463,7 @@ impl Header {
         let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap());
         let h = Header { version: u16_at(8), flags: u16_at(10), turn: u64_at(12), tick: u64_at(20), hash: u64_at(28), rules: u64_at(36) };
         // Version 4 states lack the inboxes, 4 and 5 the transfer panels, 4..=6 the formation phase (read as none),
-        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's), 4..=9 auto research (off), 4..=10 the statistics (none), 4..=11 the computer empires' ruleset (classic), 4..=12 the story fixes (off), 4..=13 the story mods' state (none).
+        // 4..=7 the spectators option (off), 4..=8 the computers' own levels (the game's), 4..=9 auto research (off), 4..=10 the statistics (none), 4..=11 the computer empires' ruleset (classic), 4..=12 the story fixes (off), 4..=13 the story mods' state (none), 4..=15 the custom game (none).
         if !(4..=VERSION).contains(&h.version) {
             return Err(Error::Version(h.version));
         }

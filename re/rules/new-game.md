@@ -7,7 +7,7 @@ Port status: **modes 0, 1, 2 and 3 are ported** (`engine/crates/ig2-sim/src/game
 `tools/trace/run_newgame.py` + `newgame.js`, seeds `tools/trace/scenario_seeds.py`, trace report
 `traces/2026-10-23-new-game.md`). **Not ported:** the load path (mode 5) and mode 0 with config campaign=0 (falls to
 skirmish defaults). The galaxy generation of §3 is verified through modes 2 and 3; §7's mode-0 keywords through the scenarios.
-Section 13 has the scenario and MP specifics.
+Section 13 has the scenario and MP specifics; §13.2 the custom game (enhancement, `CustomGame` / `Game::start_custom`; `start_skirmish` is a mapping onto it and the 10 skirmish starts stay exact).
 
 Sources: decompiles `_local/decomp/newgame/{elf,exe}/`, `_local/decomp/campaign2/`. ELF = unstripped x64 `ig2`
 (symbol oracle), exe = `ig2.exe` (normative). VAs are exe image VAs.
@@ -339,6 +339,30 @@ Runtime findings (normative):
   not it was placed. Tech-id reads of `EpuletekLeiro` are bytes (exe 0x5c22b9).
 - The exe's `st_bSearch` has no assert: `InitScirmishBolygok` with no planet would write `Bolygok[0]`.
 - Unknown: the 200-planet hang (§11).
+
+## 13.2 Custom game (ours, ADR 0085): part 1 ported (the sim)
+Port: `Game::start_custom(&CustomGame, &StartData)` (`engine/crates/ig2-sim/src/game/new_game.rs`); `start_skirmish`
+is `start_custom(&CustomGame::from(NewSkirmish))`, so the 10 recorded skirmish starts (§13.1) are its proof for the
+original's values. A custom game is the skirmish start (mode 3) with these values, each applied where the exe writes
+that value; a value equal to the original's changes nothing and draws nothing.
+
+| Value | Original (`NewSkirmish`) | Applied at |
+|---|---|---|
+| planets (20..=150; §11: 200 hangs the exe) | `ScrirmishPlanetNumber` | step 15 `HanyBolygo` |
+| seed, ticks, `NewgameRandomID`, game difficulty, population | the menu's | as §13.1 |
+| the opponents | `HanyGepiJatekos` drawn: step 14 switches off 7 − n computer empires of 1..=8 (`rndlog(1,1,8)` retries) | chosen: step 14 switches off every empire of 1..=8 that is neither human nor chosen and draws nothing; `HanyGepiJatekos` = their count |
+| per empire: human | `EN` only | `PlayerKi` = 1 after the prologue (several humans: the multiplayer room) |
+| race | `PlayerFaj[e]` = e (`prologue`) | `PlayerFaj[e]` after the prologue, where `Start_Init` writes the room's races; the name slot (0xBAE588 + 11e) rewritten with the race's name; the home world (`Generate_StarData` step 7) and the colonies (step 25) are peopled by the empire's race (the exe passes the empire number, the race in a skirmish) |
+| name | the race's name | the name slot, cut to 10 bytes and a NUL (the exe's `strcpy` into the 11-byte slot would run into the next) |
+| start money | `ScrirmishStartingMoney`, every empire | step 13 `Money[e]` (f64); the global keeps the human's |
+| technology 0..=3 | `ScrirmishTechicalLevel`, every empire | step 24 (`InitAdvancedTalalmanyok` mode 3) the empire's level; the global keeps the human's |
+| computer level (ADR 0033) | 0, the game's `Nehezseg` | `SaveState::ai_difficulty[e]` before step 13 (as the MP room's); step 24's hard bonus (+1 tech level) tests the empire's own level |
+| start planets | `InitScirmishBolygok`'s count (§3: 1 / by planets / `HanyBolygo / 15` / `HanyBolygo / (HanyGepiJatekos + 3)`) | step 25: the empire's count; the colonies past the original's count draw on streams 15 and 16 in place of 1 and 5 (both seeded by `RandomInit`, used by no exe call site, `time-and-rng.md` §3.1), so the later empires' colonies stay the seed's; a colony with no free planet left is not made |
+| start position | random (`Generate_StarData` step 3) | a star p: after step 3's picks (all their draws as the original's) the empire's `BirodalomBolygo` becomes p and the empire that had p, if any, takes the empire's own pick; then steps 4 and 7 as the exe |
+| aggressiveness, start relations | normal, neutral | stored only (part 4: ADR 0085 §3) |
+
+The `CustomGame` is kept in `SaveState::custom` (our save, snapshot format 16) and travels in the multiplayer start
+data (`GalaxyStart::custom`: every machine builds the same start with `start_custom` and the room's humans).
 
 ## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported
 Exe decompile (`_local/decomp/design/exe/004b19d0_DesignPoenosanElnevez.c`): `n = special + (e·100 + hull)·10`;

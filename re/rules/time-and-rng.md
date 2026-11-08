@@ -120,7 +120,7 @@ called from `IG2_gameInit` with `SDL_GetTicks()` (affects only libc `rand`) and 
 | 14 | 1 | starmap |
 | var. | 44 | stream chosen at runtime (`WF::Simulate` 17, `WF_Hordozo::Refresh2` 7, story 9, …) |
 
-Streams 0 and 15–20 aren't used by constant call sites.
+Streams 0 and 15–20 aren't used by constant call sites; a custom game's extra colonies (`new-game.md` §13.2) draw on streams 15 and 16.
 
 ### 3.2 libc `rand()` (`random(n)` = `n < 1 ? 0 : rand() % n`, 0x4f0200)
 Seeded by `srand(SDL_GetTicks())` at start-up, so **not reproducible**, and not synchronised in MP.

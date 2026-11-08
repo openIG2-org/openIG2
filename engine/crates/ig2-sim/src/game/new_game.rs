@@ -113,6 +113,158 @@ pub struct NewSkirmish {
     pub ticks: u32,
 }
 
+/// The fewest and most planets a custom game's galaxy has (ADR 0085: ig2.exe hangs at 200, spec §11).
+pub const CUSTOM_PLANETS: std::ops::RangeInclusive<i32> = 20..=150;
+/// The streams a custom game's extra colonies draw on in place of streams 1 and 5 (spec §13.2).
+const CUSTOM_STREAMS: [(usize, usize); 2] = [(1, 15), (5, 16)];
+
+/// Ours (ADR 0085, spec §13.2): a skirmish start with every start setting free; [`NewSkirmish`] maps onto one with
+/// the original's values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CustomGame {
+    /// `RandomInit`'s seed.
+    pub seed: u32,
+    /// `SDL_GetTicks()` when `NEWGAME_Diplomacy` reseeds libc.
+    pub ticks: u32,
+    /// `NewgameRandomID`.
+    pub random_id: i32,
+    /// `HanyBolygo`, [`CUSTOM_PLANETS`].
+    pub planets: i32,
+    /// The game's difficulty, the skirmish menu's 1..=3 (3, hard, is `Nehezseg` 4).
+    pub difficulty: i32,
+    /// `ScrirmishPopulation` (0..=3): the people on the start planets (and the original's count of them).
+    pub population: i32,
+    /// This machine's empire (`EN`), 1..=8.
+    pub en: i32,
+    /// `Some(n)`: the original's opponents, `n` computer empires drawn at random among the non-human ones (step 14);
+    /// `None`: each empire's [`Side`].
+    pub drawn_opponents: Option<i32>,
+    /// Empires 1..=8 (index 0 = empire 1).
+    pub empires: [CustomEmpire; 8],
+}
+
+/// One empire of a [`CustomGame`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CustomEmpire {
+    pub side: Side,
+    /// `PlayerFaj` (the original's: the empire's number).
+    pub race: u8,
+    /// The empire's name (`None`: the race's; at most 10 bytes are kept).
+    pub name: Option<Vec<u8>>,
+    pub money: i32,
+    /// The skirmish technology level 0..=3 (`ScirmishTalalmanyFejlesztes`).
+    pub tech: i32,
+    /// The start planets (the original's: `InitScirmishBolygok`'s count; the page offers 1..=8).
+    pub planets: i32,
+    /// A computer's own `Nehezseg` (ADR 0033): 0 the game's, 1, 2 or 4.
+    pub level: i32,
+    /// The start planet: `None` the original's draw, `Some(p)` planet p.
+    pub start: Option<usize>,
+    /// Part 4 (ADR 0085 §3): stored only.
+    pub aggressiveness: Aggressiveness,
+    /// The start relation towards each empire (index 1..=8; part 4: stored only).
+    pub relations: [StartRelation; 9],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Side {
+    Human,
+    Computer,
+    /// Not in the game (a chosen-opponents game only).
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Aggressiveness {
+    Low,
+    #[default]
+    Normal,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum StartRelation {
+    Hostile,
+    #[default]
+    Neutral,
+    Friendly,
+}
+
+/// `InitScirmishBolygok`'s start planets of each empire (exe 0x4e2a10, spec §3).
+pub fn skirmish_start_planets(population: i32, planets: i32, ais: i32) -> i32 {
+    match population {
+        1 => 1 + (planets > 30) as i32 + (planets > 60) as i32,
+        2 => planets / 15,
+        3 => planets / (ais + 3),
+        _ => 1,
+    }
+}
+
+impl From<&NewSkirmish> for CustomGame {
+    fn from(s: &NewSkirmish) -> Self {
+        let planets = skirmish_start_planets(s.population, s.planets, s.ais);
+        Self {
+            seed: s.seed,
+            ticks: s.ticks,
+            random_id: s.random_id,
+            planets: s.planets,
+            difficulty: s.difficulty,
+            population: s.population,
+            en: s.en,
+            drawn_opponents: Some(s.ais),
+            empires: std::array::from_fn(|i| CustomEmpire {
+                side: if i as i32 + 1 == s.en { Side::Human } else { Side::Computer },
+                race: i as u8 + 1,
+                name: None,
+                money: s.money,
+                tech: s.tech,
+                planets,
+                level: 0,
+                start: None,
+                aggressiveness: Aggressiveness::Normal,
+                relations: [StartRelation::Neutral; 9],
+            }),
+        }
+    }
+}
+
+impl CustomGame {
+    /// Within the ranges the start handles (a multiplayer start's data comes from another machine).
+    pub fn clamped(&self) -> Self {
+        let mut c = self.clone();
+        c.planets = c.planets.clamp(*CUSTOM_PLANETS.start(), *CUSTOM_PLANETS.end());
+        c.difficulty = c.difficulty.clamp(1, 3);
+        c.population = c.population.clamp(0, 3);
+        c.en = c.en.clamp(1, 8);
+        c.drawn_opponents = c.drawn_opponents.map(|n| n.clamp(1, 7));
+        let en = c.en as usize - 1;
+        for (i, e) in c.empires.iter_mut().enumerate() {
+            if i == en {
+                e.side = Side::Human;
+            }
+            e.tech = e.tech.clamp(0, 3);
+            e.planets = e.planets.clamp(1, c.planets);
+            e.level = if matches!(e.level, 1 | 2 | 4) && e.side == Side::Computer { e.level } else { 0 };
+            e.money = e.money.max(0);
+            e.start = e.start.filter(|p| (1..=c.planets as usize).contains(p));
+            if let Some(n) = &mut e.name {
+                n.truncate(10);
+            }
+        }
+        c
+    }
+
+    /// The empire `e` (1..=8).
+    pub fn empire(&self, e: usize) -> Option<&CustomEmpire> {
+        e.checked_sub(1).and_then(|i| self.empires.get(i))
+    }
+}
+
 /// `InitNewGame`'s arguments (spec §0).
 struct Init {
     mode: i32,
@@ -303,19 +455,42 @@ impl<'r> Game<'r> {
     /// `SetScirmishGameOptions` (exe 0x503e80, spec §6) on [`Game::before_start`]'s state: the common prologue, the
     /// human, the menu's choices, then `InitNewGame(seed, 3, 0, Nehezseg)` (a generated galaxy, spec §0, §3).
     pub fn start_skirmish(&mut self, cfg: &NewSkirmish, data: &StartData) {
+        self.start_custom(&CustomGame::from(cfg), data);
+    }
+
+    /// A custom game (ADR 0085, spec §13.2): the skirmish start with each [`CustomGame`] value applied where the exe
+    /// writes it. Several humans are the multiplayer room's (the caller's `start_multiplayer` follows).
+    pub fn start_custom(&mut self, cfg: &CustomGame, data: &StartData) {
+        let cfg = cfg.clamped();
         self.prologue(data, 1);
+        let me = &cfg.empires[cfg.en as usize - 1];
         let m = self.m();
+        for (i, emp) in cfg.empires.iter().enumerate() {
+            let e = i as u32 + 1;
+            if emp.side == Side::Human {
+                m.set_u8(va::PLAYER_KI + e, 1);
+            }
+            // Where `Start_Init` writes the room's races; the name slot as the prologue's.
+            if emp.race != e as u8 || emp.name.is_some() {
+                m.set_u8(va::PLAYER_FAJ + e, emp.race);
+                let name = emp.name.clone().unwrap_or_else(|| data.race_names.get(emp.race as usize).cloned().unwrap_or_default());
+                let name = crate::messages::cstr(&name);
+                m.write(0xBAE588 + 11 * e, &[&name[..name.len().min(10)], &[0]].concat());
+            }
+        }
+        let computers = cfg.empires.iter().filter(|e| e.side == Side::Computer).count() as i32;
         m.set_i32(va::EN, cfg.en);
-        m.set_u8(va::PLAYER_KI + cfg.en as u32, 1);
         m.set_i32(0xB7740C, cfg.random_id);
-        m.set_i32(SK_AIS, cfg.ais);
-        m.set_i32(SK_TECH, cfg.tech);
+        m.set_i32(SK_AIS, cfg.drawn_opponents.unwrap_or(computers));
+        m.set_i32(SK_TECH, me.tech);
         m.set_i32(SK_PLANETS, cfg.planets);
-        m.set_i32(SK_MONEY, cfg.money);
+        m.set_i32(SK_MONEY, me.money);
         let difficulty = if cfg.difficulty == 3 { 4 } else { cfg.difficulty };
         m.set_i32(SK_POPULATION, cfg.population);
         m.set_i32(va::NEHEZSEG, difficulty);
+        self.state.ai_difficulty = std::array::from_fn(|e| cfg.empire(e).map_or(0, |c| c.level));
         let init = Init { mode: 3, campaign: 0, difficulty, seed: cfg.seed, ticks: cfg.ticks };
+        self.state.custom = Some(cfg);
         self.init_new_game(&init, None, data, data.image);
         self.state.rebuild_template();
     }
@@ -443,6 +618,7 @@ impl<'r> Game<'r> {
         let mode = cfg.mode;
         let ct = if mode != 0 { 0 } else if (1..=3).contains(&cfg.campaign) { cfg.campaign } else { 1 };
         let own = self.state.ai_difficulty;
+        let custom = self.state.custom.clone();
         let m = self.m();
         // 0: the scenario's leftovers.
         m.set_u8(0xBAD0E8, 0);
@@ -542,7 +718,7 @@ impl<'r> Game<'r> {
                 money = 125000.0;
             }
             if mode == 3 {
-                money = m.i32(SK_MONEY) as f64;
+                money = custom.as_ref().and_then(|c| c.empire(e)).map_or(m.i32(SK_MONEY), |c| c.money) as f64;
             }
             m.set_f64(va::MONEY + 8 * e as u32, money);
             // The multiplayer galaxy only switches the humans on; the lobby set the others. A skirmish has no
@@ -570,7 +746,15 @@ impl<'r> Game<'r> {
         }
         // 14: a skirmish switches off 7 − HanyGepiJatekos computer empires of 1..=8 at random.
         let ais = m.i32(SK_AIS);
-        if mode == 3 && ais != 7 && 7 - ais >= 0 {
+        let chosen = custom.as_ref().filter(|c| c.drawn_opponents.is_none());
+        if let Some(c) = chosen.filter(|_| mode == 3) {
+            // A custom game's chosen opponents: no draws.
+            for (i, emp) in c.empires.iter().enumerate() {
+                if emp.side == Side::Off {
+                    m.set_u8(va::EMPIRE_ALIVE + i as u32 + 1, 0);
+                }
+            }
+        } else if mode == 3 && ais != 7 && 7 - ais >= 0 {
             for _ in 0..7 - ais {
                 loop {
                     let x = self.rnd_stream(1, 1, 8) as u32;
@@ -1100,7 +1284,11 @@ impl<'r> Game<'r> {
                 if m.u8(va::EMPIRE_ALIVE + e as u32) == 0 {
                     continue;
                 }
-                let level = level0 + (m.u8(va::PLAYER_KI + e as u32) == 2 && difficulty > 3) as i32;
+                // A custom game: the empire's own level and computer level.
+                let own = self.state.ai_difficulty[e];
+                let d = if own > 0 { own } else { difficulty };
+                let level = self.state.custom.as_ref().and_then(|c| c.empire(e)).map_or(level0, |c| c.tech);
+                let level = level + (m.u8(va::PLAYER_KI + e as u32) == 2 && d > 3) as i32;
                 for t in 1..TECHS {
                     let status = self.state.mem.u8(va::TECHS + (t * TECH_SIZE + 0x45 + e) as u32);
                     let at = i32::from_le_bytes(start[4 * t..4 * t + 4].try_into().unwrap());
@@ -1139,18 +1327,13 @@ impl<'r> Game<'r> {
         let m = &self.state.mem;
         let (n, ais) = (m.i32(va::PLANET_COUNT), m.i32(SK_AIS));
         let (mut first, second) = ([12000, 3500, 8500], [15000, 23000, 18000]);
-        let count = match m.i32(SK_POPULATION) {
-            1 => 1 + (n > 30) as i32 + (n > 60) as i32,
-            2 => {
-                first = [24000, 14000, 21000];
-                n / 15
-            }
-            3 => {
-                first = [51000, 14000, 21000];
-                n / (ais + 3)
-            }
-            _ => 1,
-        };
+        let population = m.i32(SK_POPULATION);
+        match population {
+            2 => first = [24000, 14000, 21000],
+            3 => first = [51000, 14000, 21000],
+            _ => {}
+        }
+        let original = skirmish_start_planets(population, n, ais);
         let prod = self.state.mem.read(PGYARTAS0, 0x40);
         // Without tech 93 no planet holds more than 32000 people (then 31700..=32300).
         let peopled = |game: &mut Self, p: usize, e: usize, pop: i32| {
@@ -1167,21 +1350,45 @@ impl<'r> Game<'r> {
             if self.state.mem.u8(va::EMPIRE_ALIVE + e as u32) == 0 {
                 continue;
             }
+            // A custom game: the empire's count and race (the exe peoples the colonies with the empire number's).
+            let own = self.state.custom.as_ref().and_then(|c| c.empire(e)).map(|c| c.planets);
+            let (count, race) = (own.unwrap_or(original), if own.is_some() { self.state.races()[e] } else { e as u8 });
             let h = self.random_planet_of(e, 2);
             let pop = first[0] + self.rnd_stream(1, 0, 600) - 300;
             peopled(self, h, e, pop);
             for k in 1..count {
+                // Past the original's count: on streams of their own (spec §13.2).
+                let extra = k >= original;
+                if extra {
+                    self.swap_custom_streams();
+                }
                 let r = self.prec(h);
                 let q = self.nearest_free(f32_at(&r, 0x18) as i32, f32_at(&r, 0x1c) as i32);
-                self.generate_planet(q, e, e as u8, true, false, &prod);
-                let pop = if count < 3 {
-                    first[count as usize] + self.rnd_stream(1, 0, 600) - 300
-                } else {
-                    second[(k as u32 % 3) as usize] * self.rnd_stream(1, 80, 120) / 100
-                };
-                peopled(self, q, e, pop);
+                if q != 0 || !extra {
+                    self.generate_planet(q, e, race, true, false, &prod);
+                    let pop = if count < 3 {
+                        first[count as usize] + self.rnd_stream(1, 0, 600) - 300
+                    } else {
+                        second[(k as u32 % 3) as usize] * self.rnd_stream(1, 80, 120) / 100
+                    };
+                    peopled(self, q, e, pop);
+                }
+                if extra {
+                    self.swap_custom_streams();
+                }
             }
         }
+    }
+
+    /// Streams 1 and 5 exchanged with a custom game's own (spec §13.2).
+    fn swap_custom_streams(&mut self) {
+        let mut r = self.state.rng();
+        for (a, b) in CUSTOM_STREAMS {
+            let (x, y) = (r.state(a), r.state(b));
+            r.set_state(a, y);
+            r.set_state(b, x);
+        }
+        self.state.store_rng(&r);
     }
 
     /// Whether the owner of `p` has tech `t` (status 5).
@@ -2212,6 +2419,25 @@ impl<'r> Game<'r> {
             self.m().set_i32(HOME + 4 * c as u32, pick as i32);
             self.m().set_i32(TAKEN + 4 * pick as u32, c as i32);
         }
+        // A custom game's chosen start planets (spec §13.2): the empire that had one takes the chooser's pick.
+        let starts: Vec<(usize, usize)> = self.state.custom.as_ref().map_or_else(Vec::new, |cg| {
+            (1..=players).filter_map(|c| cg.empire(c).and_then(|e| e.start).filter(|&p| (1..=n).contains(&p)).map(|p| (c, p))).collect()
+        });
+        if !starts.is_empty() {
+            for (c, p) in starts {
+                if let Some(d) = (1..=players).find(|&d| home[d] == p) {
+                    home[d] = home[c];
+                }
+                home[c] = p;
+            }
+            for p in 1..=n as u32 {
+                self.m().set_i32(TAKEN + 4 * p, 0);
+            }
+            for c in 1..=players {
+                self.m().set_i32(HOME + 4 * c as u32, home[c] as i32);
+                self.m().set_i32(TAKEN + 4 * home[c] as u32, c as i32);
+            }
+        }
         let alive = self.state.alive();
         let races = self.state.races();
         for c in 1..=players {
@@ -2265,7 +2491,8 @@ impl<'r> Game<'r> {
         // mod's race peoples its own (ADR 0069 §13).
         for c in 1..=players {
             if alive[c] {
-                let race = if races[c] as usize >= crate::colony::RACES { races[c] } else { c as u8 };
+                // A custom game: the empire's race.
+                let race = if races[c] as usize >= crate::colony::RACES || self.state.custom.is_some() { races[c] } else { c as u8 };
                 self.generate_planet(home[c], c, race, true, true, &prod);
 
             }

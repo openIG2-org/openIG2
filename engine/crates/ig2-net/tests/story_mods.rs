@@ -64,9 +64,10 @@ fn version_14_story_state_loads() {
     g.state.mod_stories.flags.insert("old".into());
     g.state.mod_stories.counters.insert("n".into(), 7);
     let mut snap = Snapshot::capture(&g, &[], 0, 0);
-    // The state ends with the two empty maps' u32 lengths: without them it is what version 14 wrote.
-    assert!(snap.state.ends_with(&[0; 8]));
-    snap.state.truncate(snap.state.len() - 8);
+    // The state ends with the two empty maps' u32 lengths and version 16's empty custom game: without them it is
+    // what version 14 wrote.
+    assert!(snap.state.ends_with(&[0; 9]));
+    snap.state.truncate(snap.state.len() - 9);
     let (back, _) = snap.restore(&rules).unwrap();
     assert_eq!(back.state.mod_stories, g.state.mod_stories);
 }

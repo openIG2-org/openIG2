@@ -71,7 +71,7 @@ at the next cleanup.
   - [x] Part 1, sim: per-empire switches (ships, buildings, tanks), the lockstep order, the pick inside the research tick, saved in our saves.
   - [x] Part 2, UI: the three switches on the research screen (no Options rows: the switches are per empire and live in the game).
 - [ ] **Custom game** (ADR 0085, `docs/ENHANCEMENTS.md` row 546):
-  - [ ] Part 1, sim: `CustomGame` (galaxy, per-empire race, money, technology, start planets, level, start position), saved and in the start data; the original's skirmish starts unchanged.
+  - [x] Part 1, sim: `CustomGame` (galaxy, per-empire race, money, technology, start planets, level, start position), saved and in the start data; the original's skirmish starts unchanged.
   - [ ] Part 2, UI: the modern Custom game page (galaxy settings, the empires table), without the map preview.
   - [ ] Part 3: the starmap preview and the chosen start star.
   - [ ] Part 4: aggressiveness and start relations, measured in the play-through harness (8 seeds, 10 years).

@@ -509,3 +509,45 @@ fn per_computer_levels_travel_and_stay_in_step() {
         assert!(hs.host.desyncs.is_empty(), "{:?}", hs.host.desyncs);
     });
 }
+
+#[test]
+fn a_custom_game_in_the_start_data_and_the_save() {
+    use ig2_net::snapshot::Snapshot;
+    use ig2_sim::game::new_game::{CustomGame, NewSkirmish, Side};
+    let Some(inst) = Install::from_env(Lang::En).map(|i| i.expect("valid install")) else {
+        eprintln!("IG2_INSTALL_DIR not set; skipping");
+        return;
+    };
+    let rules = common::game_rules(&inst);
+    common::with_start_data(&inst, |data| {
+        let sk = NewSkirmish { en: 1, ais: 2, tech: 1, planets: 40, money: 50000, difficulty: 2, population: 1, random_id: 0, seed: 0, ticks: 0 };
+        let mut custom = CustomGame::from(&sk);
+        custom.drawn_opponents = None;
+        custom.empires[3].side = Side::Computer;
+        for e in &mut custom.empires[4..] {
+            e.side = Side::Off;
+        }
+        custom.empires[3].level = 4;
+        let mut start = GalaxyStart { custom: Some(custom), ..GalaxyStart::new(4242, GalaxyOptions::default(), [1, 2, 3, 4, 5, 6, 7, 8], vec![4]) };
+        let host = start.build_hashed(data, &rules, 1, &[1, 2], 99);
+        let joiner = start.build(data, &rules, 1, &[1, 2], 99);
+        assert_eq!(ig2_net::state_hash(&joiner, &[]), start.hash, "every machine builds the same start");
+        let ki = |e: u32| host.state.mem.u8(ig2_sim::save::va::PLAYER_KI + e);
+        assert_eq!((ki(1), ki(2), ki(3), ki(4)), (1, 1, 2, 2), "the room's humans");
+        assert_eq!(host.state.planet_count(), 40);
+        let c = host.state.custom.as_ref().expect("kept");
+        assert_eq!((c.seed, c.en, c.empires[1].side), (start.seed, 1, Side::Human));
+        let snap = Snapshot::capture(&host, &[], 0, 0);
+        let back = snap.restore(&rules).unwrap().0;
+        assert_eq!(back.state.custom, host.state.custom, "the save keeps it");
+        assert_eq!(ig2_net::state_hash(&back, &[]), ig2_net::state_hash(&host, &[]));
+        let mut none = snap.restore(&rules).unwrap().0;
+        none.state.custom = None;
+        assert_ne!(ig2_net::state_hash(&none, &[]), ig2_net::state_hash(&host, &[]), "it is in the hash");
+        // A version 15 state is a version 16 one without the trailing `None`.
+        let v16 = Snapshot::capture(&none, &[], 0, 0);
+        assert_eq!(v16.state.last(), Some(&0));
+        let v15 = Snapshot { state: v16.state[..v16.state.len() - 1].to_vec(), ..v16.clone() };
+        assert_eq!(ig2_net::state_hash(&v15.restore(&rules).unwrap().0, &[]), ig2_net::state_hash(&none, &[]), "older saves still load");
+    });
+}

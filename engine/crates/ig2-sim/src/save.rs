@@ -760,6 +760,9 @@ pub struct SaveState {
     /// Ours (ADR 0033, the MP room's per-computer level): each computer empire's `Nehezseg`, 0 = the game's
     /// (`NEHEZSEG`). Not in the exe's save; our snapshot carries it.
     pub ai_difficulty: [i32; EMPIRES],
+    /// Ours (ADR 0085): the custom game this game started as (a skirmish too). Not in the exe's save; our snapshot
+    /// carries it.
+    pub custom: Option<crate::game::new_game::CustomGame>,
     /// Ours (ADR 0061): the story mods' state. Not in the exe's save; our snapshot carries it.
     pub mod_stories: crate::story_mods::ModStoryState,
 }
@@ -846,6 +849,7 @@ impl SaveState {
             transfer_panels: BTreeMap::new(),
             game_info: Vec::new(),
             ai_difficulty: [0; EMPIRES],
+            custom: None,
             mod_stories: Default::default(),
             template,
             wf_ranges,
@@ -917,6 +921,7 @@ impl SaveState {
             transfer_panels: BTreeMap::new(),
             game_info,
             ai_difficulty: [0; EMPIRES],
+            custom: None,
             mod_stories: Default::default(),
             template,
             wf_ranges,
