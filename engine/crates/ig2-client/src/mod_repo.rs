@@ -390,14 +390,14 @@ pub(crate) mod tests {
         (kp.pk.to_base64(), sig.into_string())
     }
 
-    fn mod_zip(id: &str, version: &str, extra: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+    pub(crate) fn mod_zip(id: &str, version: &str, extra: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
         let toml = format!("id = \"{id}\"\nversion = \"{version}\"\nrequires = \">=0.1\"\nlicense = \"MIT\"\n{extra}");
         let mut all: Vec<(&str, &[u8], bool)> = vec![(MOD_FILE, toml.as_bytes(), true)];
         all.extend(files.iter().map(|&(n, b)| (n, b, true)));
         ig2_formats::zipfs::build(&all)
     }
 
-    fn entry(id: &str, version: &str, zip: &[u8]) -> Entry {
+    pub(crate) fn entry(id: &str, version: &str, zip: &[u8]) -> Entry {
         Entry {
             id: id.into(),
             version: version.into(),
@@ -409,7 +409,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn tmp(name: &str) -> PathBuf {
+    pub(crate) fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("ig2-mod-repo-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
@@ -417,7 +417,7 @@ pub(crate) mod tests {
     }
 
     /// Downloads served from `files` (address → bytes).
-    fn server(files: Vec<(String, Vec<u8>)>) -> impl Fn(&str, u64) -> Result<Vec<u8>, String> {
+    pub(crate) fn server(files: Vec<(String, Vec<u8>)>) -> impl Fn(&str, u64) -> Result<Vec<u8>, String> {
         move |url, limit| {
             let b = files.iter().find(|(u, _)| u == url).map(|(_, b)| b.clone()).ok_or_else(|| format!("{url}: 404"))?;
             if b.len() as u64 > limit {

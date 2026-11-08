@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Mods page: a Browse tab lists the mods from the openIG2 mod index (opened only when you open the tab, signature checked, kept for offline use) and installs, updates and removes them, with their dependencies, into the mods folder.
+- Multiplayer: a room that refuses you for other mods now tells you which mods are missing, in another version, extra or in another order; "Download and join" installs them from the mod index, restarts the game and joins the room again.
 - New games name the starting ship designs and technologies in the game's language (they were in Hungarian).
 - Modern diplomacy screen: an empire that died before you read its message no longer keeps blinking in the contact list.
 - Modern interface: the round buttons (tanks, factory, plus and minus) are coloured up to the rim instead of showing a black band across the bottom.

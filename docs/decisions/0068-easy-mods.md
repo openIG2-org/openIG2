@@ -50,8 +50,8 @@ the game.
 6. **Multiplayer**: the fingerprint (ADR 0044 §4) is unchanged: it hashes files, not names, so a zip mod and the same
    files in a folder match. The room page lists the enabled mods (name and version) under the room's settings: a
    player in the room has the same mods as the host (a mismatch is refused, `Refusal::Mods`), so their list is the
-   room's. A refused joiner's message points to the Mods page. Sending the host's mod names to a joiner before it is
-   admitted would change the lobby protocol; that is left for later.
+   room's. A refused joiner's message points to the Mods page. ADR 0086 §3 sends the host's mod list to a refused
+   joiner (lobby protocol 15).
 
 ## Consequences
 - Installing a mod is: download, drop the zip into `mods` beside the game, enable it in Mods, restart.

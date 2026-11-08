@@ -97,6 +97,7 @@ host clicks it to raise the level and right-clicks to lower it; the computer emp
 | `--speed 1\|2\|3` | Starting game speed |
 | `--lang en\|hu\|de\|fr\|es\|it` | UI language; wins over `IG2_LANG`, which wins over the Options Language row, then the original's own choice |
 | `--multiplayer` | Open the main menu on the multiplayer connection page |
+| `--mp-join ADDRESS\|CODE` | Open the multiplayer connection page and join that address or join code (used by "Download and join" after its restart) |
 | `--size WxH`, `--letterbox` | Window size; letterbox wide windows instead of the remaster's layout |
 | `--sharp-ui` | Sharp UI on for this run, over the settings file |
 | `--smooth-glows` | Smooth glows on for this run, over the settings file |
@@ -542,7 +543,7 @@ replace is their data: the `.scn` maps (which stories start, their values), `dat
 `building.txt`, `designs.txt`, `values.txt`, the message scripts in `dataraw\uzenetek\` and the texts.
 
 In multiplayer every player needs the same mod files, `rules.toml`s and text patches: the room refuses a player with other mods
-("Other mods enabled"; compare your Mods page with the host's), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
+("Other mods enabled"; a dialog lists what differs, and "Download and join" installs the mods from the index, restarts and joins again), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
 
 ### Texture and model packs

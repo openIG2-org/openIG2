@@ -546,6 +546,10 @@ pub enum Out {
     Start(Begun),
     /// Put this text on the clipboard (the host's join code) and click.
     Copy(String),
+    /// The room's mods are installed: start the game again joining this address or join code (ADR 0086 §3).
+    Restart(String),
+    /// The room-mods dialog's Open Mods: the Mods page instead of these screens.
+    Mods,
 }
 
 /// The page's item ids (ours; [`Act::Spot`]).
@@ -652,6 +656,13 @@ pub struct MpScreen {
     force: bool,
     /// Up or Down moved the list's selection: the page scrolls it into view.
     reveal: std::cell::Cell<bool>,
+    /// This player's enabled mods (ADR 0086 §3): sent as a host's to joiners refused for other mods, compared as a
+    /// joiner's with the room's.
+    mod_list: Vec<ig2_net::lobby::RoomMod>,
+    /// What was last joined (an address or a join code): joined again after "Download and join"'s restart.
+    target: String,
+    /// Refused for other mods: the room's mods against ours, and "Download and join" ([`crate::room_mods`]).
+    pub room_mods: Option<crate::room_mods::RoomMods>,
 }
 
 /// `DoKeyboard`'s room line (exe 0x4db1a0, ~0x4db7bc): `story N` or `s N` (case-insensitive) with `atoi(N) != 0`.
@@ -728,6 +739,22 @@ mod words {
     // Ours (ADR 0080).
     pub const DISCORD_JOINING: &[u8] = b"Joining through Discord...";
     pub const DISCORD_COMING: &[u8] = b"is joining through Discord";
+    // Ours (ADR 0086 §3): the room-mods dialog.
+    pub const MODS_TITLE: &[u8] = b"This game uses other mods";
+    pub const MODS_MISSING: &[u8] = b"Missing:";
+    pub const MODS_OTHER: &[u8] = b"Another version (yours / the game's):";
+    pub const MODS_EXTRA: &[u8] = b"Not in this game, switch them off in Mods:";
+    pub const MODS_UNAVAILABLE: &[u8] = b"Not in the mod index, install them by hand:";
+    pub const MODS_ORDER: &[u8] = b"The same mods in another order.";
+    pub const MODS_FILES: &[u8] = b"The same mods with other files: compare them in Mods.";
+    pub const MODS_CHECKING: &[u8] = b"Looking them up in the mod index (github.com/openIG2-org/mods)...";
+    pub const MODS_NO_INDEX: &[u8] = b"The mod index didn't load:";
+    pub const MODS_DOWNLOADING: &[u8] = b"Downloading the game's mods...";
+    pub const MODS_RESTARTS: &[u8] = b"The game then starts again with these mods and joins.";
+    pub const MODS_JOIN: &[u8] = b"Download and join";
+    pub const MODS_RESTART: &[u8] = b"Restart and join";
+    pub const MODS_OPEN: &[u8] = b"Open Mods";
+    pub const CANCEL_WORD: &[u8] = b"Cancel";
     pub const YOU: &[u8] = b"You";
     pub const TAKE_SEAT: &[u8] = b"Take seat";
     pub const CHAT: &[u8] = b"Chat";
@@ -786,6 +813,12 @@ impl MpScreen {
         self
     }
 
+    /// The enabled mods (`room_mods::list`, ADR 0086 §3).
+    pub fn with_mod_list(mut self, mods: Vec<ig2_net::lobby::RoomMod>) -> Self {
+        self.mod_list = mods;
+        self
+    }
+
     /// The mods' races a slot may pick besides 1..=8 (ADR 0069 §13).
     pub fn with_races(mut self, races: Vec<u8>) -> Self {
         self.races = races;
@@ -837,6 +870,9 @@ impl MpScreen {
             custom_seat: None,
             force: false,
             reveal: Default::default(),
+            mod_list: Vec::new(),
+            target: String::new(),
+            room_mods: None,
         }
         .with_saved_relay()
     }
@@ -905,7 +941,7 @@ impl MpScreen {
         match net.listen() {
             Ok(mut listener) => {
                 let settings = Settings { name: format!("{}'s galaxy", self.name), scenario: "galaxy".into(), private: false, password: self.password() };
-                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name).with_mods(self.mods).with_races(self.races.clone());
+                let lobby = LobbyHost::new_galaxy(settings, ig2_net::discovery::random_u64(), self.rules, &self.name).with_mods(self.mods).with_mod_list(self.mod_list.clone()).with_races(self.races.clone());
                 listener.register(lobby.session());
                 listener.map_port(true);
                 self.chat.clear();
@@ -929,7 +965,7 @@ impl MpScreen {
                 let s = &save.session;
                 let settings = Settings { name: s.name.clone(), scenario: s.scenario.clone(), private: false, password: self.password() };
                 let slots: Vec<(u8, u8)> = s.humans.iter().map(|h| (h.empire, 0)).collect();
-                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name).with_mods(self.mods).with_races(self.races.clone());
+                let mut lobby = LobbyHost::new(settings, ig2_net::discovery::random_u64(), self.rules, &slots, &self.name).with_mods(self.mods).with_mod_list(self.mod_list.clone()).with_races(self.races.clone());
                 let mine = s.humans.iter().find(|h| h.name == lobby.state().members[0].name).or(s.humans.first()).map(|h| h.empire);
                 lobby.pick(0, mine);
                 listener.register(lobby.session());
@@ -1010,8 +1046,12 @@ impl MpScreen {
             self.selected = None;
         }
         let typed = self.address.string();
+        self.target = typed.clone();
         let (rx, code) = match self.selected.and_then(|i| self.list.get(i)).filter(|_| self.internet.is_none()) {
-            Some(f) => (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None),
+            Some(f) => {
+                self.target = f.addr.to_string();
+                (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None)
+            }
             None if typed.is_empty() => return,
             None => match JoinCode::decode(&typed) {
                 Ok(code) => {
@@ -1045,7 +1085,15 @@ impl MpScreen {
     /// code in the address field, joined as typed (a password room asks for it as after a typed code). Nothing while
     /// in a room or connecting.
     pub fn join_from_discord(&mut self, code: &str, net: &mut dyn Net) {
-        if self.role.is_some() || self.connecting.is_some() {
+        self.join_typed(code, net);
+        if self.connecting.is_some() {
+            self.line = words::DISCORD_JOINING.to_vec();
+        }
+    }
+
+    /// `code` (a join code or an address) typed into the address field and joined (Discord's Join, `--mp-join`).
+    pub fn join_typed(&mut self, code: &str, net: &mut dyn Net) {
+        if self.role.is_some() || self.connecting.is_some() || self.room_mods.is_some() {
             return;
         }
         self.saves = None;
@@ -1057,9 +1105,6 @@ impl MpScreen {
             self.address.key(EntryKey::Char(c));
         }
         self.join(net);
-        if self.connecting.is_some() {
-            self.line = words::DISCORD_JOINING.to_vec();
-        }
     }
 
     /// Ours (ADR 0080): the room as the Discord activity shows it (none on the connection page).
@@ -1087,6 +1132,29 @@ impl MpScreen {
     /// Ours (ADR 0080): a friend's join request accepted on Discord, told in the room's chat.
     pub fn discord_joining(&mut self, name: &str) {
         self.chat.push((String::new(), format!("{name} {}", words::text(crate::tr::game(), words::DISCORD_COMING))));
+    }
+
+    /// The room-mods dialog's action (`yes`) or Cancel (not while it installs).
+    pub fn room_mods_answer(&mut self, yes: bool) -> Option<Out> {
+        use crate::room_mods::Offer;
+        let r = self.room_mods.as_mut()?;
+        match (yes, r.offer()) {
+            (false, Offer::Wait) if r.installing() => None,
+            (false, _) => {
+                self.room_mods = None;
+                Some(Out::Click)
+            }
+            (true, Offer::Join(_)) => {
+                let dir = ig2_formats::vfs::Mod::exe_folder().or_else(ig2_formats::vfs::Mod::folder)?;
+                r.start(dir, ig2_formats::vfs::Mod::folders(), ig2_formats::vfs::Mod::enabled_file(), Box::new(crate::mod_repo::get));
+                Some(Out::Click)
+            }
+            (true, Offer::Mods) => {
+                self.room_mods = None;
+                Some(Out::Mods)
+            }
+            (true, Offer::Wait) => None,
+        }
     }
 
     /// Leave the room for the connection page.
@@ -1150,6 +1218,9 @@ impl MpScreen {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
         }
+        if self.room_mods.as_mut().is_some_and(|r| r.poll()) {
+            return Some(Out::Restart(self.target.clone()));
+        }
         match self.role.as_mut()? {
             Role::Host { lobby, listener } => {
                 while let Some(l) = listener.accept() {
@@ -1201,8 +1272,16 @@ impl MpScreen {
                         Some(Out::Start(Begun::Joiner { start: Box::new(start), link, me }))
                     }
                     Status::Refused(r) => {
-                        self.role = None;
+                        let room = match self.role.take() {
+                            Some(Role::Joiner(c)) => c.host_mods,
+                            _ => None,
+                        };
                         self.line = refusal_text(r).to_vec();
+                        if let (Refusal::Mods, Some(room)) = (r, room) {
+                            // The unit tests never reach the public index.
+                            let fetch = || if cfg!(test) { Err("no mod index in tests".to_string()) } else { crate::mod_repo::load().map(|(i, _)| i) };
+                            self.room_mods = Some(crate::room_mods::RoomMods::new(room, &self.mod_list, fetch));
+                        }
                         None
                     }
                     _ => None,
@@ -1440,6 +1519,14 @@ impl MpScreen {
     /// A key: the focused field's (the connection page) or the chat line's (the room); Esc leaves the room, then the
     /// screens.
     pub fn key(&mut self, k: Option<EntryKey>, escape: bool, net: &mut dyn Net) -> Option<Out> {
+        // The room-mods dialog takes the keys: Esc its Cancel, Enter its action.
+        if self.room_mods.is_some() {
+            return match (escape, k) {
+                (true, _) => self.room_mods_answer(false),
+                (_, Some(EntryKey::Enter)) => self.room_mods_answer(true),
+                _ => None,
+            };
+        }
         if escape {
             if self.role.is_some() {
                 self.leave();
@@ -1799,7 +1886,7 @@ pub fn headless_host() -> Result<(), String> {
     let mods = crate::mods_fingerprint(&install);
     let fingerprint = ig2_net::session::modded_fingerprint(ig2_net::session::rules_fingerprint(&exe), mods);
     let mut net = QuicNet::default();
-    let mut s = MpScreen::open(true, "Host", fingerprint).with_mods(mods);
+    let mut s = MpScreen::open(true, "Host", fingerprint).with_mods(mods).with_mod_list(crate::room_mods::list(install.mods()));
     s.open = 100.0;
     s.host(&mut net);
     let mut printed = false;
@@ -2985,6 +3072,37 @@ mod tests {
         // Open again: the room's members see it.
         click(&mut host, spot::PRIVATE, false, &mut net);
         sync(&mut host, &mut guests, &mut net, |h| !h.state().unwrap().private);
+    }
+
+    /// ADR 0086 §3: a joiner without the room's mods is refused and sees which they are; the dialog takes Esc (back to
+    /// the connection page, still open) and Enter (no index in tests: Open Mods).
+    #[test]
+    fn a_joiner_without_the_rooms_mods_sees_them() {
+        let mut net = LoopNet::default();
+        let list = vec![ig2_net::lobby::RoomMod { id: "armada".into(), version: "1.2.0".into(), sha256: Some("ab".repeat(32)) }];
+        let mods = [3; 32];
+        let mut host = MpScreen::open(false, "Host", ig2_net::session::modded_fingerprint(RULES, Some(mods))).with_mods(Some(mods)).with_mod_list(list.clone());
+        let mut guest = MpScreen::open(false, "Guest", RULES);
+        for _ in 0..25 {
+            host.tick(&mut net);
+            guest.tick(&mut net);
+        }
+        click(&mut host, spot::HOST, false, &mut net);
+        type_text(&mut guest, "local", &mut net);
+        let mut all = [&mut host, &mut guest];
+        run(&mut all, &mut net, |s| s[1].room_mods.as_ref().is_some_and(|r| !r.busy()));
+        assert_eq!(guest.line, refusal_text(Refusal::Mods));
+        let r = guest.room_mods.as_ref().unwrap();
+        assert_eq!((r.diff.missing.as_slice(), r.offer()), (list.as_slice(), crate::room_mods::Offer::Mods));
+        // Typing goes nowhere while it is up; Esc closes it, not the page.
+        assert!(guest.key(Some(EntryKey::Char(b'x')), false, &mut net).is_none());
+        assert!(matches!(guest.key(None, true, &mut net), Some(Out::Click)));
+        assert!(guest.room_mods.is_none() && guest.role.is_none());
+        // Again, and Enter: the Mods page.
+        type_text(&mut guest, "", &mut net);
+        let mut all = [&mut host, &mut guest];
+        run(&mut all, &mut net, |s| s[1].room_mods.as_ref().is_some_and(|r| !r.busy()));
+        assert!(matches!(guest.key(Some(EntryKey::Enter), false, &mut net), Some(Out::Mods)));
     }
 
     /// The real thing on this machine: a private room on a QUIC socket, joined over UDP with its code (the LAN address

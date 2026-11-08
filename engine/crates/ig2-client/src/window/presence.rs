@@ -50,14 +50,20 @@ impl App {
     /// A join that came from Discord, carried out once the main menu is up (a game running keeps it): the connection
     /// page opens (as the Internet ring opens it) and joins the code.
     fn discord_join(&mut self) {
-        if self.discord.pending.is_none() || self.video.is_some() || self.options.is_some() {
+        if (self.discord.pending.is_none() && self.mp_join.is_none()) || self.video.is_some() || self.options.is_some() {
             return;
         }
         let Some(f) = &mut self.front else { return };
         if f.s.start.is_some() || f.s.leaving.is_some() || f.session.is_some() {
             return;
         }
-        let Some(code) = self.discord.pending.take() else { return };
+        let (code, discord) = match self.discord.pending.take() {
+            Some(c) => (c, true),
+            None => match self.mp_join.take() {
+                Some(c) => (c, false),
+                None => return,
+            },
+        };
         if f.mp.as_ref().is_some_and(|mp| mp.state().is_some()) {
             // Already in a room: the Join is dropped.
             return;
@@ -75,7 +81,11 @@ impl App {
         }
         let Some(f) = &mut self.front else { return };
         if let Some(mp) = &mut f.mp {
-            mp.join_from_discord(&code, &mut f.net);
+            if discord {
+                mp.join_from_discord(&code, &mut f.net);
+            } else {
+                mp.join_typed(&code, &mut f.net);
+            }
         }
         if let Some(g) = &self.gpu {
             g.window.focus_window();

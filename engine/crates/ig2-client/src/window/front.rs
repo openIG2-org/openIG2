@@ -391,7 +391,8 @@ impl App {
                 let name = String::from_utf8_lossy(&f.s.player).into_owned();
                 let story = ig2_formats::config::Config::read(self.install.root()).int("mpstory");
                 let races = crate::rules::added_names(&self.install).0.iter().map(|a| a.race as u8).collect();
-                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_races(races).with_story(story));
+                let mod_list = crate::room_mods::list(self.install.mods());
+                f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_mod_list(mod_list).with_races(races).with_story(story));
             }
             Act::Tutorial(_) => {}
             // Ours (ADR 0085): the Custom game page with the scenario list's tables and the skirmish entry's kind.
@@ -465,6 +466,29 @@ impl App {
                     f.s.close_mp();
                 }
             }),
+            // Ours (ADR 0086 §3): the room's mods are in: the game again, joining the room.
+            Out::Restart(target) => match crate::room_mods::restart_into(&target) {
+                Ok(()) => {
+                    if let Some(f) = &mut self.front {
+                        f.quit = true;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("ig2-client: restart: {e}");
+                    if let Some(rm) = self.front.as_mut().and_then(|f| f.mp.as_mut()).and_then(|mp| mp.room_mods.as_mut()) {
+                        rm.error = Some(e);
+                    }
+                }
+            },
+            Out::Mods => {
+                self.after_page(|app| {
+                    if let Some(f) = &mut app.front {
+                        f.mp = None;
+                        f.s.close_mp();
+                    }
+                    app.front_act(crate::mainscr::Act::Mods);
+                });
+            }
             Out::Start(b) => {
                 let rules = self.rules;
                 let ticks = crate::new_game::wall_ticks();
@@ -622,6 +646,18 @@ impl App {
             return;
         }
         if let Some(mp) = &mut f.mp {
+            // Ours (ADR 0086 §3): the room-mods dialog takes every key (Esc its Cancel, Enter its action); nothing
+            // reaches the page under it, an open drop-down closes.
+            if mp.room_mods.is_some() {
+                if let Some(g) = &self.gpu {
+                    egui::Popup::close_all(&g.gui.ctx);
+                }
+                let (enter, escape) = (matches!(k.as_ref(), Key::Named(NamedKey::Enter)), matches!(k.as_ref(), Key::Named(NamedKey::Escape)));
+                if let Some(o) = (enter || escape).then(|| mp.key(enter.then_some(EntryKey::Enter), escape, &mut f.net)).flatten() {
+                    self.front_mp_out(o);
+                }
+                return;
+            }
             // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
             if self.modifiers.control_key() {
                 match k.as_ref() {

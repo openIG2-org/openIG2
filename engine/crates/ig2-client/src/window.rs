@@ -503,6 +503,8 @@ struct App {
     dk_owner: u8,
     /// Ours (ADR 0080): Discord Rich Presence, and the race names its texts use (read on the first report).
     discord: crate::discord::Presence,
+    /// `--mp-join`'s room, joined as a Discord Join is ([`App::discord_join`]).
+    mp_join: Option<String>,
     discord_races: Vec<String>,
 }
 
@@ -615,6 +617,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     app.stage_win = o.stage_win;
+    app.mp_join = o.mp_join.clone();
     if o.multiplayer && app.front.is_some() {
         app.front_act(crate::mainscr::Act::MultiServer);
     }
@@ -996,6 +999,7 @@ impl App {
             dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
             discord: Default::default(),
+            mp_join: None,
             discord_races: Vec::new(),
         }
     }

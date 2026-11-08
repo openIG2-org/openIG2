@@ -30,6 +30,8 @@ pub enum Act {
     Options(ig2_net::galaxy::GalaxyOptions),
     /// Esc: leave the room, then the screens.
     Back,
+    /// The room-mods dialog's action (`true`) or Cancel (ADR 0086 §3).
+    RoomMods(bool),
 }
 
 /// The boards' frame on the screen (points): the side margin (96 at 1920), the right column's width (584).
@@ -202,6 +204,7 @@ impl MpScreen {
             self.room(ctx, texts, palette, hot, &mut acts);
         } else {
             self.connection(ctx, texts, hot, &mut acts);
+            self.room_mods_dialog(ctx, texts.lang, &mut acts);
         }
         // Not while a drop-down is open: the click closes it.
         if flow && ctx.input(|i| i.pointer.secondary_clicked()) && !egui::Popup::is_any_open(ctx) {
@@ -225,10 +228,80 @@ impl MpScreen {
                 Act::Level(i, level) => self.set_level(i, level),
                 Act::Options(o) => self.set_options(o),
                 Act::Back => self.key(None, true, net),
+                Act::RoomMods(yes) => self.room_mods_answer(yes),
             };
             outs.extend(o);
         }
         outs
+    }
+
+    /// Ours (ADR 0086 §3): a joiner refused for other mods sees which: the room's mods it lacks or has in another
+    /// version, those the index doesn't have, its own extra ones; "Download and join" (or Restart and join when only
+    /// the order differs) when every one can be fetched, else Open Mods. A modal over the connection page.
+    fn room_mods_dialog(&self, ctx: &egui::Context, lang: ig2_formats::text::Lang, acts: &mut Vec<Act>) {
+        use crate::room_mods::Offer;
+        let Some(r) = &self.room_mods else { return };
+        let w = |b: &[u8]| words::text(lang, b);
+        let name = |m: &ig2_net::lobby::RoomMod| if m.version.is_empty() { m.id.clone() } else { format!("{} {}", m.id, m.version) };
+        let unavailable = match &r.index {
+            Some(Ok(i)) => r.diff.unavailable(i),
+            _ => Vec::new(),
+        };
+        let mut lines = Vec::new();
+        let mut group = |label: &[u8], items: Vec<String>| {
+            if !items.is_empty() {
+                lines.push(format!("{} {}", w(label), items.join(", ")));
+            }
+        };
+        group(words::MODS_MISSING, r.diff.missing.iter().filter(|m| !unavailable.contains(m)).map(name).collect());
+        group(words::MODS_OTHER, r.diff.other.iter().filter(|(m, _)| !unavailable.contains(&m)).map(|(m, mine)| format!("{} {mine} / {}", m.id, m.version)).collect());
+        group(words::MODS_UNAVAILABLE, unavailable.iter().map(|m| name(m)).collect());
+        group(words::MODS_EXTRA, r.diff.extra.iter().map(name).collect());
+        if r.diff.order {
+            lines.push(w(words::MODS_ORDER));
+        } else if r.diff == crate::room_mods::Diff::default() {
+            lines.push(w(words::MODS_FILES));
+        }
+        let offer = r.offer();
+        match (&r.index, &r.error) {
+            _ if r.installing() => lines.push(w(words::MODS_DOWNLOADING)),
+            (None, _) => lines.push(w(words::MODS_CHECKING)),
+            (_, Some(e)) => lines.push(e.clone()),
+            (Some(Err(e)), _) if !e.is_empty() && r.diff.wanted().next().is_some() => lines.push(format!("{} {e}", w(words::MODS_NO_INDEX))),
+            _ if matches!(offer, Offer::Join(_)) => lines.push(w(words::MODS_RESTARTS)),
+            _ => {}
+        }
+        let yes = w(match offer {
+            Offer::Join(false) => words::MODS_RESTART,
+            Offer::Mods => words::MODS_OPEN,
+            _ => words::MODS_JOIN,
+        });
+        let screen = ctx.screen_rect();
+        let width = 640.0f32.min(screen.width() - 32.0);
+        let area = egui::Modal::default_area(egui::Id::new("mp-room-mods")).fixed_pos(Pos2::new(screen.center().x - width / 2.0, screen.center().y - 160.0));
+        egui::Modal::new(egui::Id::new("mp-room-mods")).area(area).frame(egui::Frame::NONE).backdrop_color(Color32::from_black_alpha(128)).show(ctx, |ui| {
+            ui.set_width(width);
+            ds::panel(ui, ds::PanelKind::Deep, 0.96, 28.0, |ui| {
+                ui.set_width(width - 56.0);
+                Text::new(&w(words::MODS_TITLE), Font::HEADING).show(ui, Vec2::new(ui.available_width(), Font::HEADING.line));
+                ui.add_space(ds::SPACE[2]);
+                let fit = Text::new(&lines.join("\n"), Font::BODY.sized(16.0)).color(ds::tokens().ink_silver).lines(14).layout(ui.ctx(), ui.available_width());
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), fit.galley.size().y), egui::Sense::hover());
+                ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
+                ui.add_space(ds::SPACE[3]);
+                ui.allocate_ui_with_layout(Vec2::new(ui.available_width(), 44.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add_enabled(offer != Offer::Wait, ds::Plate::new(&yes).primary(true).width(240.0)).clicked() {
+                        acts.push(Act::RoomMods(true));
+                    }
+                    if r.busy() {
+                        ui.spinner();
+                    }
+                    if ui.add_enabled(!r.installing(), ds::Plate::new(&w(words::CANCEL_WORD)).width(160.0)).clicked() {
+                        acts.push(Act::RoomMods(false));
+                    }
+                });
+            });
+        });
     }
 
     // -------------------------------------------------------------------------------------------- connection

@@ -35,6 +35,8 @@
 //!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
 //! MP host:  `ig2-client --mp-host` hosts a room without a window through the relay server of `relay.txt` (for
 //!           trying other clients, `mp_lobby::headless_host`).
+//! MP join:  `ig2-client --mp-join ADDRESS|CODE` joins that room once the main menu is up (the restart after a room's
+//!           mods were installed, ADR 0086 §3).
 //! Play-through: `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole
 //!           games headless (`playthrough.rs`, docs/BUILDING.md).
 //! Info:     `ig2-client --info [--save <file.sav>] [--ticks N]` prints the starmap's planets and fleets.
@@ -108,6 +110,7 @@ mod options;
 mod orders;
 mod playthrough;
 mod prof;
+mod room_mods;
 mod render;
 mod render3d;
 mod research;
@@ -323,6 +326,9 @@ pub struct Options {
     pub panel: Option<String>,
     /// `--mp-wait SPEC`: the multiplayer wait overlay over the starmap, armed (`mp_wait::Wait::staged`).
     pub mp_wait: Option<String>,
+    /// `--mp-join ADDRESS|CODE`: join that room once the main menu is up (the restart after the room's mods were
+    /// installed, ADR 0086 §3).
+    pub mp_join: Option<String>,
     /// `--planet-info`, `--rop-menu X,Y`, `--menu KIND@X,Y`, `--mouse X,Y` (re/screens/starmap.md §14–§17).
     pub planet_info: bool,
     pub rop_menu: Option<[f32; 2]>,
@@ -430,6 +436,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         panel: None,
         planet_info: false,
         mp_wait: None,
+        mp_join: None,
         rop_menu: None,
         menu: None,
         top_menu: None,
@@ -593,6 +600,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
             "--panel" => o.panel = Some(val()?),
             "--planet-info" => o.planet_info = true,
             "--mp-wait" => o.mp_wait = Some(val()?),
+            "--mp-join" => o.mp_join = Some(val()?),
             "--menu" => o.menu = Some(val()?),
             "--top-menu" => o.top_menu = Some(val()?),
             "--top-mouse" => {

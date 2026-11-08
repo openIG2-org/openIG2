@@ -5,7 +5,7 @@ mod common;
 
 use std::time::{Duration, Instant};
 
-use ig2_net::lobby::{LobbyClient, LobbyEvent, LobbyHost, LobbyMsg, Refusal, Settings, SlotKind, Status, LOBBY_VERSION};
+use ig2_net::lobby::{LobbyClient, LobbyEvent, LobbyHost, LobbyMsg, Refusal, RoomMod, Settings, SlotKind, Status, LOBBY_VERSION};
 use ig2_net::{loopback, Command, Loopback, Msg, Snapshot, Transport};
 use ig2_sim::game::Game;
 
@@ -376,7 +376,11 @@ fn mods_mismatch_refused() {
     let room = modded_fingerprint(RULES, Some(mods));
     assert_ne!(room, RULES);
 
-    let mut h = LobbyHost::new(settings(false, None), 0xC0DE, room, &SLOTS, "Host").with_mods(mods);
+    let list = vec![
+        RoomMod { id: "armada".into(), version: "1.2.0".into(), sha256: Some("ab".repeat(32)) },
+        RoomMod { id: "by-hand".into(), version: String::new(), sha256: None },
+    ];
+    let mut h = LobbyHost::new(settings(false, None), 0xC0DE, room, &SLOTS, "Host").with_mods(mods).with_mod_list(list.clone());
     let mut joiner = |rules, m| {
         let (a, b) = loopback();
         h.admit(Box::new(b));
@@ -391,4 +395,35 @@ fn mods_mismatch_refused() {
     assert_eq!(wrong.status, Status::Refused(Refusal::Mods));
     assert_eq!(same.status, Status::InLobby);
     assert_eq!(other_exe.status, Status::Refused(Refusal::Rules));
+    // ADR 0086 §3: the refused-for-mods joiners got the room's list over the wire, the others none.
+    assert_eq!(plain.host_mods.as_ref(), Some(&list));
+    assert_eq!(wrong.host_mods.as_ref(), Some(&list));
+    assert_eq!(same.host_mods, None);
+    assert_eq!(other_exe.host_mods, None);
+}
+
+/// ADR 0086 §3: a hello of lobby version 14 (before the room's mod list) is refused as another version, with no mod
+/// list; the list a joiner keeps is capped (it is the host's word, untrusted).
+#[test]
+fn old_lobby_version_refused_and_mod_list_capped() {
+    let mut h = host(false, None).with_mods([7; 32]).with_mod_list(vec![RoomMod { id: "a".into(), version: "1".into(), sha256: None }]);
+    let (mut raw, b) = loopback();
+    h.admit(Box::new(b));
+    raw.send(&Msg::Lobby(LobbyMsg::Hello { version: 14, rules: [0; 32], mods: [0; 32], name: "old".into(), code: None }));
+    let start = Instant::now();
+    while !h.pump().unwrap().contains(&LobbyEvent::Refused(Refusal::Version)) {
+        assert!(start.elapsed() < Duration::from_secs(5), "timed out");
+    }
+    assert_eq!(recv(&mut raw), Msg::Lobby(LobbyMsg::Refused(Refusal::Version)));
+
+    let (a, mut raw) = loopback();
+    let mut c = LobbyClient::join_with_mods(Box::new(a), "Guest", RULES, [1; 32], None, None);
+    let _hello = recv(&mut raw);
+    let long = RoomMod { id: "x".repeat(500), version: "1".into(), sha256: Some("f".repeat(500)) };
+    raw.send(&Msg::Lobby(LobbyMsg::RoomMods(vec![long; 1000])));
+    raw.send(&Msg::Lobby(LobbyMsg::Refused(Refusal::Mods)));
+    pump_clients(&mut [&mut c], |c| c[0].status != Status::Joining);
+    let got = c.host_mods.unwrap();
+    assert_eq!(got.len(), ig2_net::lobby::MAX_ROOM_MODS);
+    assert_eq!((got[0].id.len(), got[0].sha256.as_ref().unwrap().len()), (64, 64));
 }

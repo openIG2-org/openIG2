@@ -787,6 +787,8 @@ pub fn sequence(o: &crate::Options, out: &std::path::Path, script: &crate::scrip
                     }
                     Out::Start(_) => println!("t {t}: mp start"),
                     Out::Copy(s) => println!("t {t}: mp copy {s}"),
+                    Out::Restart(to) => println!("t {t}: mp restart into {to}"),
+                    Out::Mods => println!("t {t}: mp mods"),
                 }
             }
             keys.clear();

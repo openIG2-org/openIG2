@@ -136,6 +136,23 @@ The room's admission message gains the host's mod list (id, version, SHA-256); a
 ones, and "Download and join" installs the missing ones from the index (matched by id, version and SHA-256), closing ADR 0068 §6's open
 item. This is a lobby protocol version bump; the fingerprint stays the authority.
 
+Implemented (`ig2_net::lobby`, `ig2-client` `room_mods.rs`):
+- Lobby protocol 15. The hello is unchanged, so an older client is refused as another version. A host that refuses
+  a joiner for other mods (`Refusal::Mods`) first sends `RoomMods`: its enabled mods in priority order, each as id
+  (`mod.toml`'s `id`, else the name in lower case), version and the zip's SHA-256 (none for a folder mod). Look-only
+  mods (`kind = "visual"`) are left out, as they are of the fingerprint. The joiner keeps at most 256 entries of 64
+  characters each (the host's word is untrusted).
+- The joiner compares the list with its own: missing, another version or other files (same id, other version or
+  hash), extra (its own, not the room's), or the same mods in another order. A dialog over the connection page names
+  them. When anything is to be installed it fetches the signed index (§1.2, the cached copy when offline); a mod the
+  index doesn't have with that id, version and SHA-256 (a folder mod never matches) is listed to install by hand.
+  Extra mods are listed to switch off in Mods. With nothing in the way the action is "Download and join" (or "Restart
+  and join" when only the order differs): the installer of §1.2 puts the zips in, `enabled.txt` gets the room's mods
+  in the room's order followed by the player's look-only mods, and the game starts again with this run's arguments but
+  `--mod`, joining the same address or join code (`--mp-join`). Otherwise the action opens Mods. Esc is Cancel, Enter
+  the action; nothing can be cancelled while the download runs.
+- The fingerprint still decides: a joiner whose files differ after the restart is refused again.
+
 ### 4. Tutorials
 
 The first, `docs/modding/first-mod.md` ("Your first mod": a story with a ticker line and money, checked, switched on

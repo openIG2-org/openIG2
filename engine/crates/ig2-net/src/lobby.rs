@@ -25,7 +25,7 @@ use crate::transport::{loopback, Loopback, Transport};
 use crate::wire;
 
 /// The lobby protocol version (checked in the hello).
-pub const LOBBY_VERSION: u32 = 14;
+pub const LOBBY_VERSION: u32 = 15;
 /// The host answers a wrong password after this long (one guess per connection).
 pub const WRONG_PASSWORD_DELAY: Duration = Duration::from_secs(1);
 /// A joiner that hasn't finished the admission by then is dropped.
@@ -33,6 +33,9 @@ pub const ADMISSION_TIMEOUT: Duration = Duration::from_secs(30);
 /// The longest member name and chat line (characters).
 pub const MAX_NAME: usize = 32;
 pub const MAX_CHAT: usize = 200;
+/// The most mods a room's list ([`LobbyMsg::RoomMods`]) carries, and the longest id and version kept.
+pub const MAX_ROOM_MODS: usize = 256;
+const MAX_MOD_TEXT: usize = 64;
 
 const ID_JOINER: &[u8] = b"ig2-joiner";
 const ID_HOST: &[u8] = b"ig2-host";
@@ -59,6 +62,16 @@ pub enum Refusal {
     Connected,
     /// The rules fingerprint differs and so do the enabled mods (ADR 0044 §4).
     Mods,
+}
+
+/// One of the host's enabled mods (ADR 0086 §3), in priority order: what a refused joiner compares with its own
+/// and looks up in the mod index. A `kind = "visual"` mod is left out, as it is of the fingerprint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomMod {
+    pub id: String,
+    pub version: String,
+    /// The zip's SHA-256 (lower-case hex); `None` for a folder mod (no index has it).
+    pub sha256: Option<String>,
 }
 
 /// Who holds an empire slot.
@@ -183,6 +196,8 @@ pub enum LobbyMsg {
     State(LobbyState),
     Said { member: u8, text: String },
     Start(Box<Start>),
+    /// Before a [`Refusal::Mods`]: the host's mods (ADR 0086 §3, lobby version 15).
+    RoomMods(Vec<RoomMod>),
 }
 
 fn truncate(s: &str, n: usize) -> String {
@@ -270,12 +285,14 @@ pub struct Door {
     rules: [u8; 32],
     /// The mods fingerprint (zero without mods), only to tell a mods mismatch from another install.
     mods: [u8; 32],
+    /// The mods themselves, sent to a joiner refused for them.
+    mod_list: Vec<RoomMod>,
     pending: Vec<Pending>,
 }
 
 impl Door {
     pub(crate) fn new(settings: Settings, session: u64, rules: [u8; 32]) -> Self {
-        Self { settings, session, rules, mods: [0; 32], pending: Vec::new() }
+        Self { settings, session, rules, mods: [0; 32], mod_list: Vec::new(), pending: Vec::new() }
     }
 
     pub fn settings(&self) -> &Settings {
@@ -305,7 +322,7 @@ impl Door {
                 Outcome::Drop => {}
                 Outcome::Admit(name) => match check(&name) {
                     Some(why) => {
-                        p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+                        self.refuse(&mut *p.link, why);
                         refused.push(why);
                     }
                     None => admitted.push((p.link, name)),
@@ -323,6 +340,14 @@ impl Door {
         }
     }
 
+    /// Turn the joiner on `link` away; a mods refusal carries the room's mods first.
+    fn refuse(&self, link: &mut dyn Transport, why: Refusal) {
+        if why == Refusal::Mods {
+            link.send(&Msg::Lobby(LobbyMsg::RoomMods(self.mod_list.clone())));
+        }
+        link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+    }
+
     /// Run one joiner's admission as far as its messages go.
     fn advance(&self, p: &mut Pending, now: Duration, check: &dyn Fn(&str) -> Option<Refusal>, refused: &mut Vec<Refusal>) -> Outcome {
         loop {
@@ -330,7 +355,7 @@ impl Door {
                 if now < at {
                     return Outcome::Keep;
                 }
-                p.link.send(&Msg::Lobby(LobbyMsg::Refused(why)));
+                self.refuse(&mut *p.link, why);
                 refused.push(why);
                 return Outcome::Drop;
             }
@@ -455,6 +480,12 @@ impl LobbyHost {
     /// The room's mods fingerprint (`session::mods_fingerprint`), to name a mods mismatch as such.
     pub fn with_mods(mut self, mods: [u8; 32]) -> Self {
         self.door.mods = mods;
+        self
+    }
+
+    /// The room's mods (ADR 0086 §3), sent to a joiner refused for other mods.
+    pub fn with_mod_list(mut self, mods: Vec<RoomMod>) -> Self {
+        self.door.mod_list = mods;
         self
     }
 
@@ -865,6 +896,8 @@ pub struct LobbyClient {
     pub member: Option<u8>,
     pub state: Option<LobbyState>,
     pub chat: Vec<(u8, String)>,
+    /// The host's mods, when it refused this joiner for other mods ([`LobbyMsg::RoomMods`]; untrusted: capped).
+    pub host_mods: Option<Vec<RoomMod>>,
     start: Option<Start>,
     /// Coming back to a running game ([`LobbyClient::rejoin`]).
     rejoin: bool,
@@ -880,7 +913,7 @@ impl LobbyClient {
     /// [`LobbyClient::join`] with the joiner's mods fingerprint (`session::mods_fingerprint`, ADR 0044 §4).
     pub fn join_with_mods(mut link: Box<dyn Transport>, name: &str, rules: [u8; 32], mods: [u8; 32], password: Option<String>, code: Option<u64>) -> Self {
         link.send(&Msg::Lobby(LobbyMsg::Hello { version: LOBBY_VERSION, rules, mods, name: truncate(name, MAX_NAME), code }));
-        Self { link, password, key: None, status: Status::Joining, member: None, state: None, chat: Vec::new(), start: None, rejoin: false }
+        Self { link, password, key: None, status: Status::Joining, member: None, state: None, chat: Vec::new(), host_mods: None, start: None, rejoin: false }
     }
 
     /// Come back to a running game as `name` (the name the player had in the lobby): the same hello and password
@@ -938,6 +971,11 @@ impl LobbyClient {
                 LobbyMsg::Start(s) if self.status == Status::InLobby => {
                     self.start = Some(*s);
                     self.status = Status::Started;
+                }
+                LobbyMsg::RoomMods(list) if self.status == Status::Joining => {
+                    let cut = |t: &str| truncate(t, MAX_MOD_TEXT);
+                    let list = list.iter().take(MAX_ROOM_MODS).map(|m| RoomMod { id: cut(&m.id), version: cut(&m.version), sha256: m.sha256.as_deref().map(cut) });
+                    self.host_mods = Some(list.collect());
                 }
                 LobbyMsg::Refused(why) => self.status = Status::Refused(why),
                 _ => {}
