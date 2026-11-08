@@ -100,8 +100,10 @@ impl App {
             // Ours (ADR 0085): the Custom game page.
             let theme = theme(h);
             let t = page_in(&mut fr.page, Page::Custom, false);
-            let (install, pics) = (&self.install, &mut fr.sc_pics);
-            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| custom_act = c.show(ctx, &h.texts, |ctx, r| pics.head(ctx, install, r as i32)));
+            let (install, pics, rules) = (&self.install, &mut fr.sc_pics, self.rules);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| {
+                custom_act = c.show(ctx, &h.texts, |ctx, r| pics.head(ctx, install, r as i32), |cfg| crate::custom_game::Preview::generate(install, cfg, rules));
+            });
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(st), true, Some(h)) = (fr.stats.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern end-of-game page over the scene.
@@ -399,7 +401,7 @@ impl App {
                 };
                 let a = f.scenarios.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(&self.install, texts));
                 let kind = a.entries.iter().map(|e| e.kind).find(|&k| k > 0).unwrap_or(1);
-                f.custom = Some(crate::custom_game::CustomPage::open(&a.tables, kind, crate::new_game::wall_ticks()));
+                f.custom = Some(crate::custom_game::CustomPage::open(&a.tables, kind, crate::new_game::wall_ticks(), &self.install));
             }
             // Ours (ADR 0059): the newest save that reads, as the Load screen's Load.
             Act::Continue => {

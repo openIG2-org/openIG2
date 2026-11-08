@@ -7,6 +7,7 @@ Getting the game from "every part works" to "a player can install it and play it
 
 - Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
+- New game, Custom game: a map of the galaxy under the empires table shows every star and the empires' start planets; click a star to start there, or press "Random start".
 - New game: a Custom game page (modern interface) sets the galaxy's planet count and seed and, per empire, the race, name, money, technology, start planets and, for computers, the level, aggressiveness and start relation.
 - The game is now `openIG2.exe` (`./openIG2` on Linux and macOS) and the install check `openIG2-check.exe`, which has its own icon.
 - Groundwork for the Custom game (a generated galaxy with per-empire race, money, technology and start planets): saves and multiplayer start data can now hold its settings; the page itself follows. Saves from earlier versions still load.

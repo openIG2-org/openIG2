@@ -1,7 +1,8 @@
 //! Ours (ADR 0085 point 4, part 2): the modern Custom game page: the galaxy's settings (planet count, seed) at the
 //! left, a table of empires (the player and 1..=7 computer empires: race, name, start money, technology, start planets,
-//! computer level, aggressiveness, start relation), Back and Start. The settings are remembered in our settings file as
-//! the quick game's are (`CustomGame`). The map preview and the chosen start star are part 3.
+//! computer level, aggressiveness, start relation), a preview of the galaxy those settings start under the table, where a
+//! click on a star picks the player's start (part 3, `re/rules/new-game.md` §13.2), Back and Start. The settings are
+//! remembered in our settings file as the quick game's are (`CustomGame`).
 
 use egui::{Pos2, Rect, Vec2};
 
@@ -46,6 +47,8 @@ pub struct Settings {
     pub planets: i32,
     pub seed: u32,
     pub empires: Vec<Empire>,
+    /// The player's start planet: `None` the original's draw.
+    pub start: Option<usize>,
 }
 
 /// `InitScirmishBolygok`'s start planets of an empire (re/rules/new-game.md §3) for population `p`, `n` planets and
@@ -66,12 +69,13 @@ impl Settings {
         let planets = tables.planets[2].clamp(PLANETS.0, PLANETS.1);
         let start = start_planets(2, planets, 3).clamp(START_PLANETS.0 as i32, START_PLANETS.1 as i32) as u8;
         let empire = |race| Empire { race, name: String::new(), money: tables.money[2].clamp(0, MONEY_MAX), tech: 2, planets: start, level: 2, aggression: 1, relation: 1 };
-        Self { planets, seed, empires: (1..=4).map(empire).collect() }
+        Self { planets, seed, empires: (1..=4).map(empire).collect(), start: None }
     }
 
-    /// The settings file's value: `planets,seed` then per empire `|race,money,tech,planets,level,aggression,relation,name`.
+    /// The settings file's value: `planets,seed,start` (0 = random) then per empire
+    /// `|race,money,tech,planets,level,aggression,relation,name`.
     pub fn to_setting(&self) -> String {
-        let mut s = format!("{},{}", self.planets, self.seed);
+        let mut s = format!("{},{},{}", self.planets, self.seed, self.start.unwrap_or(0));
         for e in &self.empires {
             s += &format!("|{},{},{},{},{},{},{},{}", e.race, e.money, e.tech, e.planets, e.level, e.aggression, e.relation, e.name.replace('|', ""));
         }
@@ -92,6 +96,7 @@ impl Settings {
         if let Some(n) = in_range(num(g.next()), 0, u32::MAX as i64) {
             s.seed = n as u32;
         }
+        s.start = in_range(num(g.next()), 1, s.planets as i64).map(|p| p as usize);
         let base = s.empires[1].clone();
         let empires: Vec<Empire> = parts
             .take(1 + COMPUTERS.1)
@@ -153,7 +158,7 @@ impl Settings {
                 tech: e.tech as i32,
                 planets: e.planets as i32,
                 level: if row == 0 { 0 } else { [1, 2, 4][(e.level.clamp(1, 3) - 1) as usize] },
-                start: None,
+                start: if row == 0 { self.start } else { None },
                 aggressiveness: [Aggressiveness::Low, Aggressiveness::Normal, Aggressiveness::High][e.aggression.min(2) as usize],
                 relations,
             };
@@ -191,6 +196,50 @@ fn money_step(v: i32, up: bool) -> i32 {
     n.clamp(0, MONEY_MAX)
 }
 
+/// What the page's map shows of the galaxy a custom game starts (spec §13.2, part 3): the start itself, run on a
+/// scratch `Game` of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preview {
+    /// Planets 1..=n (index 0 = planet 1): the galaxy position (`+0x18`, `+0x1c`) and the owner (`+0x20`, 0 nobody).
+    pub planets: Vec<([f32; 2], u8)>,
+    /// Each living empire's start planet (`BirodalomBolygo` 0xF17394 + 4e, index 1..=8; 0 none).
+    pub homes: [usize; 9],
+}
+
+impl Preview {
+    pub fn of(state: &ig2_sim::save::SaveState) -> Self {
+        use ig2_sim::save::{va, PLANET_SIZE};
+        let planets = (1..=state.planet_count())
+            .map(|p| {
+                let at = va::PLANETS + (p * PLANET_SIZE) as u32;
+                ([state.mem.f32(at + 0x18), state.mem.f32(at + 0x1c)], state.mem.u8(at + 0x20))
+            })
+            .collect();
+        let alive = state.alive();
+        let homes = std::array::from_fn(|e| if (1..9).contains(&e) && alive[e] { state.mem.i32(0xF17394 + 4 * e as u32).max(0) as usize } else { 0 });
+        Self { planets, homes }
+    }
+
+    /// The galaxy a custom game starts: [`crate::new_game::custom`] on a `Game` of its own.
+    pub fn generate(install: &ig2_formats::Install, cfg: &ig2_sim::game::new_game::CustomGame, rules: &ig2_sim::game::GameRules) -> Option<Self> {
+        crate::new_game::custom(install, cfg, rules).map(|g| Self::of(&g.state)).map_err(|e| eprintln!("ig2-client: custom game preview: {e}")).ok()
+    }
+
+    fn same_stars(&self, o: &Self) -> bool {
+        self.planets.len() == o.planets.len() && self.planets.iter().zip(&o.planets).all(|(a, b)| a.0 == b.0)
+    }
+}
+
+/// The map's view of the planets in `r`: their bounds fitted, one scale for both axes, the galaxy's +x to the left and
+/// +y up as on the starmap's minimap (`crate::orders::minimap_target`, exe 0x5b2ec9).
+fn map_view(r: Rect, planets: &[([f32; 2], u8)]) -> impl Fn([f32; 2]) -> Pos2 {
+    let (lo, hi) = planets.iter().fold(([f32::MAX; 2], [f32::MIN; 2]), |(lo, hi), (p, _)| ([lo[0].min(p[0]), lo[1].min(p[1])], [hi[0].max(p[0]), hi[1].max(p[1])]));
+    let c = [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0];
+    let s = (r.width() / (hi[0] - lo[0]).max(1.0)).min(r.height() / (hi[1] - lo[1]).max(1.0));
+    let o = r.center();
+    move |p| Pos2::new(o.x + (c[0] - p[0]) * s, o.y + (c[1] - p[1]) * s)
+}
+
 /// The field the keys type into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
@@ -213,12 +262,105 @@ pub struct CustomPage {
     focus: Option<Focus>,
     /// The skirmish entry's `NewgameRandomID`.
     pub kind: i32,
+    /// The map: the start it was made from (names left out) and what it shows (`None`: the start failed).
+    preview: Option<(ig2_sim::game::new_game::CustomGame, Option<Preview>)>,
+    /// Empires 0..=8's colours (`DDColor[e + 15]`, the starmap's).
+    colours: [egui::Color32; 9],
 }
 
 impl CustomPage {
     /// The page with the last custom game's settings (our settings file), a new seed when there are none.
-    pub fn open(tables: &crate::mainscr_scenario::Tables, kind: i32, seed: u32) -> Self {
-        Self { s: Settings::from_setting(ig2_formats::options::Options::load().get(KEY), tables, seed), focus: None, kind }
+    pub fn open(tables: &crate::mainscr_scenario::Tables, kind: i32, seed: u32, install: &ig2_formats::Install) -> Self {
+        let palette = crate::starmap::read_palette(install).unwrap_or_default();
+        let colours = std::array::from_fn(|e| palette.get(e + 15).map_or(egui::Color32::GRAY, |c| egui::Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8)));
+        Self { s: Settings::from_setting(ig2_formats::options::Options::load().get(KEY), tables, seed), focus: None, kind, preview: None, colours }
+    }
+
+    /// The start the map shows: the page's custom game without the names (they reach no draw).
+    fn galaxy_key(&self) -> ig2_sim::game::new_game::CustomGame {
+        let mut c = self.s.custom(self.kind, |_| Vec::new());
+        for e in &mut c.empires {
+            e.name = None;
+        }
+        c
+    }
+
+    /// A new map when the start changed; a chosen star is dropped when the planets moved (another galaxy).
+    fn refresh(&mut self, galaxy: impl FnOnce(&ig2_sim::game::new_game::CustomGame) -> Option<Preview>) {
+        let key = self.galaxy_key();
+        if self.preview.as_ref().is_some_and(|(k, _)| *k == key) {
+            return;
+        }
+        let new = galaxy(&key);
+        let old = self.preview.as_ref().and_then(|(_, p)| p.as_ref());
+        if let (Some(old), Some(new)) = (old, &new) {
+            if self.s.start.is_some() && !old.same_stars(new) {
+                // The next frame makes the random start's map.
+                self.s.start = None;
+            }
+        }
+        self.preview = Some((key, new));
+    }
+
+    /// The map under the empires table: the stars, the start planets in their empire's colour, the player's ringed; a
+    /// click on a star picks the player's start, the Random start plate sets it back.
+    fn map(&mut self, ui: &mut egui::Ui, size: Vec2, tr: &dyn Fn(&str) -> String, dropped: bool) -> bool {
+        let k = ds::tokens();
+        let mut changed = false;
+        let head = 40.0;
+        let (row, _) = ui.allocate_exact_size(Vec2::new(size.x, head), egui::Sense::hover());
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::left_to_right(egui::Align::Center)));
+        ds::heading_label(&mut c, &tr("Start position"));
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
+        if c.add_enabled(self.s.start.is_some(), ds::Plate::new(&tr("Random start")).width(220.0).height(36.0)).clicked() {
+            self.s.start = None;
+            changed = true;
+        }
+        let hint = Font { size: 14.0, line: 20.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
+        c.add_space(16.0);
+        let text = if self.s.start.is_some() { tr("You start on the star you picked.") } else { tr("Click a star to start there.") };
+        Text::new(&text, hint).color(k.ink_muted).show(&mut c, Vec2::new(360.0, 20.0));
+        ui.add_space(8.0);
+        let h = (size.y - head - 8.0).max(60.0);
+        let (frame, resp) = ui.allocate_exact_size(Vec2::new(size.x, h), egui::Sense::click());
+        let p = ui.painter_at(frame);
+        p.rect_filled(frame, ds::RADIUS_PLATE, k.glass_deep);
+        ds::rim(&p, frame, ds::RADIUS_PLATE, k.rim);
+        let Some(map) = self.preview.as_ref().and_then(|(_, m)| m.as_ref()) else { return changed };
+        let at_map = map_view(frame.shrink(24.0), &map.planets);
+        let en = self.preview.as_ref().map_or(0, |(c, _)| c.en as usize);
+        // The planet under the pointer: the nearest within 12 px.
+        let hover = resp.hover_pos().and_then(|at| {
+            map.planets.iter().enumerate().map(|(i, s)| (i + 1, at_map(s.0).distance(at))).filter(|&(_, d)| d < 12.0).min_by(|a, b| a.1.total_cmp(&b.1)).map(|(p, _)| p)
+        });
+        for (i, &(pos, owner)) in map.planets.iter().enumerate() {
+            let at = at_map(pos);
+            let home = owner != 0 && map.homes.get(owner as usize) == Some(&(i + 1));
+            match (owner, home) {
+                (0, _) => _ = p.circle_filled(at, 2.5, k.ink_muted),
+                (_, false) => _ = p.circle_filled(at, 3.5, self.colours[owner as usize % 9]),
+                (_, true) => {
+                    p.circle_filled(at, 5.5, self.colours[owner as usize % 9]);
+                    p.circle_stroke(at, 8.0, egui::Stroke::new(1.0f32, self.colours[owner as usize % 9]));
+                }
+            }
+        }
+        if let Some(&home) = map.homes.get(en).filter(|&&h| h > 0) {
+            let at = at_map(map.planets[home - 1].0);
+            p.circle_stroke(at, 12.0, egui::Stroke::new(2.0f32, k.focus));
+            let f = Font { size: 13.0, line: 16.0, weight: Weight::Medium, tracking: 0.06, upper: true, lcd: false };
+            let r = Rect::from_min_size(at + Vec2::new(16.0, -8.0), Vec2::new(160.0, 16.0));
+            Text::new(&tr("Your start"), f).color(k.focus).paint(ui, r);
+        }
+        if let Some(h) = hover {
+            p.circle_stroke(at_map(map.planets[h - 1].0), 10.0, egui::Stroke::new(1.5f32, k.ink));
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            if resp.clicked() && !dropped && self.s.start != Some(h) {
+                self.s.start = Some(h);
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// A field takes the keys.
@@ -275,14 +417,20 @@ impl CustomPage {
         }
     }
 
-    /// One frame of the page; `heads` gives a race's portrait.
-    pub fn show(&mut self, ctx: &egui::Context, texts: &UiTexts, mut heads: impl FnMut(&egui::Context, u8) -> Option<egui::TextureHandle>) -> Option<Act> {
+    /// One frame of the page; `heads` gives a race's portrait, `galaxy` the map of a start ([`Preview::generate`]).
+    pub fn show(&mut self, ctx: &egui::Context, texts: &UiTexts, mut heads: impl FnMut(&egui::Context, u8) -> Option<egui::TextureHandle>, galaxy: impl FnOnce(&ig2_sim::game::new_game::CustomGame) -> Option<Preview>) -> Option<Act> {
+        // Not while a field takes the keys: each typed seed digit would build a galaxy.
+        if self.focus.is_none() {
+            self.refresh(galaxy);
+        }
         let k = ds::tokens();
         let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
         let game = |b: &[u8]| ig2_formats::text::decode(b, texts.lang).trim().trim_end_matches(':').trim().to_string();
         let mut act = None;
         let pressed = ctx.input(|i| i.pointer.any_pressed());
         let mut on_field = false;
+        // A drop-down open as the frame began: this frame's click only closes it.
+        let mut dropped = false;
         let races = texts.playable_races();
         let race_name = |r: u8| game(&texts.race(r));
         crate::gui::board_at(ctx, "custom-game", Vec2::new(1760.0, 900.0), 0.55, 12.0, |ui| {
@@ -361,6 +509,8 @@ impl CustomPage {
                         }
                         ds::rim(u0.painter(), hr, ds::RADIUS_PLATE, k.rim);
                         let mut select = |j: usize, id: &str, value: String, rows: Vec<(i32, String, bool)>| -> Option<i32> {
+                            let sid = u[j].id().with((id, i));
+                            dropped |= u[j].memory(|m| m.data.get_temp::<bool>(sid).unwrap_or(false));
                             ds::select(&mut u[j], (id, i), &value, &rows, cell(c[j], 38.0).size(), pick, k.ink).1.flatten()
                         };
                         let race_rows = races.iter().map(|&r| (r as i32, race_name(r), false)).collect();
@@ -430,6 +580,11 @@ impl CustomPage {
                         self.s.add(&races);
                         act = Some(Act::Click);
                     }
+                    ui.add_space(24.0);
+                    let rest = Vec2::new(tw, ui.available_height());
+                    if self.map(ui, rest, &tr, dropped) {
+                        act = Some(Act::Click);
+                    }
                 });
             });
             ui.add_space(20.0);
@@ -460,14 +615,14 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     let hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
     let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
     let a = crate::mainscr_scenario::Assets::load(&l.install, &hud.texts);
-    let mut page = CustomPage::open(&a.tables, 1, 1234);
+    let mut page = CustomPage::open(&a.tables, 1, 1234, &l.install);
     let mut pics = crate::scenarios_modern::Pics::default();
     let style = crate::gui::style(&crate::theme::Theme::modern());
     let k = crate::gui::Gui::scale(o.size.1);
     let v = crate::font::Virtual::new([o.size.0 as f32, o.size.1 as f32]);
     gui.pointer(o.mouse.map(|m| v.px(m[0], m[1])), k);
     for _ in 0..40 {
-        gui.run(o.size, &style, |ctx| _ = page.show(ctx, &hud.texts, |ctx, race| pics.head(ctx, &l.install, race as i32)));
+        gui.run(o.size, &style, |ctx| _ = page.show(ctx, &hud.texts, |ctx, race| pics.head(ctx, &l.install, race as i32), |c| Preview::generate(&l.install, c, &l.rules)));
     }
     let rgba = r.draw_to_image_over(&crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), o.size, 0.0, |d, q, t| gui.paint(d, q, t));
     crate::assets::write_snapshot(out, o, &rgba)?;
@@ -542,7 +697,7 @@ mod tests {
     fn keys() {
         use winit::keyboard::{Key, NamedKey};
         let ch = |s: &str| Key::Character(s.into());
-        let mut p = CustomPage { s: Settings::new(&T, 12), focus: Some(Focus::Seed), kind: 1 };
+        let mut p = CustomPage { s: Settings::new(&T, 12), focus: Some(Focus::Seed), kind: 1, preview: None, colours: [egui::Color32::GRAY; 9] };
         p.key(&ch("3"), false, false);
         p.key(&ch("x"), false, false);
         p.key(&Key::Named(NamedKey::Backspace), false, false);
@@ -557,6 +712,50 @@ mod tests {
         assert_eq!(p.key(&Key::Named(NamedKey::Escape), false, true), None);
         assert_eq!(p.key(&Key::Named(NamedKey::Escape), false, false), Some(Act::Back));
         assert_eq!(p.key(&Key::Named(NamedKey::Enter), false, false), Some(Act::Start));
+    }
+
+    /// Spec §13.2 part 3: a new map only when the start changed; a picked star stays while the planets stay, and is
+    /// dropped when they moved (another seed).
+    #[test]
+    fn refresh() {
+        let mut p = CustomPage { s: Settings::new(&T, 12), focus: None, kind: 1, preview: None, colours: [egui::Color32::GRAY; 9] };
+        let map = |x: f32| Some(Preview { planets: vec![([x, 0.0], 0)], homes: [0; 9] });
+        let mut calls = 0;
+        p.refresh(|_| { calls += 1; map(1.0) });
+        p.s.start = Some(1);
+        p.refresh(|_| { calls += 1; map(1.0) });
+        p.refresh(|_| { calls += 1; map(1.0) });
+        assert_eq!((calls, p.s.start), (2, Some(1)));
+        p.s.seed += 1;
+        p.refresh(|_| map(2.0));
+        assert_eq!(p.s.start, None);
+    }
+
+    /// Spec §13.2 part 3 (IG2_INSTALL_DIR; skipped without it): the map is the start's galaxy, a picked star becomes
+    /// the player's start planet in the same galaxy, and the pick is kept with the settings.
+    #[test]
+    fn preview_is_the_start() {
+        let Some(Ok(install)) = ig2_formats::Install::from_env(ig2_formats::text::Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let (rules, _) = crate::rules::load(&install).unwrap();
+        let mut s = Settings::new(&T, 4242);
+        let cfg = |s: &Settings| s.custom(1, |n| n.bytes().collect());
+        let t = std::time::Instant::now();
+        let map = Preview::generate(&install, &cfg(&s), &rules).unwrap();
+        eprintln!("preview in {:?}", t.elapsed());
+        assert_eq!(map.planets.len(), 80);
+        let real = crate::new_game::custom(&install, &cfg(&s), &rules).unwrap();
+        assert_eq!(Preview::of(&real.state), map);
+        let en = cfg(&s).en as usize;
+        assert!(map.homes[en] > 0 && (1..=4).all(|e| map.planets[map.homes[e] - 1].1 == e as u8));
+        let free = (1..=80).find(|&p| map.planets[p - 1].1 == 0).unwrap();
+        s.start = Some(free);
+        let picked = Preview::generate(&install, &cfg(&s), &rules).unwrap();
+        assert!(picked.same_stars(&map));
+        assert_eq!((picked.homes[en], picked.planets[free - 1].1), (free, en as u8));
+        assert_eq!(Settings::from_setting(Some(&s.to_setting()), &T, 1).start, Some(free));
     }
 
     #[test]

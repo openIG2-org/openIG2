@@ -340,7 +340,7 @@ Runtime findings (normative):
 - The exe's `st_bSearch` has no assert: `InitScirmishBolygok` with no planet would write `Bolygok[0]`.
 - Unknown: the 200-planet hang (§11).
 
-## 13.2 Custom game (ours, ADR 0085): part 1 ported (the sim)
+## 13.2 Custom game (ours, ADR 0085): parts 1 (the sim), 2 (the page) and 3 (the preview, the chosen start) ported
 Port: `Game::start_custom(&CustomGame, &StartData)` (`engine/crates/ig2-sim/src/game/new_game.rs`); `start_skirmish`
 is `start_custom(&CustomGame::from(NewSkirmish))`, so the 10 recorded skirmish starts (§13.1) are its proof for the
 original's values. A custom game is the skirmish start (mode 3) with these values, each applied where the exe writes
@@ -363,6 +363,18 @@ that value; a value equal to the original's changes nothing and draws nothing.
 
 The `CustomGame` is kept in `SaveState::custom` (our save, snapshot format 16) and travels in the multiplayer start
 data (`GalaxyStart::custom`: every machine builds the same start with `start_custom` and the room's humans).
+
+**The preview and the chosen start (part 3, `ig2-client::custom_game`).** The page's map is the start itself: the
+page's `CustomGame` (names left out: they reach no draw) runs `Game::before_start` + `start_custom` on a scratch `Game`
+of its own (its own `SaveState` and RNG streams), so the preview shows the galaxy the real start makes and the real
+start, a fresh `Game`, draws exactly as without it. The map reads each planet's position (`+0x18`, `+0x1c`, galaxy
+units within ±300) and owner (`+0x20`) and each empire's `BirodalomBolygo` (0xF17394 + 4e); it is built again whenever
+the `CustomGame` changes (planets, seed, an empire's race, planets, the chosen start ...), so the start planets shown
+are the ones the start makes, the chosen start's colonies included. The planets' bounds fill the map at one scale,
+the galaxy's +x to the left and +y up as on the starmap's minimap (`minimap_target`, exe 0x5b2ec9). A click on a planet sets the player's
+`CustomEmpire::start` (any planet: step 3 has no filter either); "Random" sets it back to `None`. The choice is kept
+with the other settings (`CustomGame` in our settings file: `planets,seed,start`, 0 = random) and dropped when a new
+preview's planet positions differ from the last one's (another seed or planet count: planet p is another star).
 
 ## 14. `DesignPoenosanElnevez(e, hull, out, special)` (exe 0x4b19d0, ELF 0x5087c0): ported
 Exe decompile (`_local/decomp/design/exe/004b19d0_DesignPoenosanElnevez.c`): `n = special + (e·100 + hull)·10`;

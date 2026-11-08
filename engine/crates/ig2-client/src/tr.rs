@@ -282,6 +282,11 @@ const TABLE: &[(&str, &str)] = &[
     ("Friendly", "Baráti"),
     ("Remove", "Eltávolítás"),
     ("Add computer empire", "Gépi birodalom hozzáadása"),
+    ("Start position", "Kezdőhely"),
+    ("Random start", "Véletlen kezdőhely"),
+    ("Click a star to start there.", "Kattints egy csillagra: ott kezdesz."),
+    ("You start on the star you picked.", "A választott csillagon kezdesz."),
+    ("Your start", "A kezdőhelyed"),
     ("History", "Előzmények"),
     // The enhanced menu navigation (ADR 0059).
     ("Play", "Játék"),
