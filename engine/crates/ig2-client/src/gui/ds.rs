@@ -359,14 +359,48 @@ pub fn shadow(p: &Painter, rect: Rect, r: impl Into<CornerRadius>, dy: i8, blur:
     p.add(egui::Shadow { offset: [0, dy], blur, spread, color: c }.as_shape(rect, r));
 }
 
-/// The design's soft inner shading of a raised part (`--shadow-relief`'s insets): a lit band under the top edge, a
-/// dark one over the bottom.
+/// The design's soft inner shading of a raised part (`--shadow-relief`'s insets): a lit band 2 points under the top
+/// edge, a dark one 4 points over the bottom. Each band follows the outline (an inset shadow is the shape minus
+/// itself shifted), so on a round button it is a crescent, not a bar cut off by the corners.
 pub fn relief(p: &Painter, rect: Rect, r: impl Into<CornerRadius> + Copy) {
     let k = tokens();
-    let h = rect.height().max(1.0);
-    let shine = k.metal_shine.gamma_multiply(0.55);
-    let dark = k.metal_shadow.gamma_multiply(0.9);
-    vgrad(p, rect, r, &[(0.0, shine), (2.0 / h, Color32::TRANSPARENT), (1.0 - 4.0 / h, Color32::TRANSPARENT), (1.0, dark)]);
+    let (top, bottom) = outline(rect, r.into());
+    let n = (rect.width().ceil() as usize).clamp(2, 512);
+    let mut mesh = egui::Mesh::default();
+    let mut band = |c: Color32, depth: f32, down: bool| {
+        let base = mesh.vertices.len() as u32;
+        for i in 0..=n {
+            let x = rect.left() + rect.width() * i as f32 / n as f32;
+            let (t, b) = (top(x), bottom(x));
+            let (edge, inner) = if down { (t, (t + depth).min(b)) } else { (b, (b - depth).max(t)) };
+            // The band fades over its depth, so where the shape is thinner than that it ends part-way.
+            let fade = 1.0 - (inner - edge).abs() / depth;
+            mesh.colored_vertex(egui::pos2(x, edge), c);
+            mesh.colored_vertex(egui::pos2(x, inner), c.gamma_multiply(fade.clamp(0.0, 1.0)));
+            if i > 0 {
+                let v = base + 2 * i as u32;
+                mesh.add_triangle(v - 2, v - 1, v);
+                mesh.add_triangle(v - 1, v, v + 1);
+            }
+        }
+    };
+    band(k.metal_shine.gamma_multiply(0.55), 2.0, true);
+    band(k.metal_shadow.gamma_multiply(0.9), 4.0, false);
+    p.add(mesh);
+}
+
+/// The top and bottom edge of `rect` rounded by `r` at a given x (the corners clamped to half the short side).
+fn outline(rect: Rect, r: CornerRadius) -> (impl Fn(f32) -> f32, impl Fn(f32) -> f32) {
+    let half = rect.width().min(rect.height()) / 2.0;
+    let rad = |c: u8| (c as f32).min(half);
+    let dip = move |x: f32, left: f32, right: f32| {
+        // How far the corner arcs pull the edge in at x.
+        let (dl, dr) = (rect.left() + left - x, x - (rect.right() - right));
+        let (d, r) = if dl > 0.0 { (dl, left) } else if dr > 0.0 { (dr, right) } else { return 0.0 };
+        r - (r * r - d.min(r).powi(2)).max(0.0).sqrt()
+    };
+    let (nw, ne, sw, se) = (rad(r.nw), rad(r.ne), rad(r.sw), rad(r.se));
+    (move |x| rect.top() + dip(x, nw, ne), move |x| rect.bottom() - dip(x, sw, se))
 }
 
 /// The plate's gradient (plate → low at 55 % → plate) with `--shadow-plate`; `high` lit (pressed, the primary).

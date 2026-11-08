@@ -580,10 +580,12 @@ fn progress_field(ui: &egui::Ui, rect: Rect, text: Rect, frac: f32, name: &str, 
 
 /// The message ticker (black, a metal rim): the original's scrolling message (or the chat entry, the error, the
 /// waiting text pulsing in LCD ink), else "Pause" while paused, else the latest of the history, dim. Left button: the
-/// messages screen; right button held: the history.
+/// messages screen; right button held: the history. No tooltip (it would sit over the history).
 fn ticker(ui: &mut egui::Ui, v: &View, size: Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let (r, resp) = ui.allocate_exact_size(vec2(size.x, ROW_H), Sense::click());
+    // Drag too: a click-only widget loses its held button once the press outlasts a click (0.8 s), which closed the
+    // history while the right button was still down.
+    let (r, resp) = ui.allocate_exact_size(vec2(size.x, ROW_H), Sense::click_and_drag());
     let r = Rect::from_center_size(r.center(), size);
     let hot = ds::hover_t(ui.ctx(), resp.id, resp.hovered());
     let p = ui.painter();
@@ -598,8 +600,7 @@ fn ticker(ui: &mut egui::Ui, v: &View, size: Vec2, acts: &mut Vec<Act>) {
     };
     let upper = text == v.labels.pause && v.paused;
     Text::new(text, TICKER.upper(upper)).color(colour).paint_only(ui, r.shrink2(vec2(ds::SPACE[1], 0.0)));
-    let name = v.screens.iter().find(|s| s.n == 10);
-    let resp = hand(ds::tip_key(resp, name.map_or("", |s| s.name.as_str()), name.map_or("", |s| s.key.as_str())));
+    let resp = hand(resp);
     let right_held = resp.is_pointer_button_down_on() && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
     if right_held != v.history_open {
         acts.push(Act::History(right_held));
@@ -1501,6 +1502,37 @@ mod tests {
 
     fn area(ctx: &egui::Context, id: &str) -> Rect {
         ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap()
+    }
+
+    /// The history stays open while the right button is held on the message line, also past a click's 0.8 s (a
+    /// click-only widget loses the held button then), and goes with the release.
+    #[test]
+    fn history_held_past_a_click() {
+        let mut g = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let (v, mut st) = (view(), State::default());
+        let k = crate::gui::Gui::scale(SIZE.1);
+        let mut at = Pos2::ZERO;
+        for _ in 0..3 {
+            g.run(SIZE, &style, |ctx| {
+                show(ctx, &v, &mut st);
+                let bar = area(ctx, BAR_ID);
+                at = pos2(bar.left() + bar.width() * 0.4, bar.center().y);
+            });
+        }
+        g.pointer(Some([at.x * k, at.y * k]), k);
+        let mut frame = |g: &mut crate::gui::Gui, button: Option<bool>| {
+            if let Some(down) = button {
+                g.button(1, down);
+            }
+            let mut acts = Vec::new();
+            g.run(SIZE, &style, |ctx| acts = show(ctx, &v, &mut st));
+            acts.contains(&Act::History(true))
+        };
+        assert!(frame(&mut g, Some(true)));
+        std::thread::sleep(std::time::Duration::from_millis(900));
+        assert!(frame(&mut g, None), "still held after 0.9 s");
+        assert!(!frame(&mut g, Some(false)));
     }
 
     /// The pause button is the top left plate's first; a click on it asks for the pause, nothing else.

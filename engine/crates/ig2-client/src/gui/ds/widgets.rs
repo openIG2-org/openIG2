@@ -1295,24 +1295,24 @@ pub fn tip(resp: Response, text: &str) -> Response {
     })
 }
 
-/// [`tip`] with the control's key in a small key cap after the text (a screen's key, a speed's).
+/// [`tip`] with the control's key in a small key cap after the text (a screen's key, a speed's). The text and the
+/// key sit on one baseline, the text's capitals centred in the row and the cap centred on the row.
 pub fn tip_key(resp: Response, text: &str, key: &str) -> Response {
     if text.is_empty() || key.is_empty() {
         return tip(resp, text);
     }
     resp.on_hover_ui(|ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = SPACE[1];
-            let k = tokens();
-            let fit = Text::new(text, Font::DATA.weight(Weight::Regular).tracking(0.05)).layout(ui.ctx(), 320.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(fit.width, fit.galley.size().y), Sense::hover());
-            ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
-            let f = Font::LABEL.upper(false);
-            let w = Text::new(key, f).layout(ui.ctx(), f32::INFINITY).width + 2.0 * SPACE[0];
-            let (cap, _) = ui.allocate_exact_size(Vec2::new(w, f.line), Sense::hover());
-            ui.painter().rect_stroke(cap, RADIUS_PLATE, Stroke::new(1.0f32, k.rim_bright), egui::StrokeKind::Inside);
-            Text::new(key, f).center().color(k.info).paint_only(ui, cap);
-        });
+        let k = tokens();
+        let (tf, kf) = (Font::DATA.weight(Weight::Regular).tracking(0.05), Font::LABEL.upper(false));
+        let label = Text::new(text, tf).color(Color32::WHITE);
+        let tw = label.layout(ui.ctx(), 320.0).width.min(320.0);
+        let kw = Text::new(key, kf).layout(ui.ctx(), f32::INFINITY).width + 2.0 * SPACE[0];
+        let (row, _) = ui.allocate_exact_size(Vec2::new(tw + SPACE[1] + kw, tf.line.max(kf.line)), Sense::hover());
+        let base = baseline(row, tf);
+        label.baseline(base).paint_only(ui, row.with_max_x(row.left() + tw));
+        let cap = Rect::from_center_size(Pos2::new(row.right() - kw / 2.0, row.center().y), Vec2::new(kw, kf.line));
+        ui.painter().rect_stroke(cap, RADIUS_PLATE, Stroke::new(1.0f32, k.rim_bright), egui::StrokeKind::Inside);
+        Text::new(key, kf).center().baseline(base).color(k.info).paint_only(ui, cap);
     })
 }
 
