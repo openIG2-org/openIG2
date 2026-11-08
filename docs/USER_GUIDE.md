@@ -272,6 +272,8 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    entry (it needs `version`, `requires` and `license` in `mod.toml`; only TOML, PNG, text and the game's data
    formats, no programs, scripts or archives, and no file copied from the install; fill in the entry's download URL).
 
+**Browse and install**: the Mods page's Browse tab (Ctrl+Tab switches tabs) lists mods from the openIG2 mod index. The list is fetched over HTTPS only when you open the tab (nothing is contacted at start), its signature is checked against the key built into the game, and the checked copy is kept beside your settings (`mod-index`) so Browse also works offline, with a note saying so. It lists the newest release that fits this version, with search (`/`), picture, author, licence, size, dependencies and conflicts. Install (Enter) downloads the mod and the dependencies you lack, checks every zip (size, SHA-256, safe data files only) and puts `<id>.zip` in the `mods` folder beside the game; Update replaces the zip once the new one is verified; Remove (Delete) deletes the zip. F5 refreshes. A mod you put in by hand as a folder is never replaced or removed. Installing waits while the Installed tab has changes you have not applied; then switch the mod on there and restart.
+
 Where mods are read: the `mods` folder beside the executable and the one beside the settings files
 (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or `IG2_OPTIONS_DIR\mods`); a mod in the first wins over one of the same
 name in the second. The enabled list is `enabled.txt` in the settings' `mods` folder: one mod name a line (a folder's

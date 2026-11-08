@@ -2125,6 +2125,9 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     if matches!(o.screen.as_deref(), Some("lobby" | "lobby-lan" | "lobby-room")) {
         return crate::mp_lobby::page::snapshot(o, out);
     }
+    if let Some(tab @ ("mods" | "mods-browse")) = o.screen.as_deref() {
+        return crate::mods_page::snapshot(o, out, tab == "mods-browse");
+    }
     if o.screen.as_deref() == Some("custom") {
         return crate::custom_game::snapshot(o, out);
     }

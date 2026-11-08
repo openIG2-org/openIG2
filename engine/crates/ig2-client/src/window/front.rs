@@ -295,6 +295,12 @@ impl App {
                 Err(e) => eprintln!("ig2-client: restart: {e}"),
             },
             Act::Click => {}
+            Act::Reload => {
+                if let Some(old) = f.mods.take() {
+                    f.mods = Some(crate::mods_page::ModsPage::reopen(&self.install, old));
+                }
+                return;
+            }
         }
         self.audio.play(crate::audio::CLICK);
     }
@@ -602,7 +608,7 @@ impl App {
             return;
         }
         if let Some(m) = &mut f.mods {
-            if let Some(a) = m.key(k, self.modifiers.shift_key()) {
+            if let Some(a) = m.key(k, self.modifiers.shift_key(), self.modifiers.control_key() || self.modifiers.alt_key()) {
                 self.mods_act(a);
             }
             return;

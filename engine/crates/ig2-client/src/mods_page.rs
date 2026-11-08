@@ -1,7 +1,8 @@
 //! Ours (ADR 0068 §5): the mod manager, an egui page (ADR 0062) over the main menu in the Options page's style: every
 //! mod in the mods folders with its `mod.toml`, a switch and a priority, the checks `ig2-check` runs on a mod, the
 //! files two enabled mods both have; Apply writes `enabled.txt`, which the next start loads. `mod.toml` 2 (ADR 0086
-//! §2): a mod's dependencies sit under it and switch on and off with it, a mod that can't load says why.
+//! §2): a mod's dependencies sit under it and switch on and off with it, a mod that can't load says why. The Browse
+//! tab (ADR 0086 §1.2, [`crate::mods_browse`]) lists, installs, updates and removes the mod repository's mods.
 
 use std::collections::HashMap;
 
@@ -51,6 +52,8 @@ pub enum Act {
     /// Start the game again (the changed list loads then).
     Restart,
     Click,
+    /// The mods folder changed (an install or removal): open the page again over it, the tab kept.
+    Reload,
 }
 
 struct Row {
@@ -95,6 +98,9 @@ pub struct ModsPage {
     /// The keyboard's row (ADR 0053's focus), and whether it moved this frame (the list scrolls to it).
     focus: Option<usize>,
     scroll: bool,
+    /// The Browse tab shows (else the installed mods).
+    browse_tab: bool,
+    pub browse: crate::mods_browse::Browse,
 }
 
 fn tr(en: &'static str) -> &'static str {
@@ -155,9 +161,21 @@ impl ModsPage {
                 }
             })
             .collect();
-        let mut page = Self { rows, saved, loaded: install.mods().iter().map(|m| m.name.clone()).collect(), given, failed, pictures: HashMap::new(), error: None, focus: None, scroll: false };
+        let mut page = Self { rows, saved, loaded: install.mods().iter().map(|m| m.name.clone()).collect(), given, failed, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default() };
         page.refresh();
         page
+    }
+
+    /// The page opened again over `install` after the mods folder changed, `old`'s tab and Browse state kept.
+    pub fn reopen(install: &Install, old: Self) -> Self {
+        let mut p = Self::open(install);
+        (p.browse_tab, p.browse) = (old.browse_tab, old.browse);
+        p
+    }
+
+    /// The search field takes the keys (key repeats reach it).
+    pub fn typing(&self) -> bool {
+        self.browse_tab && self.browse.typing
     }
 
     /// The rows `set` as [`ig2_formats::vfs::refusals`] takes them (a broken `mod.toml` as an empty one).
@@ -341,9 +359,22 @@ impl ModsPage {
     }
 
     /// The keys: Esc Back; Enter Apply, or Back with nothing to apply; Up/Down (Tab, Shift+Tab) the focused mod, Space
-    /// its switch, Shift+Up/Down its priority, Home/End the first and last.
-    pub fn key(&mut self, key: &winit::keyboard::Key, shift: bool) -> Option<Act> {
+    /// its switch, Shift+Up/Down its priority, Home/End the first and last; Ctrl+Tab the other tab (`chord`, Ctrl or
+    /// Alt held). On the Browse tab, [`crate::mods_browse::Browse::key`].
+    pub fn key(&mut self, key: &winit::keyboard::Key, shift: bool, chord: bool) -> Option<Act> {
         use winit::keyboard::{Key, NamedKey};
+        if chord && key == &Key::Named(NamedKey::Tab) {
+            self.browse_tab = !self.browse_tab;
+            self.browse.unfocus(false);
+            return Some(Act::Click);
+        }
+        if self.browse_tab {
+            return match self.browse.key(key, shift, chord) {
+                None => Some(Act::Back),
+                Some(true) => Some(Act::Click),
+                Some(false) => None,
+            };
+        }
         let n = self.rows.len();
         let at = self.focus.filter(|&i| i < n);
         let step = |by: isize| at.map_or(if by > 0 { 0 } else { n.saturating_sub(1) }, |i| (i as isize + by).clamp(0, n.saturating_sub(1) as isize) as usize);
@@ -391,111 +422,136 @@ impl ModsPage {
         let hot = crate::gui::ink(theme.hot);
         let bad = egui::Color32::from_rgb(235, 110, 100);
         crate::gui::page(ctx, "mods", egui::Vec2::from(PAGE), |ui| {
-            ui.heading(egui::RichText::new(tr("MODS")).strong());
-            ui.add_space(10.0);
-            let body = ui.available_height() - 52.0 - 26.0;
-            let (mut toggle, mut shift) = (None, None);
-            egui::ScrollArea::vertical().id_salt("mods").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body).auto_shrink([false, false]).show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 10.0;
-                if self.rows.is_empty() {
-                    crate::gui::card(ui, None, |ui| {
-                        ui.label(tr("No mods found. Put a mod's folder or .zip file into the mods folder, then open this page again."));
-                    });
-                }
-                let enabled = self.rows.iter().filter(|r| r.on).count();
-                for i in 0..self.rows.len() {
-                    let pic = self.picture(ui.ctx(), i);
-                    let (focused, scroll) = (self.focus == Some(i), self.scroll);
-                    let r = &mut self.rows[i];
-                    let card = ui.scope(|ui| crate::gui::card(ui, None, |ui| {
-                        ui.horizontal(|ui| {
-                            let (rect, _) = ui.allocate_exact_size(egui::Vec2::from(PICTURE), egui::Sense::hover());
-                            match &pic {
-                                Some(t) => {
-                                    egui::Image::new(t).corner_radius(6.0).paint_at(ui, rect);
-                                }
-                                None => {
-                                    ui.painter().rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
-                                    let letter = r.m.name.chars().next().unwrap_or('?').to_uppercase().to_string();
-                                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(30.0), ui.visuals().weak_text_color());
-                                }
-                            }
-                            ui.add_space(8.0);
-                            let text_w = ui.available_width() - 150.0;
-                            ui.vertical(|ui| {
-                                ui.set_width(text_w);
-                                ui.spacing_mut().item_spacing.y = 2.0;
-                                let info = r.info.clone().unwrap_or_default();
-                                ui.horizontal(|ui| {
-                                    ui.label(egui::RichText::new(info.name.as_deref().unwrap_or(&r.m.name)).size(17.0).strong());
-                                    if let Some(v) = &info.version {
-                                        ui.label(egui::RichText::new(v).weak());
-                                    }
-                                    if info.kind == ig2_formats::vfs::ModKind::Visual {
-                                        ui.label(egui::RichText::new(tr("look only")).small().weak()).on_hover_text(tr("Changes only how the game looks: multiplayer rooms don't need it."));
-                                    }
-                                    if r.on {
-                                        let rank = self_rank(enabled, i);
-                                        ui.label(egui::RichText::new(rank).small().color(ui.visuals().hyperlink_color));
-                                    }
-                                });
-                                if let Some(a) = &info.author {
-                                    ui.label(egui::RichText::new(format!("{} {a}", tr("by"))).small().weak());
-                                }
-                                if let Some(d) = &info.description {
-                                    ui.add(egui::Label::new(d).wrap());
-                                }
-                                if !info.depends.is_empty() {
-                                    let deps: Vec<String> = info.depends.iter().map(|(d, v)| if v.is_any() { d.clone() } else { format!("{d} {v}") }).collect();
-                                    ui.label(egui::RichText::new(format!("{} {}", tr("Needs:"), deps.join(", "))).small());
-                                }
-                                let kind = if r.m.is_zip() { tr("zip") } else { tr("folder") };
-                                let licence = info.license.as_deref().map_or(String::new(), |l| format!(", {l}"));
-                                ui.label(egui::RichText::new(format!("{} ({kind}{licence})", r.m.dir.display())).small().weak());
-                                if let Some(why) = &r.refused {
-                                    ui.add(egui::Label::new(egui::RichText::new(format!("{} {why}", tr("Can't load: it"))).small().color(bad)).wrap());
-                                }
-                                if let Some(g) = info.game.as_deref().filter(|g| !crate::version().starts_with(&format!("{g}.")) && !crate::version().starts_with(&format!("{g}-"))) {
-                                    ui.label(egui::RichText::new(format!("{} {g}", tr("Made for openIG2"))).small().color(hot));
-                                }
-                                if let Err(e) = &r.info {
-                                    ui.add(egui::Label::new(egui::RichText::new(e).small().color(bad)).wrap());
-                                }
-                                for p in &r.problems {
-                                    ui.add(egui::Label::new(egui::RichText::new(p).small().color(bad)).wrap());
-                                }
-                                for (w, n) in &r.lost {
-                                    ui.label(egui::RichText::new(format!("{n} {} {w}", tr("of its files come from"))).small().color(hot));
-                                }
-                            });
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let mut on = r.on;
-                                let can = r.on || r.refused.is_none();
-                                if ui.add_enabled_ui(can, |ui| crate::gui::switch(ui, &mut on)).inner.on_hover_text(tr("Load this mod at the next start.")).clicked() {
-                                    toggle = Some(i);
-                                }
-                                if r.on {
-                                    if arrow(ui, i + 1 < enabled, false).on_hover_text(tr("Lower priority")).clicked() {
-                                        shift = Some((i, 1));
-                                    }
-                                    if arrow(ui, i > 0, true).on_hover_text(tr("Higher priority: its files win")).clicked() {
-                                        shift = Some((i, -1));
-                                    }
-                                }
-                            });
-                        });
-                    })).response;
-                    if focused {
-                        crate::gui::focus_ring(ui, card.rect);
-                        if scroll {
-                            card.scroll_to_me(None);
-                        }
+            ui.horizontal(|ui| {
+                ui.heading(egui::RichText::new(tr("MODS")).strong());
+                ui.add_space(24.0);
+                for (browse, label, tip) in [(false, tr("Installed"), tr("The mods in the mods folders (Ctrl+Tab).")), (true, tr("Browse"), tr("The openIG2 mod repository: fetched from the internet when opened (Ctrl+Tab)."))] {
+                    if ui.selectable_label(self.browse_tab == browse, egui::RichText::new(label).size(16.0)).on_hover_text(tip).clicked() && self.browse_tab != browse {
+                        self.browse_tab = browse;
+                        self.browse.unfocus(false);
+                        acts.push(Act::Click);
                     }
                 }
             });
+            ui.add_space(10.0);
+            let body = ui.available_height() - 52.0 - 26.0;
+            let (mut toggle, mut shift) = (None, None);
+            if self.browse_tab {
+                self.browse.start(false);
+                self.browse.locked = self.pending();
+                ui.allocate_ui(egui::vec2(ui.available_width(), body), |ui| {
+                    ui.set_min_height(body);
+                    if self.browse.show(ui, body) {
+                        acts.push(Act::Click);
+                    }
+                });
+                if std::mem::take(&mut self.browse.changed) {
+                    acts.push(Act::Reload);
+                }
+            } else {
+                egui::ScrollArea::vertical().id_salt("mods").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(body).auto_shrink([false, false]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 10.0;
+                    if self.rows.is_empty() {
+                        crate::gui::card(ui, None, |ui| {
+                            ui.label(tr("No mods found. Put a mod's folder or .zip file into the mods folder, then open this page again."));
+                        });
+                    }
+                    let enabled = self.rows.iter().filter(|r| r.on).count();
+                    for i in 0..self.rows.len() {
+                        let pic = self.picture(ui.ctx(), i);
+                        let (focused, scroll) = (self.focus == Some(i), self.scroll);
+                        let r = &mut self.rows[i];
+                        let card = ui.scope(|ui| crate::gui::card(ui, None, |ui| {
+                            ui.horizontal(|ui| {
+                                let (rect, _) = ui.allocate_exact_size(egui::Vec2::from(PICTURE), egui::Sense::hover());
+                                match &pic {
+                                    Some(t) => {
+                                        egui::Image::new(t).corner_radius(6.0).paint_at(ui, rect);
+                                    }
+                                    None => {
+                                        ui.painter().rect_filled(rect, 6.0, ui.visuals().extreme_bg_color);
+                                        let letter = r.m.name.chars().next().unwrap_or('?').to_uppercase().to_string();
+                                        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, letter, egui::FontId::proportional(30.0), ui.visuals().weak_text_color());
+                                    }
+                                }
+                                ui.add_space(8.0);
+                                let text_w = ui.available_width() - 150.0;
+                                ui.vertical(|ui| {
+                                    ui.set_width(text_w);
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    let info = r.info.clone().unwrap_or_default();
+                                    ui.horizontal(|ui| {
+                                        ui.label(egui::RichText::new(info.name.as_deref().unwrap_or(&r.m.name)).size(17.0).strong());
+                                        if let Some(v) = &info.version {
+                                            ui.label(egui::RichText::new(v).weak());
+                                        }
+                                        if info.kind == ig2_formats::vfs::ModKind::Visual {
+                                            ui.label(egui::RichText::new(tr("look only")).small().weak()).on_hover_text(tr("Changes only how the game looks: multiplayer rooms don't need it."));
+                                        }
+                                        if r.on {
+                                            let rank = self_rank(enabled, i);
+                                            ui.label(egui::RichText::new(rank).small().color(ui.visuals().hyperlink_color));
+                                        }
+                                    });
+                                    if let Some(a) = &info.author {
+                                        ui.label(egui::RichText::new(format!("{} {a}", tr("by"))).small().weak());
+                                    }
+                                    if let Some(d) = &info.description {
+                                        ui.add(egui::Label::new(d).wrap());
+                                    }
+                                    if !info.depends.is_empty() {
+                                        let deps: Vec<String> = info.depends.iter().map(|(d, v)| if v.is_any() { d.clone() } else { format!("{d} {v}") }).collect();
+                                        ui.label(egui::RichText::new(format!("{} {}", tr("Needs:"), deps.join(", "))).small());
+                                    }
+                                    let kind = if r.m.is_zip() { tr("zip") } else { tr("folder") };
+                                    let licence = info.license.as_deref().map_or(String::new(), |l| format!(", {l}"));
+                                    ui.label(egui::RichText::new(format!("{} ({kind}{licence})", r.m.dir.display())).small().weak());
+                                    if let Some(why) = &r.refused {
+                                        ui.add(egui::Label::new(egui::RichText::new(format!("{} {why}", tr("Can't load: it"))).small().color(bad)).wrap());
+                                    }
+                                    if let Some(g) = info.game.as_deref().filter(|g| !crate::version().starts_with(&format!("{g}.")) && !crate::version().starts_with(&format!("{g}-"))) {
+                                        ui.label(egui::RichText::new(format!("{} {g}", tr("Made for openIG2"))).small().color(hot));
+                                    }
+                                    if let Err(e) = &r.info {
+                                        ui.add(egui::Label::new(egui::RichText::new(e).small().color(bad)).wrap());
+                                    }
+                                    for p in &r.problems {
+                                        ui.add(egui::Label::new(egui::RichText::new(p).small().color(bad)).wrap());
+                                    }
+                                    for (w, n) in &r.lost {
+                                        ui.label(egui::RichText::new(format!("{n} {} {w}", tr("of its files come from"))).small().color(hot));
+                                    }
+                                });
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    let mut on = r.on;
+                                    let can = r.on || r.refused.is_none();
+                                    if ui.add_enabled_ui(can, |ui| crate::gui::switch(ui, &mut on)).inner.on_hover_text(tr("Load this mod at the next start.")).clicked() {
+                                        toggle = Some(i);
+                                    }
+                                    if r.on {
+                                        if arrow(ui, i + 1 < enabled, false).on_hover_text(tr("Lower priority")).clicked() {
+                                            shift = Some((i, 1));
+                                        }
+                                        if arrow(ui, i > 0, true).on_hover_text(tr("Higher priority: its files win")).clicked() {
+                                            shift = Some((i, -1));
+                                        }
+                                    }
+                                });
+                            });
+                        })).response;
+                        if focused {
+                            crate::gui::focus_ring(ui, card.rect);
+                            if scroll {
+                                card.scroll_to_me(None);
+                            }
+                        }
+                    }
+                });
+            }
             self.scroll = false;
             if ui.ctx().input(|i| i.pointer.any_pressed()) {
                 self.focus = None;
+                self.browse.unfocus(true);
             }
             if let Some(i) = toggle {
                 self.toggle(i);
@@ -509,8 +565,15 @@ impl ModsPage {
             // The status, then the buttons.
             ui.horizontal(|ui| {
                 ui.set_min_height(22.0);
+                let browse = self.browse_tab.then(|| self.browse.status_line()).flatten();
                 if let Some(e) = &self.error {
                     ui.label(egui::RichText::new(e).color(bad));
+                } else if let Some(s) = browse {
+                    let (text, colour) = match &s {
+                        Ok(t) => (t, hot),
+                        Err(e) => (e, bad),
+                    };
+                    ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).truncate()).on_hover_text(text);
                 } else if let Some(e) = self.failed.as_ref().filter(|_| !self.pending()) {
                     let line = format!("{} {e}", tr("The mods failed to load; the game started without them:"));
                     ui.add(egui::Label::new(egui::RichText::new(line).color(bad)).truncate()).on_hover_text(e);
@@ -597,6 +660,29 @@ pub fn restart() -> Result<(), String> {
     std::process::Command::new(exe).args(std::env::args_os().skip(1)).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// `--snapshot out.png --screen mods` (or `mods-browse`, the Browse tab once its index has loaded, at most 30 s).
+pub fn snapshot(o: &crate::Options, out: &std::path::Path, browse: bool) -> Result<(), String> {
+    let l = crate::load(o)?;
+    let mut r = crate::render::Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
+    let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb).install_fonts(&l.install);
+    let mut page = ModsPage::open(&l.install);
+    page.browse_tab = browse;
+    let theme = crate::theme::Theme::modern();
+    let style = crate::gui::style(&theme);
+    let until = web_time::Instant::now() + std::time::Duration::from_secs(30);
+    for i in 0.. {
+        gui.run(o.size, &style, |ctx| _ = page.show(ctx, &theme));
+        if i >= 40 && (!page.browse.busy() || web_time::Instant::now() > until) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let rgba = r.draw_to_image_over(&crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]), o.size, 0.0, |d, q, t| gui.paint(d, q, t));
+    crate::assets::write_snapshot(out, o, &rgba)?;
+    println!("{}", out.display());
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,7 +693,7 @@ mod tests {
     }
 
     fn page(rows: Vec<Row>) -> ModsPage {
-        let mut p = ModsPage { rows, saved: Vec::new(), loaded: Vec::new(), given: false, failed: None, pictures: HashMap::new(), error: None, focus: None, scroll: false };
+        let mut p = ModsPage { rows, saved: Vec::new(), loaded: Vec::new(), given: false, failed: None, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default() };
         p.refresh();
         p
     }
@@ -671,7 +757,7 @@ base = \">=1.2\"";
         // A list written by hand: the mod without its dependency is refused, Apply waits.
         let mut p = page(vec![with("needs", true, needs), with("old", false, "requires = \"<0.1\""), with("base", false, "version = \"1.1\"")]);
         assert_eq!(p.rows[0].refused.as_deref(), Some("needs the mod base >=1.2"));
-        assert!(p.any_refused() && p.key(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter), false) == Some(Act::Back));
+        assert!(p.any_refused() && p.key(&winit::keyboard::Key::Named(winit::keyboard::NamedKey::Enter), false, false) == Some(Act::Back));
         assert_eq!(p.rows[1].refused.as_deref(), Some("needs openIG2 <0.1"));
         // Switching the too old dependency on: refused with its reason.
         assert_eq!(p.rows[2].refused.as_deref(), None);
@@ -685,20 +771,20 @@ base = \">=1.2\"";
         let k = |n| Key::Named(n);
         let mut p = page(vec![row("a", true, &[]), row("b", true, &[]), row("c", false, &[])]);
         p.saved = p.enabled();
-        assert_eq!(p.key(&k(NamedKey::ArrowDown), false), None);
+        assert_eq!(p.key(&k(NamedKey::ArrowDown), false, false), None);
         assert_eq!(p.focus, Some(0));
-        p.key(&k(NamedKey::ArrowDown), false);
+        p.key(&k(NamedKey::ArrowDown), false, false);
         // Shift+Up: b first, the focus with it; not above the top.
-        assert_eq!(p.key(&k(NamedKey::ArrowUp), true), Some(Act::Click));
+        assert_eq!(p.key(&k(NamedKey::ArrowUp), true, false), Some(Act::Click));
         assert_eq!((p.enabled(), p.focus), (vec!["b".to_string(), "a".to_string()], Some(0)));
-        assert_eq!(p.key(&k(NamedKey::ArrowUp), true), None);
+        assert_eq!(p.key(&k(NamedKey::ArrowUp), true, false), None);
         // End, Space: c on, last among the enabled.
-        p.key(&k(NamedKey::End), false);
-        assert_eq!(p.key(&k(NamedKey::Space), false), Some(Act::Click));
+        p.key(&k(NamedKey::End), false, false);
+        assert_eq!(p.key(&k(NamedKey::Space), false, false), Some(Act::Click));
         assert_eq!((p.enabled().len(), p.focus), (3, Some(2)));
         // Changes pending; Esc leaves (taking them back).
         assert!(p.pending());
         p.error = None;
-        assert_eq!(p.key(&k(NamedKey::Escape), false), Some(Act::Back));
+        assert_eq!(p.key(&k(NamedKey::Escape), false, false), Some(Act::Back));
     }
 }

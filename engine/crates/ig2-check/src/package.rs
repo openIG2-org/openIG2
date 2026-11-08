@@ -8,25 +8,6 @@ use ig2_formats::vfs::{ModInfo, Version, MOD_FILE, STORY_FILE};
 use ig2_formats::zipfs::{MAX_ENTRIES, MAX_FILE};
 use sha2::{Digest, Sha256};
 
-/// The file kinds a mod may hold: TOML, PNG, plain text (a readme or licence) and the game's own data formats.
-const KINDS: [&str; 20] =
-    ["toml", "png", "txt", "md", "ogg", "pvr", "xv", "xvb", "mp4", "mou", "map", "dsc", "scn", "eng", "ani", "tut", "res", "msg", "ttf", "otf"];
-/// Text files without an extension a mod may hold.
-const PLAIN: [&str; 4] = ["license", "licence", "readme", "copying"];
-/// Starts of executables, scripts and archives, refused whatever the file's name.
-const REFUSED: [(&[u8], &str); 11] = [
-    (b"MZ", "a Windows program"),
-    (b"\x7fELF", "a Linux program"),
-    (b"\xcf\xfa\xed\xfe", "a macOS program"),
-    (b"\xce\xfa\xed\xfe", "a macOS program"),
-    (b"\xca\xfe\xba\xbe", "a macOS program"),
-    (b"#!", "a script"),
-    (b"PK\x03\x04", "an archive"),
-    (b"7z\xbc\xaf\x27\x1c", "an archive"),
-    (b"Rar!", "an archive"),
-    (b"\x1f\x8b", "an archive"),
-    (b"BZh", "an archive"),
-];
 /// Already compressed kinds, stored as they are.
 const STORED: [&str; 3] = ["ogg", "mp4", "png"];
 
@@ -135,19 +116,11 @@ fn collect(folder: &Path, bad: &mut Vec<String>) -> Result<Vec<(String, Vec<u8>)
     Ok(files)
 }
 
-/// One file's kind and, for the mod's own files, its format: all of it needs no install.
+/// One file's kind ([`ig2_formats::zipfs::data_only`]) and, for the mod's own files, its format: all of it needs no install.
 fn check_file(rel: &str, bytes: &[u8]) -> Result<(), String> {
+    ig2_formats::zipfs::data_only(rel, bytes)?;
     let name = rel.rsplit('/').next().unwrap_or(rel).to_ascii_lowercase();
     let ext = name.rsplit_once('.').map(|(_, e)| e);
-    if rel.eq_ignore_ascii_case("ig2.exe") {
-        return Err("the game's program can't be replaced".into());
-    }
-    if let Some((_, what)) = REFUSED.iter().find(|(magic, _)| bytes.starts_with(magic)) {
-        return Err(format!("{what}: a mod holds data only"));
-    }
-    if !ext.is_some_and(|e| KINDS.contains(&e)) && !PLAIN.contains(&name.as_str()) {
-        return Err(format!("not a kind a mod may hold (TOML, PNG, text, the game's data formats: {})", KINDS[4..].join(", ")));
-    }
     let text = || std::str::from_utf8(bytes).map_err(|_| "not UTF-8 text".to_string());
     match ext {
         Some("png") if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") => Err("not a PNG".into()),

@@ -362,7 +362,7 @@ impl ApplicationHandler for App {
                 // or Enter that closed the Options screen (ADR 0053) goes no further; the Custom game page's fields take a
                 // held key's repeats (ADR 0085).
                 let closer = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter));
-                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some() || (f.mods.is_some() || f.custom.as_ref().is_some_and(|c| !c.typing()))))) {
+                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some() || (f.mods.as_ref().is_some_and(|m| !m.typing()) || f.custom.as_ref().is_some_and(|c| !c.typing()))))) {
                     self.front_key(&event.logical_key);
                 }
             }

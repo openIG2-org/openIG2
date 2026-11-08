@@ -94,6 +94,8 @@ mod mainscr_modern;
 mod newgame_modern;
 mod help_modern;
 mod menu_flow;
+mod mod_repo;
+mod mods_browse;
 mod mods_page;
 mod mainscr_scene;
 mod mainscr_race;

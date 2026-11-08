@@ -126,6 +126,10 @@ a mod whose dependency is missing or whose range excludes this version, and says
 Port status: shipped (row 547): `ModInfo`, `Version`, `VersionReq`, `refusals()` and `dependency_order()` in
 `ig2_formats::vfs`; the Mods page and the start-up load use them; §4's link is on the page.
 
+Port status (§1.2 client): shipped (row 550): `mod_repo` (signature, cache, download checks, install, update,
+remove) and `mods_browse` (the Browse tab) in `ig2-client`; `ig2_formats::zipfs::data_only` is shared with
+`openIG2-check --package`.
+
 ### 3. Multiplayer
 
 The room's admission message gains the host's mod list (id, version, SHA-256); a joiner whose mods differ sees which
