@@ -65,7 +65,9 @@ impl ApplicationHandler for App {
         // The multiplayer pages (ADR 0066) take it the same way.
         let mp_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some());
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
-        let page = mp_page || mods_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        // Ours (ADR 0085): the Custom game page likewise.
+        let custom_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.custom.is_some());
+        let page = mp_page || mods_page || custom_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
         let production = self.production_modern_up();
@@ -119,6 +121,13 @@ impl ApplicationHandler for App {
                     if mods_page && *button == MouseButton::Right {
                         if *state == ElementState::Released {
                             self.mods_act(crate::mods_page::Act::Back);
+                        }
+                        return;
+                    }
+                    // Not while a drop-down is open: the click closes it.
+                    if custom_page && *button == MouseButton::Right {
+                        if *state == ElementState::Released && !egui::Popup::is_any_open(&g.gui.ctx) {
+                            self.custom_act(crate::custom_game::Act::Back);
                         }
                         return;
                     }
@@ -233,7 +242,7 @@ impl ApplicationHandler for App {
             // Delete, Home, End).
             WindowEvent::KeyboardInput { ref event, .. } if event.state == ElementState::Pressed && !do_keyboard::exe_queues_key_down(event)
                 && !(do_keyboard::numpad_digit(event) && self.entry_up()) && !self.options.as_ref().is_some_and(|o| o.s.modern.is_some())
-                && !(self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || f.mods.is_some())) => {}
+                && !(self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || (f.mods.is_some() || f.custom.is_some()))) => {}
             // Esc is the exit hot-spot (`MainCallBackEventHandler` on `AktKep` 1); F1 does nothing there. Help has no
             // keyboard handler of its own, but `DoKeyboard` stays live (exe 0x4db1a0): F2..F10, O and M leave it for
             // their screen (`AktKep` changes, `Help_Kilep`), Space, P and 1/2/3 pause and set the speed.
@@ -350,9 +359,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::KeyboardInput { event, .. } if self.front.is_some() => {
                 // A held Esc's repeats would close the statistics screen and go on to the menu's own Esc; ours: a held Esc
-                // or Enter that closed the Options screen (ADR 0053) goes no further.
+                // or Enter that closed the Options screen (ADR 0053) goes no further; the Custom game page's fields take a
+                // held key's repeats (ADR 0085).
                 let closer = matches!(event.logical_key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter));
-                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some() || f.mods.is_some()))) {
+                if event.state == ElementState::Pressed && !(event.repeat && (closer || self.front.as_ref().is_some_and(|f| f.stats.is_some() || f.replays.is_some() || (f.mods.is_some() || f.custom.as_ref().is_some_and(|c| !c.typing()))))) {
                     self.front_key(&event.logical_key);
                 }
             }

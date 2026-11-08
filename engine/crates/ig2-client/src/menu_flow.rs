@@ -28,6 +28,8 @@ pub enum Item {
     Quit,
     Campaign,
     Scenarios,
+    /// Ours (ADR 0085): the modern Custom game page.
+    CustomGame,
     Local,
     Internet,
     /// A tutorial part 1..=5.
@@ -54,6 +56,7 @@ impl Item {
             Item::Quit => "Quit",
             Item::Campaign => "Campaign",
             Item::Scenarios => "Scenarios",
+            Item::CustomGame => "Custom game",
             Item::Local => "Local network",
             Item::Internet => "Internet",
             Item::Part(n) => ["Part 1", "Part 2", "Part 3", "Part 4", "Part 5"][(n as usize).clamp(1, 5) - 1],

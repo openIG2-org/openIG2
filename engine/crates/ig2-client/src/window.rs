@@ -213,6 +213,8 @@ struct Front {
     sc_pics: crate::scenarios_modern::Pics,
     /// Ours (ADR 0068): the mod manager over the menu.
     mods: Option<crate::mods_page::ModsPage>,
+    /// Ours (ADR 0085): the Custom game page over the menu.
+    custom: Option<crate::custom_game::CustomPage>,
     /// The press that opened the statistics or replays screen: its release isn't theirs (ADR 0059: the panel's
     /// entries lie over their rows).
     opening: bool,
@@ -244,7 +246,7 @@ impl Front {
         if let Some(n) = settings.get("MultiplayerNev").filter(|n| !n.is_empty()) {
             s.player = n.as_bytes().to_vec();
         }
-        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, sc_pics: Default::default(), mods: None, opening: false, ng: Default::default(), ng_heads: None, stats_heads: None, page: None, then: None }
+        Front { s, scene, ui_ms, at: [320.0, 240.0], quit: false, scenarios: None, mp: None, net: Default::default(), session: None, stats: None, replays: None, sc_pics: Default::default(), mods: None, custom: None, opening: false, ng: Default::default(), ng_heads: None, stats_heads: None, page: None, then: None }
     }
 }
 

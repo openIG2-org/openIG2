@@ -37,7 +37,8 @@ fn groups(p: Panel, history: bool) -> Vec<(Option<&'static str>, Vec<Item>)> {
             (Some("Extras"), [Item::History, Item::Replays, Item::Mods, Item::Credits].into_iter().filter(|&i| history || i != Item::History).collect()),
             (None, vec![Item::Settings, Item::Quit]),
         ],
-        Panel::Single => vec![(None, vec![Item::Campaign, Item::Scenarios])],
+        // Ours (ADR 0085): the Custom game page after the scenarios.
+        Panel::Single => vec![(None, vec![Item::Campaign, Item::Scenarios, Item::CustomGame])],
         Panel::Multi => vec![(None, vec![Item::Local, Item::Internet])],
         Panel::Tutorial => vec![(None, (1..=5).map(Item::Part).collect())],
         Panel::Level => vec![(None, vec![Item::Level(0), Item::Level(2), Item::Level(1)])],

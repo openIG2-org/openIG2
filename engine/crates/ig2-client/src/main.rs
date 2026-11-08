@@ -89,6 +89,7 @@ mod info_screen;
 mod kit;
 mod lighting;
 mod mainscr;
+mod custom_game;
 mod mainscr_modern;
 mod newgame_modern;
 mod help_modern;

@@ -60,7 +60,7 @@ impl App {
         let mut frame = crate::render::Frame::new([0.0, 0.0, 0.0, 1.0]);
         fr.s.race_boxes = scene.draw(&mut frame, &mut g.renderer, &self.install, &fr.s, &crate::font::Virtual::new(size));
         // Ours (ADR 0059): the panel stays out of reach under History and Replays.
-        fr.s.covered = self.options.is_some() || fr.mods.is_some() || (fr.s.flow && (fr.stats.is_some() || fr.replays.is_some()));
+        fr.s.covered = self.options.is_some() || (fr.mods.is_some() || fr.custom.is_some()) || (fr.s.flow && (fr.stats.is_some() || fr.replays.is_some()));
         if let Some(h) = &self.hud {
             let now = self.start.elapsed().as_secs_f64() * 1000.0;
             draw_front_2d(fr, h, &mut g.renderer, &self.install, &mut frame, size, now, self.display.statistics);
@@ -73,6 +73,7 @@ impl App {
         let mut top = None;
         let mut mp_outs = Vec::new();
         let mut mods_acts = Vec::new();
+        let mut custom_act = None;
         let mut main_pick = None;
         let mut ng_act = None;
         let mut name_pick = None;
@@ -95,6 +96,13 @@ impl App {
             let t = page_in(&mut fr.page, Page::Mods, false);
             run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| mods_acts = mods.show(ctx, &theme));
             top = Some(pointer_over(&ov, h, size));
+        } else if let (Some(c), Some(h)) = (fr.custom.as_mut(), &self.hud) {
+            // Ours (ADR 0085): the Custom game page.
+            let theme = theme(h);
+            let t = page_in(&mut fr.page, Page::Custom, false);
+            let (install, pics) = (&self.install, &mut fr.sc_pics);
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| custom_act = c.show(ctx, &h.texts, |ctx, r| pics.head(ctx, install, r as i32)));
+            top = Some(pointer_over(&ov, h, size));
         } else if let (Some(st), true, Some(h)) = (fr.stats.as_mut(), fr.s.modern, &self.hud) {
             // Ours (ADR 0078): the modern end-of-game page over the scene.
             let theme = theme(h);
@@ -108,7 +116,7 @@ impl App {
             let t = page_in(&mut fr.page, Page::Replays, false);
             run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| replay_act = rl.modern(ctx, &h.texts));
             top = Some(pointer_over(&ov, h, size));
-        } else if let (true, Some(h), Some(a)) = (fr.s.scenarios_page_up() && fr.mp.is_none() && fr.mods.is_none(), &self.hud, &fr.scenarios) {
+        } else if let (true, Some(h), Some(a)) = (fr.s.scenarios_page_up() && fr.mp.is_none() && fr.mods.is_none() && fr.custom.is_none(), &self.hud, &fr.scenarios) {
             // Ours (ADR 0078): the modern scenarios page over the scene.
             let theme = theme(h);
             let t = page_in(&mut fr.page, Page::Scenarios, false);
@@ -163,6 +171,9 @@ impl App {
         }
         for a in mods_acts {
             self.mods_act(a);
+        }
+        if let Some(a) = custom_act {
+            self.custom_act(a);
         }
         if stats_close {
             self.audio.play(crate::audio::CLICK);
@@ -286,6 +297,36 @@ impl App {
         self.audio.play(crate::audio::CLICK);
     }
 
+    /// Ours (ADR 0085): the Custom game page's request; Start remembers the settings (as the quick game's) and leaves
+    /// the menu for the game.
+    pub(super) fn custom_act(&mut self, a: crate::custom_game::Act) {
+        use crate::custom_game::Act;
+        self.audio.play(crate::audio::CLICK);
+        match a {
+            Act::Click => {}
+            Act::Back => self.after_page(|app| {
+                if let Some(f) = &mut app.front {
+                    f.custom = None;
+                }
+            }),
+            Act::Start => {
+                let Some(c) = self.front.as_ref().and_then(|f| f.custom.as_ref()) else { return };
+                let v = c.s.to_setting();
+                let custom = c.s.custom(c.kind, |n| self.install.lang().encoding().encode(n).0.into_owned());
+                self.settings.set(crate::custom_game::KEY, &v);
+                if let Err(e) = ig2_formats::options::Options::store_own(&[(crate::custom_game::KEY, &v)]) {
+                    eprintln!("ig2-client: settings: {e}");
+                }
+                self.after_page(move |app| {
+                    if let Some(f) = &mut app.front {
+                        f.custom = None;
+                        f.s.start_custom(custom);
+                    }
+                });
+            }
+        }
+    }
+
     /// A ring's request (`crate::mainscr::Act`): load game starts the game from the save (the Options screen's load
     /// slots aren't ported yet), quit leaves; the rest wait for their screens.
     pub(super) fn front_act(&mut self, a: crate::mainscr::Act) {
@@ -345,6 +386,21 @@ impl App {
                 f.mp = Some(crate::mp_lobby::MpScreen::open(a == Act::MultiMatchmaking, &name, rules).with_mods(mods).with_races(races).with_story(story));
             }
             Act::Tutorial(_) => {}
+            // Ours (ADR 0085): the Custom game page with the scenario list's tables and the skirmish entry's kind.
+            Act::CustomGame => {
+                let Some(f) = &mut self.front else { return };
+                let owned;
+                let texts = match self.hud.as_ref() {
+                    Some(h) => &h.texts,
+                    None => {
+                        owned = crate::ui::UiTexts::load(&self.install);
+                        &owned
+                    }
+                };
+                let a = f.scenarios.get_or_insert_with(|| crate::mainscr_scenario::Assets::load(&self.install, texts));
+                let kind = a.entries.iter().map(|e| e.kind).find(|&k| k > 0).unwrap_or(1);
+                f.custom = Some(crate::custom_game::CustomPage::open(&a.tables, kind, crate::new_game::wall_ticks()));
+            }
             // Ours (ADR 0059): the newest save that reads, as the Load screen's Load.
             Act::Continue => {
                 let saves = crate::options::slot_dir().map(|d| crate::menu_flow::saves_newest_first(&d)).unwrap_or_default();
@@ -452,6 +508,8 @@ impl App {
             Start::Scenario { file, .. } => crate::new_game::scenario(&self.install, file, seed, rules),
             Start::Tutorial(n) => crate::new_game::tutorial(&self.install, *n, seed, rules),
             Start::Multiplayer => unreachable!("handled above"),
+            // Ours (ADR 0085): the Custom game page's galaxy.
+            Start::Custom(c) => crate::new_game::custom(&self.install, c, rules),
             Start::Skirmish { settings: k, kind } => {
                 // Ours (ADR 0039): the quick game's next settings.
                 self.settings.set(crate::mainscr_scenario::QUICK_GAME, &k.to_setting());
@@ -544,6 +602,14 @@ impl App {
         if let Some(m) = &mut f.mods {
             if let Some(a) = m.key(k, self.modifiers.shift_key()) {
                 self.mods_act(a);
+            }
+            return;
+        }
+        if let Some(c) = &mut f.custom {
+            let popup = self.gpu.as_ref().is_some_and(|g| egui::Popup::is_any_open(&g.gui.ctx));
+            let chord = self.modifiers.control_key() || self.modifiers.alt_key();
+            if let Some(a) = c.key(k, chord, popup) {
+                self.custom_act(a);
             }
             return;
         }
@@ -649,6 +715,7 @@ impl App {
 pub(super) enum Page {
     Options,
     Mods,
+    Custom,
     Stats,
     Replays,
     Scenarios,

@@ -55,7 +55,7 @@ impl Pics {
     }
 
     /// Race `race`'s head (`textures/main/fejek3/<race>a.bmp`).
-    fn head(&mut self, ctx: &egui::Context, install: &ig2_formats::Install, race: i32) -> Option<egui::TextureHandle> {
+    pub(crate) fn head(&mut self, ctx: &egui::Context, install: &ig2_formats::Install, race: i32) -> Option<egui::TextureHandle> {
         let heads = self.heads.get_or_insert_with(|| (1..=8).map(|k| texture(ctx, install, "textures/main/fejek3/", &format!("{k}a.bmp"), format!("sc-head-{k}"))).collect());
         heads.get((race - 1).max(0) as usize).cloned().flatten()
     }

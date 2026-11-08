@@ -133,6 +133,15 @@ pub fn skirmish<'r>(inst: &Install, cfg: &NewSkirmish, rules: &'r GameRules) -> 
     })
 }
 
+/// Ours (ADR 0085): a custom game ([`Game::start_custom`]).
+pub fn custom<'r>(inst: &Install, cfg: &ig2_sim::game::new_game::CustomGame, rules: &'r GameRules) -> Result<Game<'r>, String> {
+    StartTexts::read(inst)?.with(inst, |data| {
+        let mut g = Game::before_start(data, rules);
+        g.start_custom(cfg, data);
+        g
+    })
+}
+
 /// `TutorialSetCampaignGameOptions(n)` + `TutorialLoadScenario(n)` (exe 0x504250, 0x611c80): chapter `n`'s
 /// `tutorial/scn/tutorial<n>.scn`. The script (`TutorialStart("main", n)`) is the front end's.
 pub fn tutorial<'r>(inst: &Install, n: u8, seed: u32, rules: &'r GameRules) -> Result<Game<'r>, String> {

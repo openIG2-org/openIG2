@@ -240,7 +240,7 @@ impl App {
                 None => {
                     let kind = if !game {
                         // Ours (ADR 0062): the hand over an egui page's buttons.
-                        let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) || (self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || f.mods.is_some() || (f.s.modern && f.s.panel().is_some())));
+                        let page = self.options.as_ref().is_some_and(|o| o.s.modern.is_some()) || (self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mp.is_some() || (f.mods.is_some() || f.custom.is_some()) || (f.s.modern && f.s.panel().is_some())));
                         if page { self.gpu.as_ref().map_or(0, |g| g.gui.pointer_kind()) } else { self.front.as_ref().is_some_and(|f| f.s.hand) as i32 }
                     } else if bar_spot(at).is_some() {
                         1

@@ -65,6 +65,8 @@ pub enum Act {
     Settings,
     /// Ours (ADR 0039): the Quick game label: the skirmish panel alone, with the last skirmish's settings.
     QuickGame,
+    /// Ours (ADR 0085): the modern Custom game page.
+    CustomGame,
     /// Ours (ADR 0050): the high-score name entered (`AddHighscore(scenario_registry_name, HighScoreNev, score)`):
     /// [`MainScr::scored`].
     HighScore,
@@ -89,6 +91,8 @@ pub enum Start {
     Tutorial(u8),
     /// Our MP room started (re/screens/start.md §4): the session the front end built.
     Multiplayer,
+    /// Ours (ADR 0085): the Custom game page's Start.
+    Custom(Box<ig2_sim::game::new_game::CustomGame>),
 }
 
 impl Start {
@@ -104,6 +108,7 @@ impl Start {
             Start::Campaign { race, .. } => (*race as usize).min(2),
             Start::Scenario { registry, .. } => by(race_of(registry)),
             Start::Skirmish { settings, .. } => by(settings.race),
+            Start::Custom(c) => by(c.empire(c.en as usize).map_or(0, |e| e.race as i32)),
             Start::Tutorial(_) | Start::Multiplayer => 0,
         }
     }
@@ -578,6 +583,7 @@ impl MainScr {
         match i {
             Item::Continue => self.can_continue.then_some(Act::Continue),
             Item::QuickGame => Some(Act::QuickGame),
+            Item::CustomGame => Some(Act::CustomGame),
             Item::NewGame => self.act_direct(4),
             Item::Load => self.act_box(2),
             Item::Multiplayer => self.act_direct(3),
@@ -903,6 +909,11 @@ impl MainScr {
     }
 
     /// Our MP room started: the menu leaves for the starmap (the exit animation, as a start ring's).
+    /// Ours (ADR 0085): the Custom game page's Start: the menu leaves for the starmap.
+    pub fn start_custom(&mut self, c: ig2_sim::game::new_game::CustomGame) {
+        self.start = Some(Start::Custom(Box::new(c)));
+    }
+
     pub fn start_mp(&mut self) {
         self.mp = false;
         self.cel = 6.0;

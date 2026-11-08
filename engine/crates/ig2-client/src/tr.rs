@@ -266,6 +266,22 @@ const TABLE: &[(&str, &str)] = &[
     // The main menu.
     ("Settings", "Beállítások"),
     ("Quick game", "Gyors játék"),
+    // The Custom game page (ADR 0085).
+    ("Custom game", "Egyéni játék"),
+    ("Galaxy", "Galaxis"),
+    ("Seed", "Kezdőszám"),
+    ("New seed", "Új kezdőszám"),
+    ("The same seed and settings make the same galaxy.", "Ugyanaz a kezdőszám és beállítás ugyanazt a galaxist adja."),
+    ("Computer", "Gép"),
+    ("Aggressiveness", "Agresszivitás"),
+    ("Relations", "Kapcsolat"),
+    ("Low", "Alacsony"),
+    ("High", "Magas"),
+    ("Hostile", "Ellenséges"),
+    ("Neutral", "Semleges"),
+    ("Friendly", "Baráti"),
+    ("Remove", "Eltávolítás"),
+    ("Add computer empire", "Gépi birodalom hozzáadása"),
     ("History", "Előzmények"),
     // The enhanced menu navigation (ADR 0059).
     ("Play", "Játék"),

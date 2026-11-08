@@ -1,6 +1,6 @@
 # ADR 0085: Custom game, a generated galaxy with every start setting
 
-Date: 2026-11-08. Status: accepted, part 1 (sim) done. Row 546 of `docs/ENHANCEMENTS.md`. Builds on the skirmish start
+Date: 2026-11-08. Status: accepted, part 1 (sim) and part 2 (the modern page, without the preview: `ig2-client::custom_game`) done. Row 546 of `docs/ENHANCEMENTS.md`. Builds on the skirmish start
 (`re/rules/new-game.md` §13.1, `Game::start_skirmish` / `NewSkirmish`), the quick game (ADR 0039), the computer levels
 (ADR 0033) and the enhanced AI (ADR 0045).
 

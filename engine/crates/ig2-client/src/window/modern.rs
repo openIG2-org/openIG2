@@ -22,7 +22,7 @@ impl App {
 
     /// Ours (ADR 0078): the modern main menu's page is up (it sees the pointer; a press over its panel is its own).
     pub(super) fn main_menu_modern_up(&self) -> bool {
-        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.s.panel().is_some())
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.modern && f.mp.is_none() && f.mods.is_none() && f.custom.is_none() && f.s.panel().is_some())
     }
 
     /// Ours (ADR 0078): the help screen as the modern page (with the modern in-game menu).
@@ -37,7 +37,7 @@ impl App {
 
     /// Ours (ADR 0078): the modern scenarios page is up.
     pub(super) fn scenarios_modern_up(&self) -> bool {
-        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.scenarios_page_up() && f.mp.is_none() && f.mods.is_none())
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| f.s.scenarios_page_up() && f.mp.is_none() && f.mods.is_none() && f.custom.is_none())
     }
 
     /// Ours (ADR 0078): the modern replays page is up.
@@ -47,7 +47,7 @@ impl App {
 
     /// Ours (ADR 0078): the modern new game page is up.
     pub(super) fn new_game_modern_up(&self) -> bool {
-        self.options.is_none() && self.front.as_ref().is_some_and(|f| (f.s.new_game_up() || f.s.name_page_up()) && f.mp.is_none() && f.mods.is_none())
+        self.options.is_none() && self.front.as_ref().is_some_and(|f| (f.s.new_game_up() || f.s.name_page_up()) && f.mp.is_none() && f.mods.is_none() && f.custom.is_none())
     }
 
     /// Ours (ADR 0072): the modern info screen is up (its option on, the info screen shown with nothing over it).

@@ -66,6 +66,7 @@ impl App {
             f.stats = None;
             f.replays = None;
             f.mods = None;
+            f.custom = None;
             f.s.scenario = None;
             f.s.race = None;
             f.s.cel = 6.0;
@@ -91,7 +92,7 @@ impl App {
                 _ if f.replays.is_some() => Page::Replays,
                 _ if f.mods.is_some() => Page::Mods,
                 _ if f.s.scenario.is_some() => Page::Scenarios,
-                _ if f.s.race.is_some() || f.s.new_game_up() => Page::NewGame,
+                _ if f.s.race.is_some() || f.s.new_game_up() || f.custom.is_some() => Page::NewGame,
                 _ => Page::Main,
             };
             return Doing::Menu(page);
