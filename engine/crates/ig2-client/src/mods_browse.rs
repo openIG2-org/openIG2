@@ -425,16 +425,24 @@ fn decode_picture(b: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
         let img = crate::upscale::decode_png(b)?;
         return Ok((img.width, img.height, img.rgba));
     }
-    let mut d = zune_jpeg::JpegDecoder::new(b);
-    let px = d.decode().map_err(|e| format!("not a PNG or JPEG: {e:?}"))?;
-    let (w, h) = d.dimensions().ok_or("no picture size")?;
-    let rgba = match px.len() / (w * h).max(1) {
-        4 => px,
-        3 => px.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
-        1 => px.iter().flat_map(|&g| [g, g, g, 255]).collect(),
-        _ => return Err("an unusual JPEG".into()),
-    };
-    Ok((w as u32, h as u32, rgba))
+    // The browser build has no mod repository (and no JPEG decoder).
+    #[cfg(target_arch = "wasm32")]
+    {
+        Err("not a PNG".into())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut d = zune_jpeg::JpegDecoder::new(b);
+        let px = d.decode().map_err(|e| format!("not a PNG or JPEG: {e:?}"))?;
+        let (w, h) = d.dimensions().ok_or("no picture size")?;
+        let rgba = match px.len() / (w * h).max(1) {
+            4 => px,
+            3 => px.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+            1 => px.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+            _ => return Err("an unusual JPEG".into()),
+        };
+        Ok((w as u32, h as u32, rgba))
+    }
 }
 
 #[cfg(test)]
