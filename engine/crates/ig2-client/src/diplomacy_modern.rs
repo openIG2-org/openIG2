@@ -329,7 +329,7 @@ pub fn view(h: &crate::ui::Hud, state: &ig2_sim::save::SaveState, rules: &ig2_ru
                 tone: tone(lvl),
                 race: s.roles.get(e).copied().unwrap_or(1).clamp(1, 8) as usize,
                 selected: scr.selected == k as i32,
-                waiting: dv.slots[k].waiting != 0,
+                waiting: dv.message_waits(k),
                 alive,
             }
         })

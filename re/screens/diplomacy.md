@@ -79,7 +79,9 @@ panels]); the viewport is the 4:3 one widened by `ModifyViewPort`.
   white light pulsing 160..224, the others a tint `(100 − h, 100 − h/2, 100 + h)`; ambient marks
   (`0xBBGGRR`): `JelolFej` 0x860E0E (blue: selected), `JelolFej2` 0x0E0E86 (red: the slot isn't open, or blinking
   while the human's message awaits its answer), `JelolFej3` 0x0E860E (green, blinking: a message of that empire
-  waits for the human). All lit by the engine's model (research.md §2.1; the cages' wires per vertex, `wirekirak`).
+  waits for the human — `DiplomGfx2D_2` exe 0x4bc610 tests the slot's `+0x17`, `AktIdo200` 0xBAE27D and
+  `BirodalomEl` 0xBAE6AC, so a message of an empire that died since stays in the slot (`rules/diplomacy.md` §12.1) but
+  never blinks; the modern contact cards follow the same test). All lit by the engine's model (research.md §2.1; the cages' wires per vertex, `wirekirak`).
 - Background: `Copy3hatterkep(0x34, grey 255 − 128·dipframe/80)`: picture 52 (`_ESIG_U2.BMP`) stretched over the
   viewport, half bright once open. The picture is the saved starmap, see [`overlay-background.md`](overlay-background.md).
 - Faders (`FadeKerettelKerekit`, fill (0, 54, 90), edge (0, 90, 130); `f = 2·dipframe/80 − 1`, 1 when open): the

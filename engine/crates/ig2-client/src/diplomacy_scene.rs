@@ -246,7 +246,7 @@ impl DiplomacyScene {
                 if s.open == 0 || (s.asked != 0 && blink) {
                     lights = lights.ambient(0x0E0E86);
                 }
-                if s.waiting != 0 && blink && alive {
+                if v.message_waits(i) && blink {
                     lights = lights.ambient(0x0E860E);
                 }
             }

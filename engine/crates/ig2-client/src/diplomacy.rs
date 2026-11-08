@@ -409,6 +409,12 @@ pub fn articles(s: &[u8], hungarian: bool) -> Vec<u8> {
     if articles_on(hungarian) { a2az(s) } else { s.to_vec() }
 }
 
+/// `DiplomGfx2D_2` (exe 0x4bc610) marks a slot's head green (`JelolFej3`) only while its message waits (`+0x17`)
+/// and its empire is alive (`BirodalomEl`): a message of an empire that died since stays waiting but never blinks.
+pub fn message_waits(s: Option<&PlayerSlot>, alive: &[bool; 19]) -> bool {
+    s.is_some_and(|s| s.waiting != 0 && (0..19).contains(&s.empire) && alive[s.empire as usize])
+}
+
 /// What the screen reads of the state each frame.
 pub struct View {
     pub en: usize,
@@ -482,6 +488,10 @@ impl View {
     pub fn alive_slot(&self, k: usize) -> bool {
         let e = self.empire(k);
         (0..19).contains(&e) && self.alive[e as usize]
+    }
+    /// Slot k's message waits and its sender lives: its head's green mark blinks (`DiplomGfx2D_2` exe 0x4bc610).
+    pub fn message_waits(&self, k: usize) -> bool {
+        message_waits(self.slots.get(k), &self.alive)
     }
     pub fn rel(&self, a: usize, b: usize) -> Relation {
         self.relations.get(a).map_or_else(Relation::default, |r| r[b.min(18)])
@@ -1695,6 +1705,19 @@ impl Open {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dead empire's waiting message stays in its slot but its head no longer blinks; an alive sender's does.
+    #[test]
+    fn a_dead_senders_message_doesnt_blink() {
+        let mut alive = [true; 19];
+        let s = PlayerSlot { empire: 3, waiting: 1, ..Default::default() };
+        assert!(message_waits(Some(&s), &alive));
+        alive[3] = false;
+        assert!(!message_waits(Some(&s), &alive));
+        assert!(!message_waits(Some(&PlayerSlot { waiting: 0, ..s }), &[true; 19]));
+        assert!(!message_waits(Some(&PlayerSlot { empire: -1, ..s }), &[true; 19]));
+        assert!(!message_waits(None, &[true; 19]));
+    }
 
     #[test]
     fn phrases_are_found_joined_substituted_and_wrapped() {

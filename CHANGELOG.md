@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - New games name the starting ship designs and technologies in the game's language (they were in Hungarian).
+- Modern diplomacy screen: an empire that died before you read its message no longer keeps blinking in the contact list.
 - Modern interface: the round buttons (tanks, factory, plus and minus) are coloured up to the rim instead of showing a black band across the bottom.
 - Modern top bar: holding the right button on the message line keeps the message history open until you let go, and no "Messages F10" tooltip covers it.
 - Modern interface: a tooltip with a key badge ("Starmap F2", "Colony F3", the speeds, pause) shows its text and key on one line, centred.
