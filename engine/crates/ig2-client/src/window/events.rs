@@ -43,6 +43,9 @@ impl ApplicationHandler for App {
         if let (Some(v), WindowEvent::MouseInput { state: ElementState::Released, .. }) = (&mut self.video, &event) {
             v.release();
         }
+        if let (Some(g), WindowEvent::MouseInput { state: ElementState::Released, .. }) = (&mut self.gpu, &event) {
+            g.gui.release_all();
+        }
         // ADR 0058: a bound key arrives as its action's default key (the screens match the original's keys).
         let mut event = event;
         if let WindowEvent::KeyboardInput { event: k, .. } = &mut event {

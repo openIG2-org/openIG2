@@ -13,6 +13,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Modern top bar: holding the right button on the message line keeps the message history open until you let go, and no "Messages F10" tooltip covers it.
 - Modern interface: a tooltip with a key badge ("Starmap F2", "Colony F3", the speeds, pause) shows its text and key on one line, centred.
 - Modern design screen: the blueprint list no longer shows a tooltip box over the rows below the pointer, so a click on any blueprint selects it.
+- Modern design screen: a click on a blueprint selects it also after you leave the screen and open it again, and in a list long enough to scroll (issue #105).
 - Battle effects: Enhanced: the ground war's explosions are smaller and dimmer, so the units beside a blast stay readable (issue #103).
 - Modern research screen: the tech list uses the full height and no longer gets stuck at a few rows; the auto-research switches are a compact row above the category tiles (issue #104).
 - Modding: a mod's `mod.toml` can name an `id`, a `version`, the openIG2 versions it `requires`, the mods it `depends` on or `conflicts` with, a `license` and `kind = "visual"` (look only, so it doesn't change the multiplayer check). The Mods page puts a mod's dependencies under it and switches them on together, switches off the mods that need one you turn off, says why a mod "Can't load", and has a "How to make a mod" button.

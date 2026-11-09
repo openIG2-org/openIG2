@@ -192,7 +192,9 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 8.0;
     Text::new(&v.labels.designs, Font::PANEL_TITLE).show(ui, vec2(w, 26.0));
-    egui::ScrollArea::vertical().max_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
+    // No drag-to-scroll (here and in the popup): a press on a row of a list longer than its panel would start the
+    // area's drag, not pick the row. The wheel and the bar scroll it.
+    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let k = ds::tokens();
         for r in &v.rows {
@@ -402,7 +404,7 @@ fn popup(ctx: &egui::Context, p: &Popup, at: egui::Pos2, pivot: Align2, acts: &m
         ds::panel(ui, PanelKind::Deep, 0.96, 8.0, |ui| {
             ui.set_width(320.0);
             ui.spacing_mut().item_spacing.y = 0.0;
-            egui::ScrollArea::vertical().max_height(26.0 * 14.0).show(ui, |ui| {
+            egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(26.0 * 14.0).show(ui, |ui| {
                 for (sel, name) in &p.rows {
                     if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
                         acts.push(Act::Pick(*sel));
@@ -497,5 +499,69 @@ mod tests {
             let want = 1 + ((at.y - first) / 26.0) as usize;
             assert!(acts.contains(&Act::Row(want)), "{at:?}: {acts:?}");
         }
+    }
+    /// The view with `rows` designs and nothing being edited.
+    fn rows(rows: usize) -> View {
+        let mut v = view("Laser");
+        (v.editing, v.popup) = (false, None);
+        v.rows = (1..=rows).map(|n| Row { n, name: format!("Design {n}"), kind: "Destroyer".into(), off: false }).collect();
+        v
+    }
+
+    /// A press on a row of a list longer than its panel picks it (the scroll area doesn't take it as a drag).
+    #[test]
+    fn a_press_on_a_row_of_a_long_list_picks_it() {
+        let v = rows(40);
+        let (ctx, _) = run(&v, &mut State::default(), 1920.0);
+        ctx.set_style(crate::gui::style(&crate::theme::Theme::modern()));
+        let list = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-list"))).unwrap();
+        let at = pos2(list.left() + 100.0, list.top() + 16.0 + 26.0 + 8.0 + 26.0 + 13.0);
+        let screen = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0)));
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let (mut st, mut acts, mut t) = (State::default(), Vec::new(), 1.0);
+        for e in [vec![egui::Event::PointerMoved(at)], vec![], vec![button(true)], vec![button(false)]] {
+            t += 1.0 / 60.0;
+            let _ = ctx.run(egui::RawInput { screen_rect: screen, time: Some(t), events: e, ..Default::default() }, |ctx| acts.extend(show(ctx, &v, &mut st)));
+        }
+        assert!(acts.contains(&Act::Row(2)), "{acts:?}");
+    }
+
+    /// Issue 105: a press that leaves the screen has its release come with no page up; the screen opened again still
+    /// takes a press on a row.
+    #[test]
+    fn a_row_takes_a_press_after_the_screen_is_opened_again() {
+        let v = rows(9);
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb);
+        ds::set_motion(false);
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        let (size, k) = ((1920, 1080), crate::gui::Gui::scale(1080));
+        let mut st = State::default();
+        let mut frame = |gui: &mut crate::gui::Gui, page: bool| {
+            let mut acts = Vec::new();
+            gui.run(size, &style, |ctx| if page { acts = show(ctx, &v, &mut st) });
+            acts
+        };
+        for _ in 0..3 {
+            frame(&mut gui, true);
+        }
+        let list = gui.ctx.memory(|m| m.area_rect(egui::Id::new("dmh-list"))).unwrap();
+        let row = [(list.left() + 100.0) * k, (list.top() + 16.0 + 26.0 + 8.0 + 13.0) * k];
+        // The press (on the top bar, say) closes the screen; its release comes in with no page up.
+        gui.pointer(Some([1500.0 * k, 20.0 * k]), k);
+        gui.button(0, true);
+        frame(&mut gui, true);
+        gui.release_all();
+        gui.mute();
+        frame(&mut gui, false);
+        // Opened again: a press on the first row.
+        let mut acts = Vec::new();
+        gui.pointer(Some(row), k);
+        acts.extend(frame(&mut gui, true));
+        acts.extend(frame(&mut gui, true));
+        gui.button(0, true);
+        acts.extend(frame(&mut gui, true));
+        gui.release_all();
+        acts.extend(frame(&mut gui, true));
+        assert!(acts.contains(&Act::Row(1)), "{acts:?}");
     }
 }

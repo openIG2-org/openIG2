@@ -32,6 +32,8 @@ pub struct Gui {
     format: wgpu::TextureFormat,
     events: Vec<egui::Event>,
     at: Option<egui::Pos2>,
+    /// The buttons the page saw go down and not yet up (bit per [`Gui::button`] number).
+    down: u8,
     start: web_time::Instant,
     /// The last run's output: tessellated, waiting for [`Gui::paint`].
     painted: Option<(Vec<egui::ClippedPrimitive>, egui::TexturesDelta, egui_wgpu::ScreenDescriptor)>,
@@ -51,7 +53,7 @@ impl Gui {
         let mut f = egui::FontDefinitions::default();
         ds::add_fonts(&mut f);
         ctx.set_fonts(f);
-        Self { ctx, renderer: None, format, events: Vec::new(), at: None, start: web_time::Instant::now(), painted: None, hand: false, cursor: egui::CursorIcon::Default, alpha: 1.0 }
+        Self { ctx, renderer: None, format, events: Vec::new(), at: None, down: 0, start: web_time::Instant::now(), painted: None, hand: false, cursor: egui::CursorIcon::Default, alpha: 1.0 }
     }
 
     /// The design's faces (ADR 0073: Oxanium, Share Tech Mono, in the client) in front of the remaster's sans
@@ -95,13 +97,31 @@ impl Gui {
 
     /// A mouse button (0 left, 1 right, 2 middle) went down or up where the pointer is.
     pub fn button(&mut self, button: u8, down: bool) {
-        let (Some(pos), Some(button)) = (self.at, [egui::PointerButton::Primary, egui::PointerButton::Secondary, egui::PointerButton::Middle].get(button as usize)) else { return };
-        self.events.push(egui::Event::PointerButton { pos, button: *button, pressed: down, modifiers: Default::default() });
+        let Some(id) = [egui::PointerButton::Primary, egui::PointerButton::Secondary, egui::PointerButton::Middle].get(button as usize) else { return };
+        let bit = 1 << button;
+        // A release the page never saw pressed is dropped; one it did reaches it wherever the pointer is.
+        let pos = match (down, self.at) {
+            (true, Some(at)) => at,
+            (true, None) => return,
+            (false, _) if self.down & bit == 0 => return,
+            (false, at) => at.unwrap_or_default(),
+        };
+        if down { self.down |= bit } else { self.down &= !bit }
+        self.events.push(egui::Event::PointerButton { pos, button: *id, pressed: down, modifiers: Default::default() });
     }
 
-    /// The input so far dropped: the page takes none (it is on its way out).
+    /// Every button the page holds down let go: a release in the window always reaches the context, also with no
+    /// page up, else a press that closed the page left egui's button held for the rest of the run (no row of a later
+    /// page counted as hovered).
+    pub fn release_all(&mut self) {
+        for b in 0..3 {
+            self.button(b, false);
+        }
+    }
+
+    /// The input so far dropped: the page takes none (it is on its way out). Its releases stay (see [`Gui::release_all`]).
     pub fn mute(&mut self) {
-        self.events.clear();
+        self.events.retain(|e| matches!(e, egui::Event::PointerButton { pressed: false, .. }));
     }
 
     /// The wheel turned `lines` lines (positive: up).
