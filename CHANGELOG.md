@@ -7,6 +7,7 @@ Getting the game from "every part works" to "a player can install it and play it
 
 - Mods page: a Browse tab lists the mods from the openIG2 mod index (opened only when you open the tab, signature checked, kept for offline use) and installs, updates and removes them, with their dependencies, into the mods folder.
 - Multiplayer: a room that refuses you for other mods now tells you which mods are missing, in another version, extra or in another order; "Download and join" installs them from the mod index, restarts the game and joins the room again.
+- Computer empires set to Enhanced no longer join a war together against an empire they have never met, so unmet empires stop declaring war on you one after another. (In the Kra'hen campaign the original's story still turns every empire against you, met or not, once empire 1's invasion of your strongest planet succeeds.)
 - New games name the starting ship designs and technologies in the game's language (they were in Hungarian).
 - Modern diplomacy screen: an empire that died before you read its message no longer keeps blinking in the contact list.
 - Modern interface: the round buttons (tanks, factory, plus and minus) are coloured up to the rim instead of showing a black band across the bottom.

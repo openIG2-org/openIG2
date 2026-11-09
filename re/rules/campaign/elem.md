@@ -299,7 +299,9 @@ writes, reads 840's design byte `+0x34` whole (the ELF tests bit 0), and compile
 for its first two waves; 836's daily `st_fAttackPlanet(−f, 8351)` searches `−f` as an empire (`st_fSearch`: a random
 fleet of empire `f`, stream 5), so a loaded wave's own order never comes from it; 840's relief fleet flies to the point
 (`last_fn_b`, 0) (`FlottaMozgat` mode 0 with the planet's index as x); 840's `S10` branch counts on past the goal
-without effect; 843's fleets are named with 834's texts.
+without effect; 843's fleets are named with 834's texts. 836 is the last step of both of campaign 3's storylines (710
+and 720, `line.md`; `StoryLine[3]` = 2, 710, 720), so in every Kra'hen campaign a won landing of empire 1 on planet
+8351 makes every empire 1..=8, met or not, declare war on the human (its `C(8361)`): the original's, kept.
 
 **Part 2g: the envoy and the raid, the toll of planet 8560, empire 1 against empire 5, and empire 5's end** (844, 856,
 862, 863; `engine/crates/ig2-sim/src/elem/finale.rs`; exe blocks at the `push id` sites 0x5e0d66, 0x5e30e2, 0x5e5212,

@@ -2354,6 +2354,11 @@ mod tests {
             r.v[field::UNRELIABLE] = 0;
         }
         fx.ctx.enhanced[2..=4].fill(true);
+        for a in 1..=4 {
+            for b in 1..=4 {
+                fx.map.met[a][b] = 1;
+            }
+        }
         d.power[..5].copy_from_slice(&power);
         d
     }
@@ -2373,6 +2378,23 @@ mod tests {
         assert!(d.decide(&mut w, &(), 2, 3, ceasefire));
         d.set_level(2, 3, level::CEASEFIRE);
         assert_eq!(d.enhanced_pick(&w, 3, 2, 0, 0), Some(Message::ai(cat::NEGOTIATE, negotiate::PEACE, 0)));
+    }
+
+    /// Issue 107: an empire that hasn't met the leader (or the target) is never drawn into a war together against it.
+    #[test]
+    fn enhanced_no_war_together_against_an_unmet_empire() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 400.0, 400.0, 1000.0]);
+        fx.map.met[3][4] = 0;
+        fx.map.met[4][3] = 0;
+        let mut w = fx.world();
+        assert_eq!(d.runaway_leader(&w), 4);
+        let against_4 = Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 4);
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 4, 0), Some(against_4), "3 hasn't met the leader");
+        assert_ne!(d.enhanced_pick(&w, 3, 2, 4, 0), Some(against_4), "nor may 3 propose it");
+        assert!(!d.decide(&mut w, &(), 2, 3, against_4), "3 refuses a war against an empire it hasn't met");
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 0, 4), Some(against_4), "nor against 2's target");
+        assert!(d.decide(&mut w, &(), 3, 2, Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 1)), "a known third still works");
     }
 
     #[test]

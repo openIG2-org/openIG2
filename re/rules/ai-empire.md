@@ -833,7 +833,9 @@ reset only when one is sent), the first that applies:
 2. level 1 and (weak, or gang and not winning) → cease-fire; level 2 → peace;
 3. gang, levels x–y ≥ 3, y–L neutral, x–L neutral or at war, no other war of x and `power[x] + power[y] ≥ 0.75 ·
    power[L]` → war together against L; else `t = target(x) > 0` (x is then at war with nobody), t ≠ y, x–y ≥ 3, y–t
-   neutral → war together against t (the original's step j without its draws and opinion test);
+   neutral → war together against t (the original's step j without its draws and opinion test); both x and y must
+   have met L (or y must have met t: `BirodalomIsmeri`), so no war together drags in an empire that never met the
+   third (without it, Enhanced empires all over the map declared war on an unmet human one after another);
 4. level 4, no grudge, trust `r.v1 > 5500`, y ≠ target(x), y ≠ L, shared enemy → alliance;
 5. level 3, no grudge, y ≠ target(x), y ≠ L, and (L exists and isn't x, near and `power[y] ≥ 0.8 · power[x]`,
    opinion `r.v17 > 6000`, or a shared enemy) → NAP;
@@ -843,7 +845,7 @@ reset only when one is sent), the first that applies:
 are accepted as before): cease-fire and peace at level ≤ 2 when rule 2 holds for b or b isn't winning; NAP, alliance
 and trade by rules 5, 4, 6 for b (the original judges alliance offers by the NAP rule and so never accepts one,
 `diplomacy.md` §6); war together when b is neutral with the third and at war with nobody and the two hold 0.75 × its
-power when it is L, 2 × its power otherwise, or by the original's rule (no war and `target(b)` is the third).
+power when it is L, 2 × its power otherwise (both a and b must have met it), or by the original's rule (no war and `target(b)` is the third).
 A NAP, an alliance, a cease-fire and a peace call the original's `BirodalomBeketKot` (`diplomacy.md` §8.2), which
 sets both empires' `BirodalomMiotaIsmeri` row to at least 600: the 600 days without a declared war (§11.3 needs
 `< 0`) that follow every treaty are the original's; a war together is not held back by it.

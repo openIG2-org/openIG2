@@ -15,6 +15,11 @@ const GRUDGE: i16 = 1000;
 const BREAK_SPIES: i16 = 2500;
 const BREAK_UNRELIABLE: i16 = 3000;
 
+/// `x` has met `y` (`BirodalomIsmeri`): nobody is drawn into a war against an empire it hasn't met.
+fn met(w: &World, x: usize, y: usize) -> bool {
+    w.starmap.met[x][y] != 0
+}
+
 impl Diplomacy {
     /// The strongest living empire (first strict maximum of `power`) when at least three live and it holds
     /// [`RUNAWAY`] × the second's power; 0 = none.
@@ -91,11 +96,14 @@ impl Diplomacy {
         r.level >= level::NEUTRAL && r.trade == 0 && !self.grudge(x, y) && y != target && (y != leader || x == leader)
     }
 
-    /// `x` and `y` together are a match for the runaway leader, `y` is neutral with it and `x` neutral or at war.
+    /// `x` and `y` together are a match for the runaway leader, both have met it, `y` is neutral with it and `x`
+    /// neutral or at war.
     fn war_together_wanted(&self, w: &World, x: usize, y: usize, leader: usize) -> bool {
         leader != 0
             && leader != x
             && leader != y
+            && met(w, x, leader)
+            && met(w, y, leader)
             && self.level(x, y) >= level::NEUTRAL
             && self.level(y, leader) == level::NEUTRAL
             && matches!(self.level(x, leader), level::WAR | level::NEUTRAL)
@@ -119,7 +127,7 @@ impl Diplomacy {
                 return msg(cat::NEGOTIATE, negotiate::WAR_TOGETHER, leader as i32);
             }
             // The empire `a` wants to attack (it is at war with nobody then), if `b` is neutral with it.
-            if target != 0 && target != b && r.level >= level::NEUTRAL && self.level(b, target) == level::NEUTRAL {
+            if target != 0 && target != b && r.level >= level::NEUTRAL && self.level(b, target) == level::NEUTRAL && met(w, b, target) {
                 return msg(cat::NEGOTIATE, negotiate::WAR_TOGETHER, target as i32);
             }
             if self.alliance_wanted(w, a, b, leader, target) {
@@ -150,8 +158,9 @@ impl Diplomacy {
             negotiate::TRADE => self.trade_wanted(b, a, leader, self.target(w, b)),
             negotiate::WAR_TOGETHER => {
                 let t = msg.value.max(0) as usize;
-                (t == leader && t != 0 && self.level(b, t) == level::NEUTRAL && self.wars(w.ctx, b) == 0 && self.power[a] + self.power[b] >= self.power[t] * 0.75)
-                    || (t != 0 && t != a && self.level(b, t) == level::NEUTRAL && self.wars(w.ctx, b) == 0 && self.power[a] + self.power[b] >= self.power[t] * 2.0)
+                let known = t != 0 && met(w, a, t) && met(w, b, t);
+                (known && t == leader && self.level(b, t) == level::NEUTRAL && self.wars(w.ctx, b) == 0 && self.power[a] + self.power[b] >= self.power[t] * 0.75)
+                    || (known && t != a && self.level(b, t) == level::NEUTRAL && self.wars(w.ctx, b) == 0 && self.power[a] + self.power[b] >= self.power[t] * 2.0)
                     || (self.wars(w.ctx, b) == 0 && self.target(w, b) == t)
             }
             _ => false,
