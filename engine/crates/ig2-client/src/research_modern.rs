@@ -632,4 +632,23 @@ mod tests {
         let (_, acts) = run(&v, &mut st, click(at), 1920.0);
         assert_eq!(acts, vec![Act::Field(1)]);
     }
+
+    /// A list longer than its panel still takes a click on a row (the scroll area doesn't scroll by dragging).
+    #[test]
+    fn a_click_on_a_row_of_a_long_list_picks_it() {
+        let mut v = view("Ion");
+        v.techs.extend((0..60).map(|i| Tech { field: 10 + i, name: format!("Tech {i}"), status: 3, ..Default::default() }));
+        let mut st = State::default();
+        let (ctx, _) = run(&v, &mut st, Vec::new(), 1920.0);
+        let l = ctx.memory(|m| m.area_rect(egui::Id::new("rmh-list"))).unwrap();
+        let at = pos2(l.left() + 40.0, l.top() + 16.0 + 26.0 + 8.0 + 26.0 + 13.0);
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let (mut acts, mut t) = (Vec::new(), 1.0);
+        for e in [vec![egui::Event::PointerMoved(at)], vec![], vec![button(true)], vec![button(false)]] {
+            t += 1.0 / 60.0;
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0))), time: Some(t), events: e, ..Default::default() };
+            let _ = ctx.run(input, |ctx| acts.extend(show(ctx, &v, &mut st)));
+        }
+        assert!(acts.contains(&Act::Field(2)), "{acts:?}");
+    }
 }

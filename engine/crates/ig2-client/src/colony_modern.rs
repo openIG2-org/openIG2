@@ -1123,6 +1123,17 @@ mod tests {
         assert_eq!(click(&view(), 0, at), vec![Act::Pick(0x52)]);
     }
 
+    /// A list longer than its well still takes a click on a row (the scroll area doesn't scroll by dragging).
+    #[test]
+    fn build_entry_of_a_long_list_picks() {
+        let mut v = view();
+        if let Some(b) = &mut v.build {
+            b.entries.extend((0..40).map(|i| Entry { tech: 0x100 + i, column: 0, name: format!("Building {i}"), price: "$10".into(), ok: true, ..Default::default() }));
+        }
+        let at = |ctx: &egui::Context| area(ctx, "cmh-build").left_top() + vec2(120.0, HEAD_H + TABS_H + 4.0 + ROW_H * 1.5);
+        assert_eq!(click(&v, 0, at), vec![Act::Pick(0x52)]);
+    }
+
     /// A building entry that can't be picked (no working hub) gives nothing.
     #[test]
     fn unpickable_entry_is_dead() {

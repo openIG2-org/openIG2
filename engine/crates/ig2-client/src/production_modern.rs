@@ -481,6 +481,26 @@ mod tests {
         crate::assets::write_png(std::path::Path::new(&out), size.0, size.1, &rgba).unwrap();
     }
 
+    /// A design list longer than its panel still takes a click on a row (the scroll area doesn't scroll by dragging).
+    #[test]
+    fn a_click_on_a_row_of_a_long_design_list_picks_it() {
+        let mut v = view("Fighter");
+        v.lines[0].designs.extend((0..40).map(|i| Entry { design: 10 + i, name: format!("Design {i}"), price: "$1".into(), ok: true }));
+        let mut st = State { list: Some((0, 0)), ..Default::default() };
+        let (ctx, _) = run(&v, &mut st, 1920.0);
+        let list = ctx.memory(|m| m.area_rect(egui::Id::new("pmh-list"))).unwrap();
+        // The panel's 8, the title's 24, then the second row (design 3).
+        let at = pos2(list.left() + 100.0, list.top() + 8.0 + 24.0 + ROW_H * 1.5);
+        let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
+        let (mut acts, mut t) = (Vec::new(), 1.0);
+        for e in [vec![egui::Event::PointerMoved(at)], vec![], vec![button(true)], vec![button(false)]] {
+            t += 1.0 / 60.0;
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(1920.0, 1080.0))), time: Some(t), events: e, ..Default::default() };
+            let _ = ctx.run(input, |ctx| acts.extend(show(ctx, &v, &mut st, Color32::RED)));
+        }
+        assert!(acts.contains(&Act::Pick(0, 0, 3)), "{acts:?}");
+    }
+
     /// A long design name is cut inside its slot: the panels keep the board's width, at 4:3 too.
     #[test]
     fn long_names_keep_the_panels() {
