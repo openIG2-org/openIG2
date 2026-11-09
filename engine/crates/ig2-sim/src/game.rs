@@ -958,7 +958,7 @@ impl<'r> Game<'r> {
     /// `FRISSIT_Datum`: `Ido += IdoSpeedSzorzo`, `Ido2 += 1`, the calendar.
     pub fn advance_clock(&mut self) {
         self.space_battles_settle();
-        if self.mp_battle_running() || self.sp_screen_frozen() {
+        if self.mp_battle_running() || self.sp_screen_frozen() || self.sp_war_frozen() {
             return;
         }
         let m = &mut self.state.mem;
@@ -979,6 +979,10 @@ impl<'r> Game<'r> {
         }
         if self.sp_screen_frozen() {
             self.sp_frozen_tick();
+            return;
+        }
+        if self.sp_war_frozen() {
+            self.sp_war_tick();
             return;
         }
         // `MULTIGET_Spy` runs every frame and ends in the `HanyKemVan` recount (`espionage.md` §8): a save written

@@ -1286,7 +1286,7 @@ impl<'r> World<'r> {
         crate::prof::count("ticks", 1);
         let run = crate::prof::scope("t_run");
         // `Fake_FRISSITES`' frozen SP branch (a battle on screen) runs no `FRISSIT_Starmap`: the orbits stand.
-        let frozen = self.game.sp_screen_frozen();
+        let frozen = self.game.sp_screen_frozen() || self.game.sp_war_frozen();
         self.game.advance_clock();
         self.game.run_tick();
         drop(run);

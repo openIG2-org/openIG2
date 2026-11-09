@@ -234,6 +234,31 @@ impl Game<'_> {
         self.view == ViewMode::Classic && self.sp_battles.live && self.sp_battles.on_screen && !self.globals().multiplayer
     }
 
+    /// Single player on the colony screen of a planet whose field is contested (`AktKep == 3` and
+    /// `GetWarfareStatus(AktPlanet) == 1`, `Fake_FRISSITES` exe 0x4de720): the strategic time stops as on the battle
+    /// screen, so the war runs to `GroundWarFinished` before anything else can happen (`ground-combat.md` §11.6).
+    pub fn sp_war_frozen(&mut self) -> bool {
+        if self.view != ViewMode::Classic || !self.sp_battles.live || self.globals().multiplayer {
+            return false;
+        }
+        self.sp_battles.colony.is_some_and(|p| self.warfare_status(p) == 1)
+    }
+
+    /// `Fake_FRISSITES`'s frozen SP branch on a war's colony screen ([`Game::sp_war_frozen`]): `FRISSIT_Epuletek`,
+    /// `GroundWarSetBattleStatus`, `IdoMultiPlayerBattle` += 1, then `FRISSIT_Grwar`, `FRISSIT_Colony` and
+    /// `FRISSIT_SpaceWar` as after every tick.
+    pub(super) fn sp_war_tick(&mut self) {
+        let first_event = self.events.len();
+        self.buildings_tick();
+        self.ground_battle_status();
+        let m = &mut self.state.mem;
+        m.set_i32(at::MP_BATTLE_TICKS, m.i32(at::MP_BATTLE_TICKS).wrapping_add(1));
+        self.battlefield_hand_offs();
+        self.grwar(first_event);
+        self.space_tick();
+        self.post_messages(first_event);
+    }
+
     /// `Fake_FRISSITES`'s frozen SP branch ([`Game::sp_screen_frozen`]): `GroundWarSetBattleStatus` (exe 0x47caa0),
     /// `IdoMultiPlayerBattle` += 1, no `FRISSIT_Grwar`/`FRISSIT_Colony` (the screen is SpaceWar), `FRISSIT_SpaceWar`.
     pub(super) fn sp_frozen_tick(&mut self) {

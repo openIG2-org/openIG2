@@ -308,6 +308,8 @@ A countdown started for any other planet stays, `GetStatus` answers −1 there f
 `WF::Simulate` on that planet never ends. `GroundWarSetBattleStatus` (§6.4) can start it for every planet
 of the human whose `last == −1` and whose field isn't contested. In normal play `last` is a side or −10
 once a field has been evaluated (the hang occurs after aborting a real-time war by hand: §10).
+The port follows the original: the screen can't be left while the field is contested because time stops
+(§11.6), so the hazard only remains for that manual-abort case.
 
 ### 5.2 Targets
 - `GetEnemyNJ(e)`: the first alive unit not paralysed (0x10000), not a destroyed turret, a turret only if
@@ -710,7 +712,11 @@ once more: **a vehicle landed on screen drives at the slope speed, one landed of
 ### 11.6 The battle tick (`FRISSIT_Grwar`, every 20 Hz tick)
 Called from the main tick (exe 0x4deb36) after the strategic systems, unless paused; while the colony
 screen shows a contested battle (`0x47c150(AktPlanet) == 1`) the strategic systems stop and only this and
-`GroundWarSetBattleStatus` run. Per planet: `IdoSpeedSzorzoBattle` (0xBAE260) times the self-destruct
+`GroundWarSetBattleStatus` run (`Fake_FRISSITES` exe 0x4de720 SP branch: `FRISSIT_Epuletek`, the status call,
+`IdoMultiPlayerBattle += 1`, then Grwar, Colony, SpaceWar; no clock, daily block or story; the contested field
+includes `WF::Refresh`'s 0x50-tick end countdown). Port: `Game::sp_war_frozen`/`sp_war_tick`
+(`ig2-sim/src/game/realtime.rs`, used by `advance_clock`/`run_tick` and the client's orbit freeze); test
+`single_player_lost_ground_war_frees_the_fleet` (`ig2-net/tests/lockstep.rs`). Per planet: `IdoSpeedSzorzoBattle` (0xBAE260) times the self-destruct
 countdown `WF+0x334` (§1.1, the `'+'` building's; at 0 → `SelfDestruct` 0x499500(p), then −1); every 300th call `WF::Collapse` (0x460d70). Then in SP,
 only on the colony screen (`AktKep == 3`): planet `+0x64` (ground war) → `WF::MI` (0x486d40, stream 13;
 else 18 per-empire counters `WF+0x37c + 0x40·e` are zeroed), and `WF::Refresh` (0x490890) unless a story

@@ -1514,3 +1514,81 @@ fn auto_research_picks_in_the_tick_and_rides_the_save() {
     assert_eq!(runs[0], 0, "switches off: the stopped slot stays idle");
     assert!(runs[1] > 0, "switches on: a project started");
 }
+
+/// Single player, the human's tanks lose a ground war on an AI planet (issue 106): the war's colony screen opens as
+/// the client opens it, the player lands every tank and sends them at the defenders. While the screen shows the
+/// contested field (the battle, then `WF::Refresh`'s end countdown once the last tank is gone) `Fake_FRISSITES` stops
+/// the strategic time (`ground-combat.md` §11.6): the clock stands, so nothing (a space battle, a story screen) can
+/// take the player away and freeze the field. The war ends held by the defender, and the carrier takes orders again.
+#[test]
+fn single_player_lost_ground_war_frees_the_fleet() {
+    use ig2_sim::game::{ColonyOrder, GameEvent, RealTimeEvent};
+    use ig2_sim::ground::GroundOrder;
+    let Some((rules, base)) = common::setup(SAVE) else { return };
+    let (mut state, home) = landing(base, true);
+    let af = state.fleets.len() - 1;
+    state.mem.set_u8(va::PLAYER_KI + 3, 1);
+    state.mem.set_u8(va::PLAYER_KI + 6, 0);
+    state.mem.set_u8(va::MULTIPLAYER, 0);
+    state.mem.set_i32(va::EN, 3);
+    let mut g = game(state, &rules);
+    g.sp_battles.live = true;
+    let in_war = |g: &Game| g.state.mem.u8(va::PLANETS + (home * PLANET_SIZE) as u32 + 0x64);
+    let (mut started, mut ended, mut lost, mut clock) = (None, None, None, None);
+    for tick in 0..20000 {
+        g.sp_battles.colony = started.map(|_| home);
+        if started.is_some() && clock.is_none() {
+            clock = Some(g.state.mem.i32(va::IDO));
+        }
+        g.set_pause(false, false);
+        for _ in 0..5 {
+            g.colony_ui_tick();
+        }
+        g.advance_clock();
+        g.run_tick();
+        for e in g.take_events() {
+            match e {
+                GameEvent::RealTime(RealTimeEvent::GroundStarted { planet, holder }) if planet == home => started = Some((holder, tick)),
+                GameEvent::RealTime(RealTimeEvent::GroundEnded { planet, holder }) if planet == home => ended = Some(holder),
+                _ => {}
+            }
+        }
+        if ended.is_some() {
+            break;
+        }
+        let Some((_, at)) = started else { continue };
+        let f = g.state.ground_field(home).unwrap();
+        let mine: Vec<usize> = (0..f.units.len()).filter(|&i| f.alive[i] && f.units[i].owner == 3).collect();
+        if tick == at + 5 {
+            Command::from(ColonyOrder::Ground { planet: home as i32, order: GroundOrder::PlaceAll { x: 100, y: 100 } }).apply(&mut g, 3);
+        } else if tick > at + 60 && tick % 50 == 0 {
+            if let Some(t) = (0..f.units.len()).find(|&i| f.alive[i] && f.units[i].owner == 6 && f.units[i].flags & 2 == 0) {
+                for &u in &mine {
+                    Command::from(ColonyOrder::Ground { planet: home as i32, order: GroundOrder::Target { unit: u as i32, target: t as i32 } })
+                        .apply(&mut g, 3);
+                }
+            }
+        }
+        if tick > at + 5 && mine.is_empty() && lost.is_none() {
+            lost = Some(tick);
+            assert_eq!((f.countdown, in_war(&g)), (0x50 - 1, 1), "the end countdown runs, the field still contested");
+        }
+    }
+    let (holder, at) = started.expect("the landing started a real-time ground war");
+    assert_eq!(holder, None);
+    let lost = lost.expect("every tank was lost");
+    assert_eq!(ended, Some(6), "the defender holds the planet");
+    assert!(lost > at);
+    assert_eq!(g.state.mem.i32(va::IDO), clock.unwrap(), "no strategic time passed on the war's screen");
+    assert_eq!((in_war(&g), g.state.fleets[af][0x52] & 1), (0, 0), "the war is over, the fleet out of battle");
+    // Back on the starmap the carrier flies off.
+    g.sp_battles.colony = None;
+    let pos = |g: &Game| g.state.fleets[af][0x30..0x38].to_vec();
+    let before = pos(&g);
+    Command::Starmap { order: StarmapCmd::Move { fleet: af as i32, order: 1, kind: 0, x: 0f32.to_bits(), y: 0f32.to_bits() } }.apply(&mut g, 3);
+    for _ in 0..50 {
+        g.advance_clock();
+        g.run_tick();
+    }
+    assert_ne!(pos(&g), before, "the fleet takes orders");
+}
