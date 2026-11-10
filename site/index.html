@@ -28,6 +28,7 @@
       <span class="readout">AGPL-3.0</span>
     </div>
     <nav aria-label="Sections">
+      <a class="play" href="https://openig2.justdawee.hu/">Play online</a>
       <a href="#engine">Engine</a>
       <a href="#screens">Screens</a>
       <a href="#install">Install</a>
@@ -41,19 +42,21 @@
   <section class="hero">
     <div class="wrap">
       <div class="hero-copy">
-        <div class="status-line"><span class="pip"></span><span class="label">Beta · every screen and system is in</span></div>
         <h1>open<span class="ii">IG2</span>
           <small>The 1999 classic <em>Imperium Galactica II</em>, on a new open-source engine.</small></h1>
+        <div class="status-line"><span class="pip"></span><span class="label">Beta · every screen and system is in</span></div>
         <p class="lede">The original game, tick for tick, rebuilt for <strong>multiplayer</strong>,
           <strong>modern displays</strong> and today's hardware. It reads the graphics, voices and rules from your
           own copy of the game; nothing of the original is shipped.</p>
         <div class="cta">
-          <a class="btn primary" id="download" href="https://github.com/openIG2-org/openIG2/releases/latest">
+          <a class="btn primary" href="https://openig2.justdawee.hu/">
+            Play online<small>in your browser · nothing to install</small></a>
+          <a class="btn" id="download" href="https://github.com/openIG2-org/openIG2/releases/latest">
             Download for Windows<small id="dl-version">latest release · Windows 10/11, 64-bit</small></a>
-          <a class="btn" href="https://github.com/openIG2-org/openIG2">Source on GitHub<small>Rust · AGPL-3.0</small></a>
         </div>
-        <p class="fineprint">You need <em>Imperium Galactica II</em> from <a href="https://www.gog.com/">GOG</a>.
-          Linux and other platforms: build from source.</p>
+        <p class="fineprint">The download needs <em>Imperium Galactica II</em> from <a href="https://www.gog.com/">GOG</a>.
+          Linux and other platforms: play in the browser or
+          <a href="https://github.com/openIG2-org/openIG2">build from source</a>.</p>
       </div>
       <figure class="viewport">
         <div class="frame"><video src="assets/intro.mp4" poster="assets/screens/intro-poster.jpg" controls preload="none" playsinline width="1920" height="1080" aria-label="openIG2 intro: the starmap, a colony and a space battle recorded in openIG2"></video></div>
@@ -65,29 +68,28 @@
   <section id="engine">
     <div class="wrap">
       <div class="sec-head">
-        <span class="label">The engine</span>
         <h2>Same game. Better engine.</h2>
         <p>Classic by default: it looks, sounds and handles like the original. Every deliberate change is an opt-in
           enhanced option with a written decision record.</p>
       </div>
       <div class="pillars">
-        <article class="pillar"><span class="label">Rules</span><h3>The original's rules, bit for bit</h3>
+        <article class="pillar"><h3>The original's rules, bit for bit</h3>
           <p>The simulation matches recordings of the original game tick for tick. Your original save games load and
             play on.</p></article>
-        <article class="pillar"><span class="label">Multiplayer</span><h3>Built for playing together</h3>
+        <article class="pillar"><h3>Built for playing together</h3>
           <p>LAN discovery, direct IP, private rooms with join codes, optional UPnP / NAT-PMP port mapping, rejoin
             after a drop, host migration and multiplayer saves.</p></article>
-        <article class="pillar"><span class="label">Display</span><h3>Any screen you own</h3>
+        <article class="pillar"><h3>Any screen you own</h3>
           <p>Any resolution and refresh rate, high DPI, 4K and ultrawide. Window, borderless or fullscreen, with an
             optional 4:3 letterbox.</p></article>
-        <article class="pillar"><span class="label">Assets</span><h3>Your copy, nothing copied</h3>
+        <article class="pillar"><h3>Your copy, nothing copied</h3>
           <p>No original code, assets or rule values in the repository. Formats and rules are documented from scratch
             in an open knowledge base.</p></article>
       </div>
 
       <div class="ticks">
         <div class="ticks-head">
-          <span class="label">Quarter of a second, side by side</span>
+          <h3>Quarter of a second, side by side</h3>
           <p>The game still thinks at the original's 20 ticks a second, so the rules stay exact. Your monitor draws as
             often as it can, and openIG2 interpolates every frame between two ticks.</p>
         </div>
@@ -103,7 +105,6 @@
   <section id="screens">
     <div class="wrap">
       <div class="sec-head">
-        <span class="label">The whole game</span>
         <h2>Every screen of the original</h2>
         <p>The campaigns, scenarios, skirmish, the tutorial and multiplayer, with all of the original's screens.</p>
       </div>
@@ -130,10 +131,10 @@
   <section id="install">
     <div class="wrap">
       <div class="sec-head">
-        <span class="label">Install</span>
         <h2>Three steps to the galaxy</h2>
         <p>The client finds the game by itself (GOG registry, GOG Galaxy, the usual folders). If it can't, its window
-          lists where it looked, and you can drop the game's folder onto it.</p>
+          lists where it looked, and you can drop the game's folder onto it. Or skip the install and
+          <a href="https://openig2.justdawee.hu/">play in your browser</a>.</p>
       </div>
       <div class="install">
         <ol class="steps">
@@ -161,7 +162,6 @@
   <section id="road">
     <div class="wrap">
       <div class="sec-head">
-        <span class="label">Milestone 7 · Playable 1.0</span>
         <h2>Road to 1.0</h2>
         <p>Long games run without errors. Some late campaign stretches and rare screen states are still being checked
           against the original. Expect bugs, and please <a href="https://github.com/openIG2-org/openIG2/issues">report them</a>.</p>
@@ -194,7 +194,6 @@
   <section id="docs">
     <div class="wrap">
       <div class="sec-head">
-        <span class="label">Documentation</span>
         <h2>Read the manual</h2>
       </div>
       <div class="docs">

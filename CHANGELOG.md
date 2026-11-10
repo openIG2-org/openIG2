@@ -6,6 +6,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 Getting the game from "every part works" to "a player can install it and play it through".
 
 - Mods can change the look: a mod's `visuals.toml` switches on smoother edges, per-pixel lighting, soft shadows, glow, richer battle effects, smooth glows and a new halo round the starmap's planets while the mod is enabled; it changes only what you see, so it works in multiplayer with players who don't have it (ADR 0088). The first remaster mod's files are in `mods-src/remaster-look`.
+- Website: a "Play online" button opens the browser version.
 - Browser version: the start page has a new look with a language choice and a progress bar, and a server's game files are downloaded for the chosen language only (in English 7,313 files instead of 17,549); another language's files follow when it is picked.
 - Updates: the game checks at start whether a newer openIG2 is out and the modern main menu shows "New version: X" at the bottom right; on Windows "Update and restart" downloads, checks and installs it (settings, saves and mods stay), elsewhere the button opens the download page; "Check for updates" (Options, Game) turns the check off (ADR 0087).
 - Modern Info and Messages screens: the dimmed starmap (or colony) shows behind the panels, as on the other screens, instead of a near-black fill.
