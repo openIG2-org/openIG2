@@ -10,12 +10,12 @@ rust-version.workspace = true
 [dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
-toml_edit = { version = "0.25.17", default-features = false, features = ["parse"] }
-serde = { version = "1.0.229", features = ["derive"], optional = true }
+toml_edit.workspace = true
+serde = { workspace = true, optional = true }
 
 [features]
 # serde derives on the state types `ig2-net` snapshots (ADR 0007).
 serde = ["dep:serde"]
 
 [dev-dependencies]
-serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+serde_json = { workspace = true, features = ["float_roundtrip"] }

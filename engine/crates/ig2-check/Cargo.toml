@@ -12,7 +12,7 @@ rust-version.workspace = true
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
-lewton = "0.10"
-openh264 = "0.9.9"
-sha2 = "0.11.0"
-toml_edit = { version = "0.25.17", default-features = false, features = ["parse", "display"] }
+lewton.workspace = true
+openh264.workspace = true
+sha2.workspace = true
+toml_edit = { workspace = true, features = ["display"] }

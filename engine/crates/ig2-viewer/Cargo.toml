@@ -8,11 +8,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-bytemuck = { version = "1.25.2", features = ["derive"] }
+bytemuck.workspace = true
 eframe = { version = "0.32.3", default-features = false, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11"] }
 egui_extras = "0.32.3"
 glam = "0.34.1"
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
-png = "0.18.1"
-pollster = "1.0.1"
-wgpu = "25.0.2"
+png.workspace = true
+pollster.workspace = true
+wgpu.workspace = true

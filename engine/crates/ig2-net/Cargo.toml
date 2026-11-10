@@ -10,15 +10,15 @@ rust-version.workspace = true
 [dependencies]
 ig2-sim = { version = "0.1.0", path = "../ig2-sim", features = ["serde"] }
 getrandom = "0.3"
-miniz_oxide = "0.8"
+miniz_oxide.workspace = true
 quinn = { version = "0.11.12", default-features = false, features = ["runtime-tokio", "rustls-ring"], optional = true }
 rcgen = { version = "0.14.7", default-features = false, features = ["crypto", "ring"], optional = true }
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std"], optional = true }
-serde = { version = "1.0.229", features = ["derive"] }
-sha2 = "0.11.0"
+serde.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 # std::time natively; the page's clock in the browser, where std's panics (ADR 0047).
-web-time = "1.1"
+web-time.workspace = true
 tokio = { version = "1.53.3", features = ["rt-multi-thread", "sync", "io-util", "time"], optional = true }
 igd-next = { version = "0.17.1", default-features = false, optional = true }
 spake2 = "0.4"
@@ -34,10 +34,10 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # spake2's rand_core 0.6 still asks the older one.
 getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 # The page's RTCPeerConnection and fetch (webrtc::connect).
-js-sys = "0.3"
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-web-sys = { version = "0.3", features = ["Window", "MessageEvent", "RtcPeerConnection", "RtcDataChannel", "RtcDataChannelState", "RtcDataChannelType", "RtcIceGatheringState", "RtcSdpType", "RtcSessionDescription", "RtcSessionDescriptionInit", "Request", "RequestInit", "Response"] }
+js-sys.workspace = true
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+web-sys = { workspace = true, features = ["Window", "MessageEvent", "RtcPeerConnection", "RtcDataChannel", "RtcDataChannelState", "RtcDataChannelType", "RtcIceGatheringState", "RtcSdpType", "RtcSessionDescription", "RtcSessionDescriptionInit", "Request", "RequestInit", "Response"] }
 
 [dev-dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
