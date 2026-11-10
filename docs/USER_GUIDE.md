@@ -560,6 +560,9 @@ anti_aliasing = true     # the Graphics options of the same names
 per_pixel = true
 soft_shadows = true
 bloom = true
+hdr = true               # glow over the whole scene: stars, clouds, shots, lights
+bloom_threshold = 0.8    # how bright a colour must be to glow, 0..1 (0.8 if left out)
+bloom_strength = 0.6     # how strong the glow is, 0..2 (0.6 if left out)
 
 [effects]
 battle = true            # Battle effects: Enhanced
@@ -575,6 +578,9 @@ Every line is optional. `true` switches a look on whatever your own setting; a l
 alone, and a mod never switches anything off. With several mods a switch on in any is on, and a value comes from the
 highest mod that sets it. A misspelt name or a value out of range is shown under the mod on the Mods page and by
 `openIG2-check`; the file is then skipped. `mods-src/remaster-look` in the source is a ready example.
+
+`hdr` makes the bright parts of the starmap, the space battle and the colony glow (not the panels or the text).
+Colours darker than `bloom_threshold` stay exactly as they are. The browser version ignores `hdr`.
 
 ### Texture and model packs
 A pack is a mod whose `hires` folder holds better versions of the game's pictures and models (ADR 0054). Unlike a

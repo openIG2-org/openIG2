@@ -4,6 +4,9 @@ anti_aliasing = true
 per_pixel = true
 soft_shadows = true
 bloom = true
+hdr = true
+bloom_threshold = 0.8
+bloom_strength = 0.6
 
 [effects]
 battle = true

@@ -3,7 +3,7 @@
 Date: 2026-11-10. Status: accepted. Builds on ADR 0044 and 0068 (mods), ADR 0054 (texture and model packs), ADR 0055
 (modern lighting), ADR 0057 (battle effects), ADR 0064 (smooth glows) and ADR 0086 (the mod repository). Implemented
 by `ig2-formats::visuals` (the file), `ig2-formats::vfs` (found in a mod), `ig2-client::visuals` (laid over the
-settings) and `ig2-client::starmap` (the planets' halo).
+settings), `ig2-client::starmap` (the planets' halo) and `ig2-client::hdr` (the floating-point scene).
 
 ## Context
 The game is to get a remastered look: better lights and effects, a richer starmap, sharper textures, smooth
@@ -26,6 +26,9 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    per_pixel = true
    soft_shadows = true
    bloom = true
+   hdr = true               # §8: the scene in a floating-point picture, its glow, the tone curve
+   bloom_threshold = 0.8    # where the glow and the tone curve start, 0..1
+   bloom_strength = 0.6     # how much of the glow is added, 0..2
 
    [effects]
    battle = true            # ADR 0057
@@ -58,6 +61,27 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    textures cannot, so the tool of 567 makes it on the player's machine.
 7. **Fidelity rule for every remaster mod**: outlines, palette, timing and layout stay the original's; resolution,
    light and detail may change.
+8. **The floating-point scene** (`hdr`, row 563; `ig2-client::hdr`, `Renderer::draw`):
+   - **What the scene is.** A screen marks where its scene ends (`Frame::mark_scene`): the starmap (sky, stars,
+     clouds, planets, routes, fleets), the space battle (ships, shots, blasts, particles) and the colony's 3D view.
+     The panels, markers, names, text, the modern pages and the pointer come after the mark and are drawn as before.
+   - **How the gamma-space scene maps into the picture.** The original draws 8-bit gamma-space values, and so do
+     our scene passes. With `hdr` the same passes draw the same numbers into an `Rgba16Float` picture: a stored
+     value `v` there is the value the 8-bit frame would hold, `v = byte / 255`, without the clamp at 1. Blends
+     work on these numbers as before, so sums of additive glows can pass 1 instead of being cut off. The few
+     linear-light quads inside a scene (route arrows, fallback markers) are sRGB-encoded by their shader and
+     blended on the encoded values, as in the browser build (ADR 0047 §4). A screen whose 3D pass is the
+     linear-light one is left as it is.
+   - **Glow.** The picture at half size, each colour times `clamp((max(r, g, b) − threshold) / (1 − threshold), 0, 1)`,
+     blurred twice with a 9-tap Gaussian both ways (the step grows with the frame's height over 1080), times
+     `bloom_strength`, added to the picture. Inside the picture this glow takes the place of ADR 0055's bloom of the
+     additive mesh parts.
+   - **Tone curve**, per channel, onto the frame: `x` for `x ≤ t`, else `t + (1 − t)·(1 − e^((t − x)/(1 − t)))`
+     with `t = bloom_threshold`. So a colour below the threshold that no glow reaches is the original's byte, and
+     the palette stays (rule 7); above it, values that the 8-bit frame cut off at 1 keep their differences.
+   - Defaults: threshold 0.8, strength 0.6. No exposure setting: it would shift every colour.
+   - The browser build ignores `hdr` (WebGL2 may lack floating-point render targets). Anti-aliasing works inside
+     the picture.
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.

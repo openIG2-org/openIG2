@@ -1189,6 +1189,7 @@ impl View {
                 None => f.push(a.white, Blend::Alpha, Instance::new(kind::MARKER, c, [half[1]; 2], a.empire(fl.owner, dim))),
             }
         }
+        f.mark_scene();
         f
     }
 

@@ -157,6 +157,12 @@ fn fs_srgb(v: VO) -> @location(0) vec4<f32> {
     return enc(shade(v, true));
 }
 
+// A linear blend drawn into the floating-point scene (ADR 0088 §8), which holds gamma-space values: encoded here.
+@fragment
+fn fs_enc(v: VO) -> @location(0) vec4<f32> {
+    return enc(shade(v, false));
+}
+
 // A quad's colour; `d`: its texels decoded from sRGB here.
 fn shade(v: VO, d: bool) -> vec4<f32> {
     let q = v.q;
@@ -451,6 +457,8 @@ pub struct Frame {
     /// Drawn over what the target holds, not cleared first (the pointer over an egui page, ADR 0064).
     pub keep: bool,
     late_at: usize,
+    /// [`Frame::mark_scene`]: the batches before this one are the scene.
+    scene_at: Option<usize>,
     pub(crate) instances: Vec<Instance>,
     batches: Vec<Batch>,
 }
@@ -462,8 +470,10 @@ impl Frame {
     pub fn push(&mut self, tex: TexId, blend: Blend, i: Instance) {
         let n = self.instances.len() as u32;
         self.instances.push(i);
+        // A batch never runs across the scene's mark.
+        let open = self.scene_at != Some(self.batches.len());
         match self.batches.last_mut() {
-            Some(b) if b.tex == tex && b.blend == blend => b.range.end = n + 1,
+            Some(b) if b.tex == tex && b.blend == blend && open => b.range.end = n + 1,
             _ => self.batches.push(Batch { tex, blend, range: n..n + 1 }),
         }
     }
@@ -482,6 +492,84 @@ impl Frame {
     pub fn mark_late(&mut self) {
         self.late_at = self.batches.len();
     }
+    /// The meshes and the quads pushed so far are the scene, what follows is the interface over it: a mod's
+    /// floating-point scene with its glow (ADR 0088 §8) takes the scene only. A later call moves the mark.
+    pub fn mark_scene(&mut self) {
+        self.scene_at = Some(self.batches.len());
+    }
+}
+
+/// The quad pipelines for one target format.
+struct Quads {
+    alpha: wgpu::RenderPipeline,
+    additive: wgpu::RenderPipeline,
+    /// [`Blend::GammaAlpha`] / [`Blend::GammaAdditive`], drawing into the frame's non-sRGB view.
+    gamma_alpha: wgpu::RenderPipeline,
+    gamma_additive: wgpu::RenderPipeline,
+    gamma_premul: wgpu::RenderPipeline,
+    /// [`Blend::MaskClear`], [`Blend::MaskMax`], [`Blend::MaskAdd`], [`Blend::MaskRestore`].
+    mask: [wgpu::RenderPipeline; 4],
+}
+
+impl Quads {
+    /// `linear_fs`: the fragment entry of the linear blends ([`Blend::Alpha`], [`Blend::Additive`]) on `format`.
+    fn new(d: &wgpu::Device, shader: &wgpu::ShaderModule, layout: &wgpu::PipelineLayout, format: wgpu::TextureFormat, linear_fs: &str) -> Self {
+        let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32x2, 5 => Float32x4, 6 => Float32x4];
+        let pipeline_fs = |blend: wgpu::BlendState, format: wgpu::TextureFormat, fs: &str| {
+            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ig2-client quads"),
+                layout: Some(layout),
+                vertex: wgpu::VertexState {
+                    module: shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &attrs,
+                    }],
+                },
+                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
+                }),
+                multiview: None,
+                cache: None,
+            })
+        };
+        let pipeline = |blend, format| pipeline_fs(blend, format, "fs");
+        let add = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
+        let comp = |src_factor, dst_factor, operation| wgpu::BlendComponent { src_factor, dst_factor, operation };
+        use wgpu::{BlendFactor as F, BlendOperation as O};
+        let keep = comp(F::Zero, F::One, O::Add);
+        Self {
+            alpha: pipeline_fs(wgpu::BlendState::ALPHA_BLENDING, format, linear_fs),
+            additive: pipeline_fs(wgpu::BlendState { color: add, alpha: add }, format, linear_fs),
+            gamma_alpha: pipeline(wgpu::BlendState::ALPHA_BLENDING, format.remove_srgb_suffix()),
+            gamma_additive: pipeline(wgpu::BlendState { color: add, alpha: add }, format.remove_srgb_suffix()),
+            gamma_premul: pipeline(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING, format.remove_srgb_suffix()),
+            mask: [
+                wgpu::BlendState { color: keep, alpha: comp(F::Zero, F::Zero, O::Add) },
+                wgpu::BlendState { color: keep, alpha: comp(F::One, F::One, O::Max) },
+                wgpu::BlendState { color: comp(F::DstAlpha, F::One, O::Add), alpha: keep },
+                wgpu::BlendState { color: keep, alpha: comp(F::One, F::Zero, O::Add) },
+            ]
+            .map(|b| pipeline(b, format.remove_srgb_suffix())),
+        }
+    }
+}
+
+/// What a mod's floating-point scene (ADR 0088 §8, [`crate::hdr`]) draws with, made when first used: the quad and
+/// mesh pipelines for its format, and its passes.
+struct HdrScene {
+    quads: Quads,
+    pipe3d: crate::render3d::Pipe3d,
+    post: crate::hdr::Hdr,
 }
 
 #[repr(C)]
@@ -496,14 +584,10 @@ struct Uniforms {
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
-    alpha: wgpu::RenderPipeline,
-    additive: wgpu::RenderPipeline,
-    /// [`Blend::GammaAlpha`] / [`Blend::GammaAdditive`], drawing into the frame's non-sRGB view.
-    gamma_alpha: wgpu::RenderPipeline,
-    gamma_additive: wgpu::RenderPipeline,
-    gamma_premul: wgpu::RenderPipeline,
-    /// [`Blend::MaskClear`], [`Blend::MaskMax`], [`Blend::MaskAdd`], [`Blend::MaskRestore`].
-    mask: [wgpu::RenderPipeline; 4],
+    quads: Quads,
+    shader: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    hdr: Option<HdrScene>,
     uniform: wgpu::Buffer,
     uniform_bg: wgpu::BindGroup,
     tex_layout: wgpu::BindGroupLayout,
@@ -570,53 +654,8 @@ impl Renderer {
             bind_group_layouts: &[&ubl, &tex_layout],
             push_constant_ranges: &[],
         });
-        let attrs = wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Float32, 3 => Uint32, 4 => Float32x2, 5 => Float32x4, 6 => Float32x4];
         // A frame without sRGB views (WebGL2): the sRGB blends' shader does the transfer itself (`fs_srgb`).
-        let srgb = if format.is_srgb() { "fs" } else { "fs_srgb" };
-        let pipeline_fs = |blend: wgpu::BlendState, format: wgpu::TextureFormat, fs: &str| {
-            d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ig2-client quads"),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs"),
-                    compilation_options: Default::default(),
-                    buffers: &[wgpu::VertexBufferLayout {
-                        array_stride: std::mem::size_of::<Instance>() as u64,
-                        step_mode: wgpu::VertexStepMode::Instance,
-                        attributes: &attrs,
-                    }],
-                },
-                primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState { format, blend: Some(blend), write_mask: wgpu::ColorWrites::ALL })],
-                }),
-                multiview: None,
-                cache: None,
-            })
-        };
-        let pipeline = |blend, format| pipeline_fs(blend, format, "fs");
-        let alpha = pipeline_fs(wgpu::BlendState::ALPHA_BLENDING, format, srgb);
-        let add = wgpu::BlendComponent { src_factor: wgpu::BlendFactor::SrcAlpha, dst_factor: wgpu::BlendFactor::One, operation: wgpu::BlendOperation::Add };
-        let additive = pipeline_fs(wgpu::BlendState { color: add, alpha: add }, format, srgb);
-        let gamma_alpha = pipeline(wgpu::BlendState::ALPHA_BLENDING, format.remove_srgb_suffix());
-        let gamma_additive = pipeline(wgpu::BlendState { color: add, alpha: add }, format.remove_srgb_suffix());
-        let gamma_premul = pipeline(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING, format.remove_srgb_suffix());
-        let comp = |src_factor, dst_factor, operation| wgpu::BlendComponent { src_factor, dst_factor, operation };
-        use wgpu::{BlendFactor as F, BlendOperation as O};
-        let keep = comp(F::Zero, F::One, O::Add);
-        let mask = [
-            wgpu::BlendState { color: keep, alpha: comp(F::Zero, F::Zero, O::Add) },
-            wgpu::BlendState { color: keep, alpha: comp(F::One, F::One, O::Max) },
-            wgpu::BlendState { color: comp(F::DstAlpha, F::One, O::Add), alpha: keep },
-            wgpu::BlendState { color: keep, alpha: comp(F::One, F::Zero, O::Add) },
-        ]
-        .map(|b| pipeline(b, format.remove_srgb_suffix()));
+        let quads = Quads::new(d, &shader, &layout, format, if format.is_srgb() { "fs" } else { "fs_srgb" });
         let uniform = d.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -658,14 +697,12 @@ impl Renderer {
         });
         let pipe3d = crate::render3d::Pipe3d::new(d, format, &tex_layout);
         Self {
-            mask,
+            quads,
+            shader,
+            layout,
+            hdr: None,
             device,
             queue,
-            alpha,
-            additive,
-            gamma_alpha,
-            gamma_additive,
-            gamma_premul,
             uniform,
             uniform_bg,
             tex_layout,
@@ -808,6 +845,19 @@ impl Renderer {
 
     pub fn clear_meshes(&mut self) {
         self.pipe3d.clear_meshes();
+        if let Some(h) = &mut self.hdr {
+            h.pipe3d.clear_meshes();
+        }
+    }
+
+    /// How many of `frame`'s batches a mod's floating-point scene takes, with its (threshold, strength): the frame
+    /// marks its scene, the scene is the gamma-space pass and its late parts lie inside the mark.
+    fn hdr_span(frame: &Frame, backdrop: bool) -> Option<(usize, (f32, f32))> {
+        let end = frame.scene_at?;
+        let params = crate::visuals::hdr()?;
+        let drawn = frame.scene.is_some() || backdrop || end > 0;
+        let late = frame.scene.is_none() || frame.late.is_empty() || frame.late_at <= end;
+        (drawn && late && !frame.keep && frame.scene.as_ref().is_none_or(|s| s.gamma)).then_some((end, params))
     }
 
     /// Draw `frame` into `target` (`size` in physical pixels; made with [`Renderer::view_formats`]).
@@ -843,14 +893,37 @@ impl Renderer {
             self.queue.write_buffer(buf, bytes.len() as u64, bytemuck::bytes_of(i));
         }
         let (view, raw) = (target.create_view(&Default::default()), raw_view(target));
+        // A mod's floating-point scene (ADR 0088 §8): the scene's passes go into its picture `float.0` until the
+        // batch `float.1`, then the glow and the tone curve bring it onto the frame.
+        let mut hdr = self.hdr.take();
+        let mut float = Self::hdr_span(frame, backdrop.is_some()).map(|(end, params)| {
+            let h = hdr.get_or_insert_with(|| HdrScene {
+                // The picture holds gamma-space values: the linear blends encode theirs (texels decoded by their views).
+                quads: Quads::new(&self.device, &self.shader, &self.layout, crate::hdr::FORMAT, if self.format.is_srgb() { "fs_enc" } else { "fs_srgb" }),
+                pipe3d: crate::render3d::Pipe3d::new(&self.device, crate::hdr::FORMAT, &self.tex_layout),
+                post: crate::hdr::Hdr::new(&self.device, self.format.remove_srgb_suffix()),
+            });
+            h.pipe3d.share_meshes(&self.pipe3d);
+            (h.post.scene(&self.device, size), end, params)
+        });
+        let mut composed = false;
         let mut enc = self.device.create_command_encoder(&Default::default());
+        // The 3D pass of `$scene`'s `$draws`, into the scene picture while it is open.
+        macro_rules! meshes {
+            ($first:expr, $clear:expr, $scene:expr, $draws:expr) => {
+                match (&float, hdr.as_mut()) {
+                    (Some((f, ..)), Some(h)) => h.pipe3d.encode(&self.device, &self.queue, &mut enc, (f, f), size, ($first, $clear), $scene, $draws, (&self.textures_rep, &self.textures_raw_rep)),
+                    _ => self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, ($first, $clear), $scene, $draws, (&self.textures_rep, &self.textures_raw_rep)),
+                }
+            };
+        }
         if let Some((tex, _)) = backdrop {
             // The exe's 2D pass: the picture's bytes times the grey, in gamma space, over the cleared target.
             let [r, g, b, a] = frame.clear;
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("backdrop"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &raw,
+                    view: float.as_ref().map_or(&raw, |f| &f.0),
                     resolve_target: None,
                     ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }), store: wgpu::StoreOp::Store },
                 })],
@@ -860,13 +933,13 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_vertex_buffer(0, buf.slice(..));
-            pass.set_pipeline(&self.gamma_alpha);
+            pass.set_pipeline(&hdr.as_ref().filter(|_| float.is_some()).map_or(&self.quads, |h| &h.quads).gamma_alpha);
             pass.set_bind_group(1, &self.textures_raw[tex.0], &[]);
             let n = frame.instances.len() as u32;
             pass.draw(0..6, n..n + 1);
         }
         if let Some(scene) = &frame.scene {
-            self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, (true, backdrop.is_none().then_some(frame.clear)), scene, &scene.draws, (&self.textures_rep, &self.textures_raw_rep));
+            meshes!(true, backdrop.is_none().then_some(frame.clear), scene, &scene.draws);
         }
         let late = frame.scene.as_ref().filter(|_| !frame.late.is_empty());
         let mut late_done = late.is_none();
@@ -876,22 +949,36 @@ impl Renderer {
         while first || start < frame.batches.len() {
             if !late_done && start >= frame.late_at {
                 if let Some(scene) = late {
-                    self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, (false, None), scene, &frame.late, (&self.textures_rep, &self.textures_raw_rep));
+                    meshes!(false, None, scene, &frame.late);
                 }
                 late_done = true;
+            }
+            if float.as_ref().is_some_and(|f| start >= f.1) {
+                if let (Some((_, _, params)), Some(h)) = (float.take(), &hdr) {
+                    h.post.finish(&self.queue, &mut enc, &raw, params);
+                }
+                composed = true;
             }
             let gamma = frame.batches.get(start).is_some_and(|b| b.blend.gamma());
             let mut end = (start..frame.batches.len()).find(|&i| frame.batches[i].blend.gamma() != gamma).unwrap_or(frame.batches.len());
             if !late_done && start < frame.late_at {
                 end = end.min(frame.late_at);
             }
+            if let Some((_, scene_end, _)) = &float {
+                end = end.min(*scene_end);
+            }
+            let stored = if float.is_some() { crate::hdr::FORMAT } else { self.format };
             let [r, g, b, a] = frame.clear;
-            let [r, g, b] = if gamma { [r, g, b] } else { [r, g, b].map(|c| encode_srgb(c, self.format)) };
-            let load = if !first || frame.keep || frame.scene.is_some() || backdrop.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
+            let [r, g, b] = if gamma { [r, g, b] } else { [r, g, b].map(|c| encode_srgb(c, stored)) };
+            let load = if !first || composed || frame.keep || frame.scene.is_some() || backdrop.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color { r, g, b, a }) };
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: if gamma { &raw } else { &view },
+                    view: match &float {
+                        Some((f, ..)) => f,
+                        None if gamma => &raw,
+                        None => &view,
+                    },
                     resolve_target: None,
                     ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                 })],
@@ -901,17 +988,18 @@ impl Renderer {
             });
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_vertex_buffer(0, buf.slice(..));
+            let q = hdr.as_ref().filter(|_| float.is_some()).map_or(&self.quads, |h| &h.quads);
             for b in &frame.batches[start..end] {
                 let (pipeline, textures) = match b.blend {
-                    Blend::Alpha => (&self.alpha, &self.textures),
-                    Blend::Additive => (&self.additive, &self.textures),
-                    Blend::GammaAlpha => (&self.gamma_alpha, &self.textures_raw),
-                    Blend::GammaAdditive => (&self.gamma_additive, &self.textures_raw),
-                    Blend::GammaPremul => (&self.gamma_premul, &self.textures_raw),
-                    Blend::MaskClear => (&self.mask[0], &self.textures_raw),
-                    Blend::MaskMax => (&self.mask[1], &self.textures_raw),
-                    Blend::MaskAdd => (&self.mask[2], &self.textures_raw),
-                    Blend::MaskRestore => (&self.mask[3], &self.textures_raw),
+                    Blend::Alpha => (&q.alpha, &self.textures),
+                    Blend::Additive => (&q.additive, &self.textures),
+                    Blend::GammaAlpha => (&q.gamma_alpha, &self.textures_raw),
+                    Blend::GammaAdditive => (&q.gamma_additive, &self.textures_raw),
+                    Blend::GammaPremul => (&q.gamma_premul, &self.textures_raw),
+                    Blend::MaskClear => (&q.mask[0], &self.textures_raw),
+                    Blend::MaskMax => (&q.mask[1], &self.textures_raw),
+                    Blend::MaskAdd => (&q.mask[2], &self.textures_raw),
+                    Blend::MaskRestore => (&q.mask[3], &self.textures_raw),
                 };
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(1, &textures[b.tex.0], &[]);
@@ -920,8 +1008,12 @@ impl Renderer {
             (start, first) = (end, false);
         }
         if let (false, Some(scene)) = (late_done, late) {
-            self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, (false, None), scene, &frame.late, (&self.textures_rep, &self.textures_raw_rep));
+            meshes!(false, None, scene, &frame.late);
         }
+        if let (Some((_, _, params)), Some(h)) = (float.take(), &hdr) {
+            h.post.finish(&self.queue, &mut enc, &raw, params);
+        }
+        self.hdr = hdr;
         self.queue.submit([enc.finish()]);
     }
 

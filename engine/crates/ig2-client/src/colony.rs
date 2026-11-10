@@ -2628,6 +2628,7 @@ impl View {
             dynamic,
         });
         let _ = time;
+        f.mark_scene();
         f
     }
 }

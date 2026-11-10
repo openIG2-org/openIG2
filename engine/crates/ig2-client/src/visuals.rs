@@ -40,6 +40,13 @@ pub fn apply(l: Lighting, battle: bool, smooth_glows: bool) {
     crate::render::set_smooth_glows(smooth_glows || m.smooth_glows);
 }
 
+/// The whole-scene glow and tone curve (bright threshold, glow strength), when a mod switches HDR on.
+pub fn hdr() -> Option<(f32, f32)> {
+    let m = mods();
+    // shortcut: no float scene in the browser build (WebGL2 may lack float render targets), upgrade with a format check.
+    (m.hdr && !cfg!(target_arch = "wasm32")).then(|| (m.bloom_threshold.unwrap_or(0.8), m.bloom_strength.unwrap_or(0.6)))
+}
+
 /// The starmap planets' halo: (radius in planet radii, colour × strength), when a mod asks for one.
 pub fn atmosphere() -> Option<(f32, [f32; 3])> {
     let m = mods();

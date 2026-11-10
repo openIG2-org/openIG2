@@ -805,6 +805,13 @@ impl Pipe3d {
         self.meshes.clear();
     }
 
+    /// Take the meshes `from` has gained (the floating-point scene's twin of the frame's pipelines, ADR 0088 §8;
+    /// both are cleared together).
+    pub(crate) fn share_meshes(&mut self, from: &Pipe3d) {
+        self.meshes.truncate(from.meshes.len());
+        self.meshes.extend_from_slice(&from.meshes[self.meshes.len()..]);
+    }
+
     /// The modern lighting's targets for `size` first in [`Pipe3d::targets`], with what `l` needs made.
     fn prepare(&mut self, d: &wgpu::Device, size: (u32, u32), l: Lighting) {
         if l.msaa && self.msaa.is_none() {
@@ -871,7 +878,8 @@ impl Pipe3d {
     ) {
         let l = lighting();
         let glows = |m: &&MeshDraw| m.additive && m.glass && m.shadow != Shadow::Blob && !m.cloud && !m.video && !m.range.is_empty();
-        let bloom = l.bloom && draws.iter().any(|m| glows(&m));
+        // In the floating-point scene (ADR 0088 §8) the whole scene's glow takes this one's place.
+        let bloom = l.bloom && self.format != crate::hdr::FORMAT && draws.iter().any(|m| glows(&m));
         if l.msaa || bloom {
             self.prepare(d, size, Lighting { bloom, ..l });
         }

@@ -1563,6 +1563,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         scene.debris(f, fx, &gfx.fx);
         scene.bolts(f, cam, fx, &gfx.fx);
     }
+    f.mark_scene();
     scene.overlays(f, cam, hud, s.battle, s.erosseg, gfx.szar);
     for sl in &s.slots[..9] {
         gfx.panel.clock(r, install, clock_frame(sl.reload));

@@ -7,6 +7,9 @@
 //! per_pixel = true
 //! soft_shadows = true
 //! bloom = true
+//! hdr = true                # the scene in a floating-point picture: glow over all of it, tone mapped
+//! bloom_threshold = 0.8     # where the glow and the tone curve start, 0..1
+//! bloom_strength = 0.6      # how much glow is added, 0..2
 //!
 //! [effects]
 //! battle = true
@@ -28,6 +31,11 @@ pub struct Visuals {
     pub per_pixel: bool,
     pub soft_shadows: bool,
     pub bloom: bool,
+    pub hdr: bool,
+    /// Where the whole-scene glow and the tone curve start (a stored colour value), 0..=1.
+    pub bloom_threshold: Option<f32>,
+    /// How much of the glow is added, 0..=2.
+    pub bloom_strength: Option<f32>,
     pub battle: bool,
     pub smooth_glows: bool,
     /// The starmap planets' halo strength, 0..=1.
@@ -56,6 +64,9 @@ impl Visuals {
                     ("lighting", "per_pixel") => v.per_pixel = flag()?,
                     ("lighting", "soft_shadows") => v.soft_shadows = flag()?,
                     ("lighting", "bloom") => v.bloom = flag()?,
+                    ("lighting", "hdr") => v.hdr = flag()?,
+                    ("lighting", "bloom_threshold") => v.bloom_threshold = Some(number(0.0, 1.0)?),
+                    ("lighting", "bloom_strength") => v.bloom_strength = Some(number(0.0, 2.0)?),
                     ("effects", "battle") => v.battle = flag()?,
                     ("effects", "smooth_glows") => v.smooth_glows = flag()?,
                     ("starmap", "atmosphere") => v.atmosphere = Some(number(0.0, 1.0)?),
@@ -78,6 +89,9 @@ impl Visuals {
         self.per_pixel |= higher.per_pixel;
         self.soft_shadows |= higher.soft_shadows;
         self.bloom |= higher.bloom;
+        self.hdr |= higher.hdr;
+        self.bloom_threshold = higher.bloom_threshold.or(self.bloom_threshold);
+        self.bloom_strength = higher.bloom_strength.or(self.bloom_strength);
         self.battle |= higher.battle;
         self.smooth_glows |= higher.smooth_glows;
         self.atmosphere = higher.atmosphere.or(self.atmosphere);
@@ -92,14 +106,15 @@ mod tests {
 
     #[test]
     fn parses_merges_and_refuses_typos() {
-        let low = Visuals::parse("[lighting]\nbloom = true\n[starmap]\natmosphere = 1\natmosphere_color = \"#7fb2ff\"\n", "a").unwrap();
+        let low = Visuals::parse("[lighting]\nbloom = true\nhdr = true\nbloom_threshold = 0.7\n[starmap]\natmosphere = 1\natmosphere_color = \"#7fb2ff\"\n", "a").unwrap();
         assert_eq!((low.bloom, low.anti_aliasing, low.atmosphere, low.atmosphere_color), (true, false, Some(1.0), Some([0x7f, 0xb2, 0xff])));
-        let high = Visuals::parse("[effects]\nbattle = true\n[starmap]\natmosphere = 0.25\n", "b").unwrap();
+        let high = Visuals::parse("[lighting]\nbloom_strength = 1.5\n[effects]\nbattle = true\n[starmap]\natmosphere = 0.25\n", "b").unwrap();
         let mut all = low;
         all.merge(&high);
         assert_eq!((all.bloom, all.battle, all.atmosphere, all.atmosphere_color), (true, true, Some(0.25), Some([0x7f, 0xb2, 0xff])));
+        assert_eq!((all.hdr, all.bloom_threshold, all.bloom_strength), (true, Some(0.7), Some(1.5)));
         assert_eq!(Visuals::parse("", "c").unwrap(), Visuals::default());
-        for bad in ["[lighting]\nblom = true", "[starmap]\natmosphere = 2", "[starmap]\natmosphere_color = \"blue\"", "[lighting]\nbloom = 1", "lighting = 1"] {
+        for bad in ["[lighting]\nblom = true", "[starmap]\natmosphere = 2", "[starmap]\natmosphere_color = \"blue\"", "[lighting]\nbloom = 1", "[lighting]\nhdr = 1", "[lighting]\nbloom_strength = 3","lighting = 1"] {
             assert!(Visuals::parse(bad, "d").is_err(), "{bad}");
         }
     }
