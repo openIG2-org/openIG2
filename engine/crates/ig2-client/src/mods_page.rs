@@ -643,7 +643,7 @@ fn open_folder() -> Result<(), String> {
 }
 
 /// A folder or a web address in the system's file manager or browser.
-fn open(what: &std::ffi::OsStr) -> Result<(), String> {
+pub(crate) fn open(what: &std::ffi::OsStr) -> Result<(), String> {
     let opener = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {

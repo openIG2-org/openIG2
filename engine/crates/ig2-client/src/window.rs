@@ -503,6 +503,8 @@ struct App {
     dk_owner: u8,
     /// Ours (ADR 0080): Discord Rich Presence, and the race names its texts use (read on the first report).
     discord: crate::discord::Presence,
+    /// Ours (ADR 0087): the ask for a newer release and the main menu's notice.
+    update: crate::update::Updater,
     /// `--mp-join`'s room, joined as a Discord Join is ([`App::discord_join`]).
     mp_join: Option<String>,
     discord_races: Vec<String>,
@@ -616,6 +618,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     (app.opt_rows, app.tech_defaults, app.volatile) = (opt_rows, l.tech_defaults, l.volatile);
     app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
+    // Ours (ADR 0087): a played start asks for a newer release; a scripted one stays the same picture.
+    app.update = crate::update::Updater::start(o.main_menu && o.script.is_none() && app.settings.int(crate::update::KEY) != Some(0));
     app.stage_win = o.stage_win;
     app.mp_join = o.mp_join.clone();
     if o.multiplayer && app.front.is_some() {
@@ -999,6 +1003,7 @@ impl App {
             dk: crate::kit::DesignFrame::with_phase(0.0, std::f32::consts::FRAC_PI_2, 0.0),
             dk_owner: 0,
             discord: Default::default(),
+            update: Default::default(),
             mp_join: None,
             discord_races: Vec::new(),
         }

@@ -262,6 +262,7 @@ pub fn describe(key: &str) -> &'static str {
         "GameStatistics" => "A statistics screen after each game, and the match history.",
         "RecordReplays" => "Each game is recorded and can be watched from the main menu.",
         "DiscordPresence" => "Shows on your Discord profile what you play; with join, friends can join your multiplayer room from Discord.",
+        "CheckUpdates" => "Asks GitHub at each start whether a newer openIG2 is out; the main menu then offers the update.",
         "EventLog" => "The messages screen keeps a log of the game's events.",
         "Subtitles" => "The spoken messages' text at the bottom of the screen.",
         "ColourBlindColours" => "Empire colours that stay apart with colour blindness.",

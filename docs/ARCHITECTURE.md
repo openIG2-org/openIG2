@@ -63,6 +63,7 @@ A new client screen touches, in `engine/crates/ig2-client/src/`:
 - `window/screens.rs`: opening and toggling (`toggle_screen`); the keys that open it are in `window/menus.rs`,
   its mouse and keyboard input in `window/input.rs`, its tooltips and pointer in `window/pointer.rs`.
 - `discord.rs`: the `Screen` enum, `screen_key` and the status text; `window/presence.rs` maps `akt_kep` to it.
+- `update.rs`: the start-up check for a newer release, the "New version" notice and the Windows self-update (ADR 0087).
 - `main.rs`: a `--screen <name>` value for `--snapshot`, so the screen can be captured and compared with the exe
   (`tools/trace/run_screendiff.py`).
 - A spec in `re/screens/` and a row in its `README.md`; a modern version also needs `window/modern.rs` and a

@@ -643,6 +643,14 @@ const TABLE: &[(&str, &str)] = &[
     ("Select the fleet", "A flotta kijelölése"),
     ("Chase camera", "Követő kamera"),
     // ADR 0080: Discord Rich Presence (the option, the activity's texts, the room's lines).
+    // ADR 0087: the update notice.
+    ("Check for updates", "Frissítések keresése"),
+    ("Asks GitHub at each start whether a newer openIG2 is out; the main menu then offers the update.", "Minden indításkor megkérdezi a GitHubot, van-e újabb openIG2; a főmenü ekkor felajánlja a frissítést."),
+    ("New version", "Új verzió"),
+    ("Update and restart", "Frissítés és újraindítás"),
+    ("Download page", "Letöltési oldal"),
+    ("Downloading the update...", "A frissítés letöltése..."),
+    ("The update failed; the log has the reason.", "A frissítés nem sikerült; az ok a naplóban van."),
     ("Discord status", "Discord állapot"),
     ("With join", "Belépéssel"),
     ("Scenario", "Forgatókönyv"),

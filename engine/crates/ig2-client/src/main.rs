@@ -159,6 +159,7 @@ mod tutorial_ui;
 mod upscale;
 mod trade_scene;
 mod ui;
+mod update;
 mod video;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -910,6 +911,7 @@ fn main() {
 {}", version(), std::backtrace::Backtrace::force_capture());
     }));
     prof::start();
+    update::clean_start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("--snapshot") => match args.get(1) {

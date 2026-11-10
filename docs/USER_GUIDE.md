@@ -71,6 +71,10 @@ also carries a Join button: a friend who presses it (or asks to join and gets ac
 started if it isn't running, and it opens the connection page and joins your room with its join code (a password
 room still asks for the password). "Discord status" (Options, Game) turns it off, shows the status only, or the
 status with the Join button (the default).
+At each start the game asks GitHub whether a newer version is out; if so, the modern main menu shows "New version: X"
+at the bottom right. On Windows, "Update and restart" downloads it, replaces the game's files and restarts (settings,
+saves and mods stay); on Linux and macOS the button opens the download page. "Check for updates" (Options, Game)
+turns the check off, and then nothing is sent.
 For a quick game, click "Quick game" at the bottom right of the main menu: the skirmish settings open on their own
 (race, computer players, difficulty, planets, technology, money, population), set to your last skirmish's choices;
 Start begins a generated galaxy. The full single-player path is still there.

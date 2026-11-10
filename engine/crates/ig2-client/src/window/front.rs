@@ -80,6 +80,7 @@ impl App {
         let mut replay_act = None;
         let mut stats_close = false;
         let mut scenario_act = None;
+        let mut updated = false;
         let theme = |h: &crate::ui::Hud| page_theme(h, size);
         if let (Some(o), Some(h)) = (self.options.as_mut().filter(|o| o.s.modern.is_some()), &self.hud) {
             let audio = &mut self.audio;
@@ -147,7 +148,12 @@ impl App {
             let theme = theme(h);
             let (history, can, line, gt) = (fr.s.history, fr.s.can_continue, fr.s.continue_line.clone(), fr.s.gt.min(1.0));
             let t = page_in(&mut fr.page, Page::Main(p), false);
-            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt));
+            let update = &mut self.update;
+            run_page(&mut g.gui, t, (bw, bh), &crate::gui::style(&theme), |ctx| {
+                main_pick = crate::mainscr_modern::page(ctx, &h.texts, p, history, can, line.as_ref(), gt);
+                // Ours (ADR 0087): a newer release's notice, on the main panel only.
+                updated = p == crate::menu_flow::Panel::Main && update.notice(ctx, &h.texts, gt);
+            });
             top = Some(pointer_over(&ov, h, size));
         } else if let (Some(mp), Some(h)) = (fr.mp.as_mut(), &self.hud) {
             let theme = theme(h);
@@ -170,6 +176,10 @@ impl App {
         }
         for o in mp_outs {
             self.front_mp_out(o);
+        }
+        // Ours (ADR 0087): the update is in place: the game starts again as the new version.
+        if updated {
+            self.mods_act(crate::mods_page::Act::Restart);
         }
         for a in mods_acts {
             self.mods_act(a);

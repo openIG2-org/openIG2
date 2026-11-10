@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Updates: the game checks at start whether a newer openIG2 is out and the modern main menu shows "New version: X" at the bottom right; on Windows "Update and restart" downloads, checks and installs it (settings, saves and mods stay), elsewhere the button opens the download page; "Check for updates" (Options, Game) turns the check off (ADR 0087).
 - Colony: factories, forts and other buildings no longer grow when the colony view is zoomed out; every building keeps the same size at every zoom.
 - Windows: the log of the start before is kept as `ig2-client.log.old`, and a crash now writes the openIG2 version and the call path into the log, so a crash report can be traced.
 - The galaxy simulation does about a third less work every tick (late in a game about 1.0 ms instead of 1.6 ms); nothing in the game plays differently.
