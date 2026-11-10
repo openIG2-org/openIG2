@@ -31,7 +31,7 @@ The release workflow (`.github/workflows/release.yml`) runs it and publishes the
 On Linux, `python3 -I tools/release/build_unix.py [--out DIR]` builds both binaries in the workspace's own
 target and stages `_local/release/openig2-<version>-linux-x64/` plus the `.tar.gz`, listing the shared libraries
 each binary needs (glibc, libstdc++, libasound; X11/Wayland and Vulkan are loaded at run time). CI runs it on
-every push; the release workflow adds its archive to the release after the Windows zip. Build it on the oldest
+pull requests (and by hand); the release workflow adds its archive to the release after the Windows zip. Build it on the oldest
 glibc you want to support (CI: Ubuntu 22.04, glibc 2.35).
 
 On macOS the same script stages `openig2-<version>-macos-arm64/` (or `-macos-x64` on an Intel Mac) plus the
@@ -77,7 +77,7 @@ Without `IG2_GAME_DIR` each player picks their own install, as above.
 ```bash
 cd engine
 IG2_INSTALL_DIR="/path/to/Imperium Galactica II" cargo test --release
-cargo clippy --all-targets
+cargo clippy --all-targets -- -D warnings
 ```
 - Without `IG2_INSTALL_DIR` the tests that need game data are skipped (they don't search; the client does,
   `docs/USER_GUIDE.md` → Installing). `IG2_INSTALL_SEARCH=0` limits the client's search to `IG2_INSTALL_DIR` and

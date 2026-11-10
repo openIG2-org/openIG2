@@ -22,7 +22,7 @@ have one.
 ## Pull requests
 - **One change per pull request**, on its own branch, rebased on `main`.
 - **Describe what a player notices** (or what a contributor gets), not how the code changed.
-- **Tests**: `cd engine && cargo test --release` and `cargo clippy --all-targets` pass; new behaviour has a test.
+- **Tests**: `cd engine && cargo test --release` and `cargo clippy --all-targets -- -D warnings` pass; new behaviour has a test.
   For a new screen or screen state, compare a capture with the original (`tools/trace/run_screendiff.py`).
 - **Docs in the same pull request**: tick `TASKS.md`, one line in `CHANGELOG.md`, the spec's port status, a row in
   `re/deviations.md` for any difference you leave. Record each fact once, in its spec.

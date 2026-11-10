@@ -1,6 +1,6 @@
 # Architecture
 
-The engine is a Cargo workspace in `engine/` (~140k lines of Rust). It mirrors the original's systems so that every
+The engine is a Cargo workspace in `engine/` (~217k lines of Rust). It mirrors the original's systems so that every
 ported function has one home, and keeps the simulation free of rendering and networking so it can be replayed
 against recordings of the original.
 
@@ -52,9 +52,18 @@ player input ──► ig2-client ──► Command ──► ig2-net (lockstep)
 | Audio, video | `ig2-client::audio`, `video` | done |
 
 ## Decisions
-The key decisions are ADRs in `docs/decisions/`: asset source (0001), toolchain (0002), clock and RNG (0003), rules
-from the user's exe (0004), MP hosting (0005), renderer and client (0006), lockstep and saves (0007), LAN discovery
-and lobby (0008), the 1:1 client (0009), widescreen (0010), real-time battles in lockstep (0011), host migration
-(0012), video decoding (0013), the MP room (0014), the live overlay background (0015), deliberate keeps (0016), one
-language (0017), the rendezvous service (0018), the tutorial's locked battle switches (0019),
-port mapping on by default (0020).
+Decisions are ADRs in `docs/decisions/`; `docs/decisions/README.md` lists them all (asset source, toolchain, clock
+and RNG, rules from the user's exe, multiplayer, renderer, lockstep, the 1:1 client, and so on).
+
+## Adding a screen
+A new client screen touches, in `engine/crates/ig2-client/src/`:
+- `ui.rs`: the `Screen` enum, and the draw `match` over it in `Hud` (and its input handling, if it has any).
+- `window.rs`: an `App` field holding the screen's state, its place in the frame order (draw and update), and
+  `akt_kep` (the exe's `AktKep` number the screen reports).
+- `window/screens.rs`: opening and toggling (`toggle_screen`); the keys that open it are in `window/menus.rs`,
+  its mouse and keyboard input in `window/input.rs`, its tooltips and pointer in `window/pointer.rs`.
+- `discord.rs`: the `Screen` enum, `screen_key` and the status text; `window/presence.rs` maps `akt_kep` to it.
+- `main.rs`: a `--screen <name>` value for `--snapshot`, so the screen can be captured and compared with the exe
+  (`tools/trace/run_screendiff.py`).
+- A spec in `re/screens/` and a row in its `README.md`; a modern version also needs `window/modern.rs` and a
+  `<screen>_modern.rs` (ADR 0082).

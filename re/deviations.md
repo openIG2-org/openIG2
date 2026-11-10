@@ -1,12 +1,13 @@
 # Deviations
 
 A deviation is a known difference between `ig2-client`/`ig2-sim` and the GOG `ig2.exe`, or an original bug we
-noticed. Classes: **open-fix** (a port difference, ours to match), **open-investigate** (cause or exe behaviour
-not known yet), **keep** (the difference stays: deliberate, harmless or an original bug kept), **enhanced** (an
-opt-in option proposed to the maintainers; classic keeps the original; listed in `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice;
-tiny pixel, timing or RNG differences are **keep** unless they change gameplay. Only live rows are listed; closed
-rows (fixed, settled, not reachable, not reproduced) live in git history
-(`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next free number (504).
+noticed. Sections: **Open: player-visible** (a port difference a player notices: ours to match or investigate),
+**Open: minor** (small, or the cause is not known yet), **Keep** (the difference stays: deliberate, harmless or an
+original bug kept), **Enhanced** (an opt-in option proposed to the maintainers; classic keeps the original; listed in
+`docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice; tiny pixel, timing or RNG differences are
+**Keep** unless they change gameplay. Only live rows are listed; closed rows (fixed, settled, not reachable, not
+reproduced) live in git history (`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next
+free number (547).
 
 ## Open: player-visible
 
