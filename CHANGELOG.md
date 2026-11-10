@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Modern interface: does less work every frame (its theme is read once, and the starmap's planet and ship pictures are no longer copied on every draw); nothing looks different.
 - Single player: losing every tank in a ground war no longer leaves the fleet stuck over the planet; as in the original, the rest of the galaxy now pauses while a ground battle is on screen.
 - Mods page: a Browse tab lists the mods from the openIG2 mod index (opened only when you open the tab, signature checked, kept for offline use) and installs, updates and removes them, with their dependencies, into the mods folder.
 - Multiplayer: a room that refuses you for other mods now tells you which mods are missing, in another version, extra or in another order; "Download and join" installs them from the mod index, restarts the game and joins the room again.

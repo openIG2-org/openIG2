@@ -215,19 +215,7 @@ impl FrameModels {
     }
 
     fn texture(&mut self, r: &mut Renderer, install: &Install, path: Option<&str>) -> TexId {
-        let Some(path) = path else { return self.white };
-        if let Some(&t) = self.textures.get(path) {
-            return t;
-        }
-        let t = match crate::assets::Image::load(install, path) {
-            Ok(img) => r.add_texture(&img),
-            Err(e) => {
-                eprintln!("ig2-client: {e}");
-                self.white
-            }
-        };
-        self.textures.insert(path.to_owned(), t);
-        t
+        crate::kit::texture(r, install, &mut self.textures, self.white, path)
     }
 
     /// Bake `model`'s parts that `keep` accepts, with matrix `m` at `at`, lit per vertex by the part's `lights`

@@ -1468,7 +1468,7 @@ impl PanelModels {
         let surface = state.mem.u8(va::PLANETS + (sel.planet * PLANET_SIZE) as u32 + 0x22);
         // `BolygoTexturak[surface − 1]` = `textures/starmap/p<surface>.bmp` (the ninth is p1 again).
         let n = if (1..=8).contains(&surface) { surface } else { 1 };
-        let base = self.globe.get_or_insert_with(|| Model::load(install, "vector/info/", "bolygo_1.xvb", "textures/info/").map_err(|e| eprintln!("ig2-client: {e}")).ok()).clone()?;
+        let base = self.globe.get_or_insert_with(|| Model::load(install, "vector/info/", "bolygo_1.xvb", "textures/info/").map_err(|e| eprintln!("ig2-client: {e}")).ok()).as_ref()?;
         let skin = install.resolve_texture("textures/starmap/", &format!("p{n}.bmp"));
         let model = self
             .globes
@@ -1476,7 +1476,7 @@ impl PanelModels {
             .or_insert_with(|| {
                 // The remaster's `ig2_vertex.shader` scales the UVs by the texture's `uv_mul` (§3.3).
                 let k = skin.as_deref().map_or([1.0; 2], |t| crate::assets::Image::uv_mul(install, t));
-                let mut m = base;
+                let mut m = base.clone();
                 for p in m.parts.iter_mut().filter(|p| p.index.first() == Some(&0)) {
                     for v in &mut p.verts {
                         v.uv = [v.uv[0] * k[0], v.uv[1] * k[1]];
@@ -1545,19 +1545,7 @@ impl PanelModels {
     }
 
     fn texture(&mut self, r: &mut Renderer, install: &Install, path: Option<&str>) -> TexId {
-        let Some(path) = path else { return self.white };
-        if let Some(&t) = self.textures.get(path) {
-            return t;
-        }
-        let t = match crate::assets::Image::load(install, path) {
-            Ok(img) => r.add_texture(&img),
-            Err(e) => {
-                eprintln!("ig2-client: {e}");
-                self.white
-            }
-        };
-        self.textures.insert(path.to_owned(), t);
-        t
+        crate::kit::texture(r, install, &mut self.textures, self.white, path)
     }
 
     /// The model of hull `hull` (`TransfAlap`) with race digit `digit` in a spacewar hull's name (hulls < 12), and
@@ -1622,8 +1610,7 @@ impl PanelModels {
                 let [x, y] = thumb_cell(k + 4 * line);
                 if let Some(u) = self.unit(r, install, rules, hull, digit, owner, S, -600.0) {
                     let m = scene::mul(&spin, &Placement::add_to_scene(u.model.origin, S).matrix).map(|x| x * 1024.0);
-                    let (model, texs, glows) = (u.model.clone(), u.texs.clone(), u.glows.clone());
-                    bake(&model, &m, [x - 320.0, y - 250.0, -600.0], &texs, &glows, 1.0, &lights, &mut dynamic, &mut draws);
+                    bake(&u.model, &m, [x - 320.0, y - 250.0, -600.0], &u.texs, &u.glows, 1.0, &lights, &mut dynamic, &mut draws);
                 }
             }
         }

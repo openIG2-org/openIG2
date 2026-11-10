@@ -36,7 +36,8 @@ pub struct Theme {
 impl Theme {
     /// Built-in Modern.
     pub fn modern() -> Self {
-        Self::parse_over(&Self::ZERO, MODERN_FILE).expect("themes/modern.toml")
+        static MODERN: std::sync::OnceLock<Theme> = std::sync::OnceLock::new();
+        *MODERN.get_or_init(|| Self::parse_over(&Self::ZERO, MODERN_FILE).expect("themes/modern.toml"))
     }
 
     /// A theme file over Modern's values.

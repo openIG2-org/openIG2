@@ -15,7 +15,7 @@ use ig2_sim::time::GameTime;
 
 use crate::chat::EntryKey;
 use crate::font::{Align, Font};
-use crate::kit::Virtual;
+use crate::kit::{inside_f, Virtual};
 use crate::render::{Frame, TexId};
 
 /// The newest lines kept.
@@ -167,10 +167,6 @@ fn tabs(lang: Lang) -> [(Vec<u8>, f32); 6] {
     })
 }
 
-fn inside(at: [f32; 2], r: [f32; 4]) -> bool {
-    at[0] >= r[0] && at[0] < r[0] + r[2] && at[1] >= r[1] && at[1] < r[1] + r[3]
-}
-
 impl Panel {
     /// The lines shown under the filter and the search, newest first.
     pub fn shown<'a>(&self, log: &'a Log) -> Vec<&'a Entry> {
@@ -179,7 +175,7 @@ impl Panel {
     }
 
     pub fn over_label(at: [f32; 2]) -> bool {
-        inside(at, LABEL)
+        inside_f(LABEL, at)
     }
 
     pub fn toggle(&mut self) {
@@ -191,7 +187,7 @@ impl Panel {
     pub fn hover_at(&mut self, at: [f32; 2], log: &Log) {
         self.label_hover = Self::over_label(at);
         self.hover = None;
-        if !self.open || !inside(at, [PANEL[0], LINES_Y, PANEL[2], ROWS as f32 * LINE]) {
+        if !self.open || !inside_f([PANEL[0], LINES_Y, PANEL[2], ROWS as f32 * LINE], at) {
             return;
         }
         let k = ((at[1] - LINES_Y) / LINE) as usize + self.scroll;
@@ -207,7 +203,7 @@ impl Panel {
     /// A left press while the panel is up: a filter, or a line's target.
     pub fn press(&mut self, at: [f32; 2], log: &Log, lang: Lang) -> Option<Target> {
         for (i, (l, x)) in tabs(lang).into_iter().enumerate() {
-            if inside(at, [x, TABS_Y - 2.0, l.len() as f32 * CELL, 11.0]) {
+            if inside_f([x, TABS_Y - 2.0, l.len() as f32 * CELL, 11.0], at) {
                 (self.filter, self.scroll) = (i, 0);
                 return None;
             }
