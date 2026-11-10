@@ -10,6 +10,7 @@
 //! nothing here. Colour words are bytes `[r, g, b]` = `0xBBGGRR` [obs: the research screen's 0xffba00 tints the left
 //! wheel cyan]; the shader multiplies the texture by them (`gl_FragColor = texture·var_color`, no doubling).
 
+use std::cell::RefCell;
 use std::sync::OnceLock;
 
 use crate::scene::{self, M3, V3};
@@ -33,7 +34,7 @@ fn bytes(c: u32) -> [u8; 3] {
     [c as u8, (c >> 8) as u8, (c >> 16) as u8]
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 enum Light {
     Ambient([u8; 3]),
     /// The light vector in camera space (unit).
@@ -91,6 +92,74 @@ impl Lights {
     }
 }
 
+/// A node's lights as the mesh shader reads them (ADR 0088 §9): the ambient lights' summed colour bytes, then up to
+/// four parallel lights, each its vector and its colour bytes.
+pub type Set = [[f32; 4]; 9];
+
+/// How many light sets one frame's scenes can name.
+pub const SETS: usize = 16;
+
+thread_local! {
+    /// The light sets the frame's vertices name so far ([`Lights::vertex`]).
+    static FRAME: RefCell<Vec<Set>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The frame's light sets, for the scene made from the vertices baked so far ([`crate::render3d::Scene3d::lights`]).
+pub fn sets() -> Vec<Set> {
+    FRAME.with(|f| f.borrow().clone())
+}
+
+/// A new frame: forget the last one's light sets.
+pub fn new_frame() {
+    FRAME.with(|f| f.borrow_mut().clear());
+}
+
+impl Lights {
+    fn set(&self) -> Option<Set> {
+        let (mut s, mut ambient, mut k) = ([[0.0; 4]; 9], [0u8; 3], 0);
+        for l in &self.0 {
+            match *l {
+                Light::Ambient(a) => ambient = std::array::from_fn(|i| ambient[i].saturating_add(a[i])),
+                Light::Parallel(d, c) => {
+                    if k == 4 {
+                        return None;
+                    }
+                    s[1 + 2 * k] = [d[0], d[1], d[2], 0.0];
+                    s[2 + 2 * k] = [c[0] as f32, c[1] as f32, c[2] as f32, 0.0];
+                    k += 1;
+                }
+            }
+        }
+        s[0] = [ambient[0] as f32, ambient[1] as f32, ambient[2] as f32, 0.0];
+        Some(s)
+    }
+
+    /// What a vertex with the lighting normal `w` carries: its normal attribute and its light colour. As the engine
+    /// lights it (`normal` kept, the colour [`Lights::rgb`]); with "Per-pixel lighting" (ADR 0088 §9) the lighting
+    /// normal `16·4^k` long, `k` these lights' place among the frame's sets, and white: the mesh shader then reads
+    /// the shade table per fragment. Lights that don't fit a set, a frame with [`SETS`] sets already and a normal
+    /// too far from unit length stay lit per vertex.
+    pub fn vertex(&self, w: V3, normal: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+        let len = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
+        if crate::render3d::lighting().per_pixel && (0.55..1.8).contains(&len) {
+            let slot = self.set().and_then(|s| {
+                FRAME.with(|f| {
+                    let mut f = f.borrow_mut();
+                    f.iter().rposition(|x| *x == s).or_else(|| (f.len() < SETS).then(|| {
+                        f.push(s);
+                        f.len() - 1
+                    }))
+                })
+            });
+            if let Some(k) = slot {
+                let scale = 16.0 * 4f32.powi(k as i32);
+                return (w.map(|x| x * scale), [1.0; 3]);
+            }
+        }
+        (normal, self.rgb(w))
+    }
+}
+
 /// The lighting normal in camera space: a part's [`scene::Vert::lnormal`] (the model's rotation chain applied to the
 /// file normal with z negated) turned by the placement `m`'s rotation, `m = R·S` with `S` a scale along the model's
 /// axes (`AddToScene`, `ScaleObj`; any uniform factor such as the scene's 1024): `m`'s columns normalised.
@@ -131,6 +200,43 @@ mod tests {
     fn shade_table_matches_the_exe() {
         let t = shade_table();
         assert_eq!((t[0], t[1], t[1000], t[2000], t[2895], t[2896], t[8191]), (255, 254, 206, 141, 4, 0, 0));
+    }
+
+    /// The mesh shader's `set_light` (render3d.rs) in f32, as it reads a [`Set`].
+    fn set_light(s: &Set, n: V3) -> [u8; 3] {
+        let mut c = [s[0][0], s[0][1], s[0][2]];
+        for j in 0..4 {
+            let (l, col) = (s[1 + 2 * j], s[2 + 2 * j]);
+            let i = ((n[0] - l[0]).powi(2) + (n[1] - l[1]).powi(2) + (n[2] - l[2]).powi(2)) * 2047.0;
+            let i = i.round_ties_even();
+            let shade = if i < 2896.0 { ((1.0 - i / 2896.0).sqrt() * 255.0).floor() } else { 0.0 };
+            for k in 0..3 {
+                c[k] += (col[k] * shade / 256.0).floor();
+            }
+        }
+        c.map(|x| x.min(255.0) as u8)
+    }
+
+    /// "Per-pixel lighting" (ADR 0088 §9) gives a vertex the colour the engine's per-vertex light gives it: the
+    /// spy screen's four lights over a sphere of normals, and lights past what a set holds stay per vertex.
+    #[test]
+    fn light_set_matches_the_vertex_light() {
+        let l = Lights::default().ambient(0x141414).ambient(0xf0f0f0).parallel(0x808080, [0.0, 0.0, -10.0]).parallel(0x7f5d00, [200.0, 0.0, -350.0]).parallel(0x004e7f, [-200.0, 40.0, -350.0]);
+        let s = l.set().unwrap();
+        assert_eq!(s[0], [255.0, 255.0, 255.0, 0.0]);
+        let l = Lights(l.0[1..].to_vec());
+        let s = l.set().unwrap();
+        for a in 0..40 {
+            for b in 0..80 {
+                let (t, p) = (a as f32 * 0.0785, b as f32 * 0.0785);
+                let n = [t.sin() * p.cos(), t.sin() * p.sin(), t.cos()];
+                assert_eq!(set_light(&s, n), l.shade(n), "{n:?}");
+            }
+        }
+        let five = (0..5).fold(Lights::default(), |l, k| l.parallel(0x101010, [k as f32, 1.0, 0.0]));
+        assert!(five.set().is_none());
+        // Off (the default), a vertex keeps its normal and the engine's colour.
+        assert_eq!(l.vertex([0.0, 0.0, 1.0], [0.0; 3]), ([0.0; 3], l.rgb([0.0, 0.0, 1.0])));
     }
 
     #[test]

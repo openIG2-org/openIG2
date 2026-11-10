@@ -244,8 +244,8 @@ impl FrameModels {
                     // parts are lit too, their opacity in alpha.
                     // The lighting normal carries the child record's scale (`flag12`'s 2.84, `bolygo_k`'s 0.85): the
                     // engine lights by its direction [obs: the ship lit like the exe's only once normalised].
-                    let c = l.rgb(crate::lighting::normal(m, scene::normalise(v.lnormal)));
-                    out.push(MeshVertex { pos: q, normal: scene::normalise(scene::apply(m, v.normal)), uv: v.uv, color: [c[0], c[1], c[2], a] });
+                    let (n, c) = l.vertex(crate::lighting::normal(m, scene::normalise(v.lnormal)), scene::normalise(scene::apply(m, v.normal)));
+                    out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
                 }
             }
             let tex = skin(&p.index).or_else(|| p.texture.clone());
@@ -284,6 +284,7 @@ impl FrameModels {
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
         let target = match &mut self.target {
             Some(t) => t,

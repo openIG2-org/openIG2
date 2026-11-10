@@ -486,7 +486,7 @@ impl MainScene {
         let mut u = uniforms();
         let rows = wide.rows(std::array::from_fn(|r| std::array::from_fn(|c| u.view[c][r])));
         u.view = std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]));
-        fr.scene = Some(Scene3d { uniforms: u, gamma: true, shadow: None, draws, dynamic });
+        fr.scene = Some(Scene3d { uniforms: u, gamma: true, shadow: None, draws, dynamic, lights: lighting::sets() });
         let target = match &mut self.target {
             Some(t) => t,
             None => self.target.insert(r.target(px)),
@@ -625,8 +625,8 @@ fn uniforms() -> SceneUniforms {
 fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: TexId, opacity: f32, additive: bool, out: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>) {
     let start = out.len() as u32;
     for v in &p.verts {
-        let c = lights.rgb(lighting::normal(&t.matrix, v.lnormal));
-        out.push(MeshVertex { pos: t.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], opacity] });
+        let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), [0.0; 3]);
+        out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], opacity] });
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: opacity < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
 }

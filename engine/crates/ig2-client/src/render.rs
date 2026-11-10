@@ -1085,6 +1085,8 @@ impl Renderer {
     /// [`Renderer::draw_to_image_over`] with `top` drawn last, over the page (the window's top frame: the modern
     /// colony's pictures, ADR 0074).
     pub fn draw_to_image_over_top(&mut self, frame: &Frame, top: Option<Frame>, size: (u32, u32), time: f32, over: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::Texture)) -> Vec<u8> {
+        // The frame is built: its scenes hold their light sets.
+        crate::lighting::new_frame();
         let (w, h) = size;
         let tex = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("snapshot"),

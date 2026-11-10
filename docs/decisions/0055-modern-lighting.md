@@ -27,7 +27,8 @@ off the mesh pass runs the same pipelines and shader branches as before, so the 
    the vertex and get the same two lights per fragment (`SceneUniforms::flash[1][3]` = 1 picks the plain Lambert
    term in the engine path). The colony's terrain and buildings are already lit per fragment from their normals,
    and the starmap's planets are spheres whose per-vertex light is already smooth; the 3D-framed screens' models
-   (research, info, trade, design) keep the exe's per-vertex light.
+   (research, info, trade, design) keep the exe's per-vertex light. *Since ADR 0088 §9 the switch lights these
+   and the planets per pixel too, with the engine's own shade table.*
 3. **Soft shadows** (`SoftShadows`): the shadow map is read with a 4 × 4 grid of bilinear taps two texels apart
    (percentage-closer filtering over about six texels) instead of the remaster's four close taps; the map, its
    casters and its darkness are the same. Only the colony draws a shadow map.

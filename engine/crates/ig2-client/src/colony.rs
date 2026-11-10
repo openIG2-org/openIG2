@@ -1814,8 +1814,8 @@ impl ColonyScene {
             let start = dynamic.len() as u32;
             for v in &p.verts {
                 let q = scene::apply(&m, v.pos);
-                let c = lights.rgb(crate::lighting::normal(&m, v.lnormal));
-                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], 1.0] });
+                let (n, c) = lights.vertex(crate::lighting::normal(&m, v.lnormal), [0.0; 3]);
+                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], 1.0] });
             }
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(self.white), glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
@@ -2626,6 +2626,7 @@ impl View {
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
         let _ = time;
         f.mark_scene();
@@ -2877,6 +2878,7 @@ fn radar_picture(r: &mut Renderer, terrain: &Drawn) -> TexId {
         },
         draws,
         dynamic: Vec::new(),
+        lights: crate::lighting::sets(),
     });
     r.render_texture(&f, (200, 200))
 }

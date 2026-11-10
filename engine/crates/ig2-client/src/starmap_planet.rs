@@ -72,7 +72,7 @@ impl Planets {
     pub fn add_battle_shell(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.shell {
             m.add_depth(scene, draws, scale, rot, at, eye);
-            m.add(scene, draws, scale, rot, at, eye, Some(self.noise), &engine_light(rot));
+            m.add(scene, draws, scale, rot, at, eye, Some(self.noise), &engine_light(rot, false));
         }
     }
 
@@ -84,7 +84,7 @@ impl Planets {
     #[allow(clippy::too_many_arguments)]
     pub fn add_battle_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye) {
         if let Some(Some(m)) = self.battle.get((surface.max(1) as usize - 1) % 8) {
-            m.add(scene, draws, scale, rot, at, eye, None, &engine_light(rot));
+            m.add(scene, draws, scale, rot, at, eye, None, &engine_light(rot, true));
         }
     }
 
@@ -100,7 +100,7 @@ impl Planets {
     pub fn add_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, size: u8, spin: f32, at: [f32; 3], eye: &Eye, opacity: f32) {
         if let Some(m) = &self.meshes[(surface.max(1) as usize - 1) % 8] {
             let rot = (0.0, 0.0, spin);
-            m.add_with(scene, draws, scale(size) / 8.0, rot, at, eye, None, &engine_light(rot), opacity);
+            m.add_with(scene, draws, scale(size) / 8.0, rot, at, eye, None, &engine_light(rot, true), opacity);
         }
     }
 
@@ -112,10 +112,13 @@ impl Planets {
     pub fn add_clouds(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, size: u8, turn: f32, at: [f32; 3], eye: &Eye) {
         if let Some(m) = &self.cloud {
             let rot = (turn, 5.0, 0.0);
-            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, rot, at, eye, Some(self.noise), &engine_light(rot));
+            m.add(scene, draws, (scale(size) + 0.0001) / 8.0, rot, at, eye, Some(self.noise), &engine_light(rot, false));
         }
     }
 }
+
+/// A vertex's light: its normal attribute and its grey, from the direction out of the centre and the vertex.
+type Lit<'a> = &'a dyn Fn([f32; 3], &Vert) -> ([f32; 3], f32);
 
 /// A starmap planet's or cloud's vertex grey (`fenyekszamolasa` ELF 0x606530, exe 0x52f190; [`crate::lighting`]): the
 /// root's ambient 0x404040 and parallel 0x808080 light, the latter in the object's space `Rᵀ·L` (`R` its `RotateObj`;
@@ -123,9 +126,21 @@ impl Planets {
 /// file normal with z negated (`Vert::lnormal`; the meshes' normals are mirrored in x and y and stay so). Both the
 /// planet (flags 0xf) and the cloud (0xb) have property 8: the bytes aren't scaled by the opacity, which goes in the
 /// alpha (the remaster's `CLOUD` shader ignores it).
-fn engine_light(rot: (f32, f32, f32)) -> impl Fn([f32; 3], &Vert) -> f32 {
-    let lights = engine_lights(crate::scene::create_matrix(rot.0, rot.1, rot.2));
-    move |_, v: &Vert| engine_grey(&lights, v.lnormal) as f32 / 255.0
+/// The vertex's normal attribute comes with it: zero (lit here), or with `pixel` and "Per-pixel lighting" the lighting
+/// normal in the root's space for the mesh shader (ADR 0088 §9: one light set for every planet).
+fn engine_light(rot: (f32, f32, f32), pixel: bool) -> impl Fn([f32; 3], &Vert) -> ([f32; 3], f32) {
+    let r = crate::scene::create_matrix(rot.0, rot.1, rot.2);
+    let lights = engine_lights(r);
+    let root = crate::lighting::Lights::default().ambient(0x404040).parallel(0x808080, LIGHT);
+    move |_, v: &Vert| {
+        if pixel {
+            let (n, c) = root.vertex(crate::scene::apply(&r, v.lnormal), [0.0; 3]);
+            if n != [0.0; 3] {
+                return (n, c[0]);
+            }
+        }
+        ([0.0; 3], engine_grey(&lights, v.lnormal) as f32 / 255.0)
+    }
 }
 
 /// The root's lights as an object turned by `r` (`RotateObj`) sees them: the parallel one at `Rᵀ·L`.
@@ -178,19 +193,19 @@ impl Mesh {
     /// direction from the centre and the vertex: [`engine_light`] on the starmap, the battle planet's own light).
     /// `cloud`: the noise texture of the `CLOUD` material, drawn over the planet in gamma space.
     #[allow(clippy::too_many_arguments)]
-    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: &dyn Fn([f32; 3], &Vert) -> f32) {
+    fn add(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: Lit) {
         self.add_with(scene, draws, scale, rot, at, eye, cloud, lit, 1.0);
     }
 
     /// Its front faces' depth only (no colour), among the translucent draws in push order.
     fn add_depth(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye) {
-        self.add_with(scene, draws, scale, rot, at, eye, None, &|_, _| 0.0, 0.0);
+        self.add_with(scene, draws, scale, rot, at, eye, None, &|_, _| ([0.0; 3], 0.0), 0.0);
     }
 
     /// `alpha` below 1: blended at that alpha, the depth still written (the engine's transparency keeps the depth
     /// write, re/screens/render.md §2.3); 0 leaves only the depth.
     #[allow(clippy::too_many_arguments)]
-    fn add_with(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: &dyn Fn([f32; 3], &Vert) -> f32, alpha: f32) {
+    fn add_with(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: Lit, alpha: f32) {
         let glass = alpha < 1.0;
         let xf = Placement::add_to_scene(self.origin, scale).world(rot, at);
         let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
@@ -206,14 +221,15 @@ impl Mesh {
                 }
                 for k in 0..3 {
                     let n = normalise(std::array::from_fn(|j| pos[k][j] - at[j]));
-                    let lit = lit(n, &tri[k]);
+                    let (normal, lit) = lit(n, &tri[k]);
                     let uv = [tri[k].uv[0] * part.uv_mul[0], tri[k].uv[1] * part.uv_mul[1]];
-                    scene.dynamic.push(MeshVertex { pos: pos[k], normal: [0.0; 3], uv, color: [lit, lit, lit, alpha] });
+                    scene.dynamic.push(MeshVertex { pos: pos[k], normal, uv, color: [lit, lit, lit, alpha] });
                 }
             }
             let range = start..scene.dynamic.len() as u32;
             draws.push(MeshDraw { mesh: None, range, tex: cloud.unwrap_or(part.tex), glass, cloud: cloud.is_some(), shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: glass });
         }
+        scene.lights = crate::lighting::sets();
     }
 }
 

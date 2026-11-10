@@ -212,7 +212,7 @@ Shift and Alt can't be changed; typing names and chat always uses the real keys.
 | Smooth glows (`SmoothGlows`) | On by default (off = the original's look), under "Graphics": the starmap's star glows, clouds and stars, the main menu's galaxy and the space battle's shot flares are drawn without a visible pixel grid, one-pixel stars as round dots, and the sky's nebulae get a smooth enlarged copy (from the next start); Sharp UI does not apply to these (ADR 0064) |
 | Texture upscaling (`TextureUpscale`) | Graphics → Detail. Off / 2x / 4x, off by default: the textures are enlarged as they load, interface art with an edge-keeping filter (xBRZ) and the rest smoothly, so pictures and models look less blocky on big windows; every picture keeps its place and size (ADR 0054). The first visit to a screen takes longer (the starmap about 4 s at 4x); a change shows on the screens opened afterwards. A texture pack (Mods) wins over it |
 | Anti-aliasing (`AntiAliasing`) | Off by default, under "Graphics": the 3D scenes (starmap planets, colony, space and ground battles, the models in the panels) are drawn with 4× multisampling, so their edges don't stair-step; the 2D panels and text are not touched (ADR 0055) |
-| Per-pixel lighting (`PixelLighting`) | Off by default: the space battle's ships and flying pieces are lit per pixel by the same lights instead of per corner, so their hulls shade smoothly (ADR 0055) |
+| Per-pixel lighting (`PixelLighting`) | Off by default: every 3D model (the battle's ships, planets, the models on the research, design, spy, diplomacy, trade and info screens) is lit per pixel by the same lights instead of per corner, so it shades smoothly (ADR 0055, ADR 0088 §9) |
 | Soft shadows (`SoftShadows`) | Off by default: the colony's building shadows get soft edges instead of hard ones (ADR 0055) |
 | Bloom (`Bloom`) | Off by default: the glowing 3D effects (fire, blasts, the colony's weather) get a soft glow around them (ADR 0055) |
 | Battle effects (`BattleEffects`) | Classic by default, under "Graphics": Enhanced adds sparks, expanding shock rings, embers, smoke and smoke columns to the explosions of the space battle and the ground war, a blue flash where a shield takes a hit and a soft glow round every shot and laser beam, on top of the original's own effects and at the same moments (ADR 0057). Takes effect at once |
@@ -578,6 +578,10 @@ Every line is optional. `true` switches a look on whatever your own setting; a l
 alone, and a mod never switches anything off. With several mods a switch on in any is on, and a value comes from the
 highest mod that sets it. A misspelt name or a value out of range is shown under the mod on the Mods page and by
 `openIG2-check`; the file is then skipped. `mods-src/remaster-look` in the source is a ready example.
+
+`per_pixel` lights every 3D model per pixel instead of per corner (ships, planets, the models on the research,
+design, spy, diplomacy, trade and info screens, the colony's panel models): the same lights and colours, without
+the facets.
 
 `hdr` makes the bright parts of the starmap, the space battle and the colony glow (not the panels or the text).
 Colours darker than `bloom_threshold` stay exactly as they are. The browser version ignores `hdr`.

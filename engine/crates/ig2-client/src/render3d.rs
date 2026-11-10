@@ -18,6 +18,8 @@ struct U {
     fog_range: vec4<f32>,
     flash: vec4<f32>,
     flash_dir: vec4<f32>,
+    // The frame's light sets (ADR 0088 §9), nine rows each: the ambient bytes, four lights' vector and colour bytes.
+    lsets: array<vec4<f32>, 144>,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(1) @binding(0) var tex: texture_2d<f32>;
@@ -43,6 +45,8 @@ struct VO {
     @location(3) dist: f32,
     @location(4) border: f32,
     @location(5) suv: vec2<f32>,
+    // A vertex lit per fragment by a light set: the set (−1: none) and its lighting normal's length.
+    @location(6) lset: vec2<f32>,
 };
 
 // `Kockarecshadow` (ELF 0x5fcae0): a receiver vertex's shadow texcoords `(rows·p·shadowzoom + shadowkp)/256`; the
@@ -64,6 +68,10 @@ fn vs(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec
     let a = max(abs(p.y), abs(p.z)) / u.fog_range.w;
     o.border = select(select(0.0, 0.5, a > 0.95), 1.0, a > 0.99);
     o.suv = shadow_uv(p);
+    // A normal `16·4^k` long names light set `k` (`lighting::Lights::vertex`).
+    let l = max(length(n), 1.0);
+    let k = round(log2(l / 16.0) * 0.5);
+    o.lset = select(vec2(-1.0, 1.0), vec2(k, l / (16.0 * exp2(2.0 * k))), l > 6.0);
     return o;
 }
 
@@ -116,6 +124,19 @@ fn engine_shade(c: f32) -> f32 {
     return select(0.0, floor(sqrt(1.0 - i / 2896.0) * 255.0) / 256.0, i < 2896.0);
 }
 
+// `fenyekszamolasa` per fragment (ADR 0088 §9): light set `k`'s ambient bytes plus, per parallel light,
+// `colour·shade[float2int(|n − L|²·2047)] >> 8`, the sum saturating at 255.
+fn set_light(n: vec3<f32>, k: i32) -> vec3<f32> {
+    var c = u.lsets[k * 9].rgb;
+    for (var j = 0; j < 4; j++) {
+        let e = n - u.lsets[k * 9 + 1 + 2 * j].xyz;
+        let i = round(dot(e, e) * 2047.0);
+        let s = select(0.0, floor(sqrt(1.0 - i / 2896.0) * 255.0), i < 2896.0);
+        c += floor(u.lsets[k * 9 + 2 + 2 * j].rgb * s / 256.0);
+    }
+    return min(c, vec3(255.0)) / 255.0;
+}
+
 // `srgb`: the texel decoded from sRGB here (a frame without sRGB views: `fs_opaque_e`, `fs_glass_e`).
 fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32> {
     var t = textureSample(tex, smp, i.uv);
@@ -131,7 +152,10 @@ fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32
     let flash = u.flash.rgb * engine_shade(dot(n, u.flash_dir.xyz));
     // A normal longer than 1.5: the plain Lambert term in the engine path (the battle's ships lit per pixel, ADR 0055).
     let s = select(engine_shade(d), max(d, 0.0), dot(i.n, i.n) > 2.25);
-    let lit = select(select(lambert, u.ambient.rgb + u.sun.rgb * s + flash, engine), vec3(1.0), prelit);
+    var lit = select(select(lambert, u.ambient.rgb + u.sun.rgb * s + flash, engine), vec3(1.0), prelit);
+    if (i.lset.x > -0.5) {
+        lit = set_light(normalize(i.n) * i.lset.y, i32(round(i.lset.x)));
+    }
     var rgb = t.rgb * shadow * i.color.rgb * min(lit, vec3(cap));
     let f = max(clamp((i.dist - u.fog_range.x) / max(u.fog_range.y - u.fog_range.x, 1.0), 0.0, 1.0) * u.fog_range.z, i.border) * i.color.a;
     rgb = mix(rgb, u.fog.rgb, f);
@@ -251,7 +275,9 @@ fn fs_cloud(i: VO) -> @location(0) vec4<f32> {
 
 /// A world-space vertex. `color.rgb` tints the texture; `color.a` is the opacity of glass parts (and scales
 /// the fog for opaque ones, so the background dome can skip it). A zero normal marks a vertex lit on the CPU:
-/// `color.rgb` is then its light and the scene's lights are skipped. A normal four units long takes the engine path's
+/// `color.rgb` is then its light and the scene's lights are skipped. A normal 16 or more long names one of the
+/// frame's light sets (`16·4^k`, [`crate::lighting::Lights::vertex`]): the engine's light per fragment (ADR 0088 §9).
+/// A normal four units long takes the engine path's
 /// parallel light as the plain Lambert term `max(n·L, 0)` instead of the engine's table (ADR 0055: the space battle's
 /// ships lit per pixel as `spacewar_screen` lights their vertices).
 #[repr(C)]
@@ -345,6 +371,8 @@ pub struct Scene3d {
     pub shadow: Option<ShadowMap>,
     pub draws: Vec<MeshDraw>,
     pub dynamic: Vec<MeshVertex>,
+    /// The light sets its vertices name ([`crate::lighting::sets`]; empty without "Per-pixel lighting").
+    pub lights: Vec<crate::lighting::Set>,
 }
 
 /// The modern lighting options (ADR 0055), each off by default: off, the mesh pass is the remaster's.
@@ -352,7 +380,8 @@ pub struct Scene3d {
 pub struct Lighting {
     /// "Anti-aliasing": the meshes drawn 4× multisampled.
     pub msaa: bool,
-    /// "Per-pixel lighting": the space battle's ships and pieces lit per fragment.
+    /// "Per-pixel lighting": the space battle's ships and pieces and every model the engine lights per vertex
+    /// (ADR 0088 §9) lit per fragment.
     pub per_pixel: bool,
     /// "Soft shadows": the shadow map read percentage-closer filtered.
     pub soft_shadows: bool,
@@ -763,7 +792,7 @@ impl Pipe3d {
         });
         let uniform = d.create_buffer(&wgpu::BufferDescriptor {
             label: None,
-            size: std::mem::size_of::<SceneUniforms>() as u64,
+            size: (std::mem::size_of::<SceneUniforms>() + std::mem::size_of::<[crate::lighting::Set; crate::lighting::SETS]>()) as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -902,6 +931,9 @@ impl Pipe3d {
         }
         if first {
             q.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&scene.uniforms));
+            if !scene.lights.is_empty() {
+                q.write_buffer(&self.uniform, std::mem::size_of::<SceneUniforms>() as u64, bytemuck::cast_slice(&scene.lights));
+            }
         }
         let bytes: &[u8] = bytemuck::cast_slice(&scene.dynamic);
         let need = (bytes.len() as u64).max(48);

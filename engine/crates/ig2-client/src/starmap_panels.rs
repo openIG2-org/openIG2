@@ -1763,6 +1763,7 @@ fn finish(r: &mut Renderer, target: &mut Option<Target>, dynamic: Vec<MeshVertex
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
         let target = match target {
             Some(t) => t,
@@ -1795,8 +1796,8 @@ fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], glows: &[Option<TexId>], 
         let a = p.alpha(alpha);
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
-            let c = lights.rgb(lighting::normal(m, v.lnormal));
-            out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: [0.0; 3], uv: v.uv, color: [c[0], c[1], c[2], a] });
+            let (n, c) = lights.vertex(lighting::normal(m, v.lnormal), [0.0; 3]);
+            out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
         draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });

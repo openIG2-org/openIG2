@@ -1301,6 +1301,7 @@ impl View {
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
     }
 

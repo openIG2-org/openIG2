@@ -140,6 +140,8 @@ impl Gpu {
     fn present_over(&mut self, mut frame: crate::render::Frame, top: Option<crate::render::Frame>, out: &wgpu::Texture, t: f32) -> crate::render::Frame {
         let l = self.layout();
         crate::kit::layout::letterbox_bars(&mut frame, &l, self.assets.white);
+        // The frame is built: its scenes hold their light sets.
+        crate::lighting::new_frame();
         let size = (self.config.width, self.config.height);
         let [x, y, w, h] = l.band();
         let over = |r: &mut Renderer, gui: &mut crate::gui::Gui, tex: &wgpu::Texture, px: (u32, u32)| {

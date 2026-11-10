@@ -291,6 +291,7 @@ impl Console {
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
         Ok((f, ((w * CONSOLE_SCALE) as u32, (h * CONSOLE_SCALE) as u32), light))
     }

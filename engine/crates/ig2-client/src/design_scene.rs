@@ -255,7 +255,7 @@ impl DesignScene {
         let mut u = uniforms(yc);
         let rows = wide.rows(std::array::from_fn(|r| std::array::from_fn(|c| u.view[c][r])));
         u.view = std::array::from_fn(|c| std::array::from_fn(|r| rows[r][c]));
-        fr.scene = Some(Scene3d { uniforms: u, gamma: true, shadow: None, draws, dynamic });
+        fr.scene = Some(Scene3d { uniforms: u, gamma: true, shadow: None, draws, dynamic, lights: lighting::sets() });
         let target = match &mut self.target {
             Some(t) => t,
             None => self.target.insert(r.target(px)),
@@ -463,7 +463,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
         }
         for (v, q) in tri.iter().zip(w) {
             let n = scene::normalise(scene::apply(&t.matrix, v.normal));
-            let c = lights.rgb(lighting::normal(&t.matrix, v.lnormal));
+            let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), n);
             // The colour bytes multiply the texture in the gamma pass (re/screens/render.md §2).
             out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
         }

@@ -674,6 +674,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
         },
         draws,
         dynamic,
+        lights: crate::lighting::sets(),
     });
     let px = ((w * 4.0) as u32, (h * 4.0) as u32);
     let t = match target {

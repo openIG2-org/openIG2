@@ -3,7 +3,8 @@
 Date: 2026-11-10. Status: accepted. Builds on ADR 0044 and 0068 (mods), ADR 0054 (texture and model packs), ADR 0055
 (modern lighting), ADR 0057 (battle effects), ADR 0064 (smooth glows) and ADR 0086 (the mod repository). Implemented
 by `ig2-formats::visuals` (the file), `ig2-formats::vfs` (found in a mod), `ig2-client::visuals` (laid over the
-settings), `ig2-client::starmap` (the planets' halo) and `ig2-client::hdr` (the floating-point scene).
+settings), `ig2-client::starmap` (the planets' halo), `ig2-client::hdr` (the floating-point scene) and `ig2-client::lighting`
+with `ig2-client::render3d` (the engine's light per pixel).
 
 ## Context
 The game is to get a remastered look: better lights and effects, a richer starmap, sharper textures, smooth
@@ -23,7 +24,7 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    ```toml
    [lighting]
    anti_aliasing = true     # ADR 0055's four switches
-   per_pixel = true
+   per_pixel = true         # §9: on every 3D screen
    soft_shadows = true
    bloom = true
    hdr = true               # §8: the scene in a floating-point picture, its glow, the tone curve
@@ -82,6 +83,26 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    - Defaults: threshold 0.8, strength 0.6. No exposure setting: it would shift every colour.
    - The browser build ignores `hdr` (WebGL2 may lack floating-point render targets). Anti-aliasing works inside
      the picture.
+9. **Per-pixel lighting on every 3D screen** (`per_pixel`, row 564; `lighting::Lights::vertex`, `render3d`'s
+   `set_light`). ADR 0055's switch lit only the space battle's ships per pixel. Everything else the engine lights
+   per vertex (`fenyekszamolasa`, re/screens/research.md §2.1): the models of the research, design, spy, diplomacy,
+   trade, info and messages screens and the main menu, the colony's panel models, the starmap's and the battle's
+   planets and the starmap panels' models. (The colony's terrain and buildings already take their one light per
+   pixel.) With the switch on these get the same light per pixel:
+   - **What "per pixel" means for the table light.** The engine's light of a vertex is the sum of its node's
+     ambient colours and, per parallel light, `colour · shade[float2int(|n − L|²·2047)] >> 8`, saturating at 255,
+     with `n` the vertex's lighting normal and `shade` the table `sqrt(1 − i/2896)·255`. Per pixel the same sum is
+     taken, bytes, rounding and saturation included, with `n` the lighting normal interpolated over the triangle
+     and brought back to the length it has at the vertices. At a vertex this is the engine's colour exactly (a
+     test compares the two over a sphere of normals), so the lit colours and the lights' tints stay the
+     original's; between the vertices the shade follows the surface instead of being blended from the corners,
+     which removes the facets and lets a highlight fall inside a large triangle.
+   - **How.** A scene carries up to 16 light sets (the ambient sum and at most four parallel lights each); a
+     vertex names its set by the length of its normal attribute. A node with more parallel lights, or the 17th
+     set of a frame, stays lit per vertex. Wire lines, the cloud material and the video discs are as before.
+   - The player's own "Per-pixel lighting" option (ADR 0055) switches the same thing on. Normal maps are not part
+     of this (row 567 may bring them).
+   - Still open in row 564: shadows between the battle's ships and light from blasts and shots on the hulls.
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.

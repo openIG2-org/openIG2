@@ -529,21 +529,21 @@ impl Builder {
         for v in &x.verts {
             // The engine lights and blends in the frame's gamma space: the gamma pass (re/screens/render.md §2).
             let p = at(v.pos);
-            let (rgb, a) = match look {
+            let (n, rgb, a) = match look {
                 Look::Lit(e) => {
                     let w = lighting::through(&at, v.pos, v.lnormal);
-                    let c = if e > 0 { lights.clone().ambient(u32::from_le_bytes([e, e, e, 0])).rgb(w) } else { lights.rgb(w) };
-                    (c, 0.0)
+                    let (n, c) = if e > 0 { lights.clone().ambient(u32::from_le_bytes([e, e, e, 0])).vertex(w, v.normal) } else { lights.vertex(w, v.normal) };
+                    (n, c, 0.0)
                 }
                 // Transparent parts are lit too (`fenyekszamolasa` with property 8 keeps the colour and puts the
                 // opacity in alpha) [obs: opening 30's right panel 1.74 → 1.16].
                 Look::Glass(o) => {
-                    let c = lights.rgb(lighting::through(&at, v.pos, v.lnormal));
-                    (c, o)
+                    let (n, c) = lights.vertex(lighting::through(&at, v.pos, v.lnormal), v.normal);
+                    (n, c, o)
                 }
-                Look::Flat => ([1.0; 3], 0.0),
+                Look::Flat => (v.normal, [1.0; 3], 0.0),
             };
-            self.dynamic.push(MeshVertex { pos: p, normal: v.normal, uv: v.uv, color: [rgb[0], rgb[1], rgb[2], a] });
+            self.dynamic.push(MeshVertex { pos: p, normal: n, uv: v.uv, color: [rgb[0], rgb[1], rgb[2], a] });
         }
         // The opaque video disc takes the remaster's `VIDEO` material.
         let video = matches!(look, Look::Flat);
@@ -605,6 +605,7 @@ impl Builder {
             },
             draws,
             dynamic: self.dynamic,
+            lights: crate::lighting::sets(),
         }
     }
 }

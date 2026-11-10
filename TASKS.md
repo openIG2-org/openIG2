@@ -81,7 +81,8 @@ at the next cleanup.
 The plan and its rules: ADR 0088. Each part is engine work that does nothing until a mod switches it on.
 - [x] **Look files** (562): a mod's `visuals.toml`, the planets' halo, the first mod `mods-src/remaster-look`.
 - [x] **HDR, tone mapping, bloom over the whole scene** (563): a mod's `visuals.toml` `hdr`, `bloom_threshold`, `bloom_strength`; the starmap, the battle and the colony's 3D view.
-- [ ] **Lights and shadows on every 3D screen** (564).
+- [x] **Per-pixel lighting on every 3D screen** (564, part 1): a mod's `visuals.toml` `[lighting] per_pixel` (or the Per-pixel lighting option) lights every model the engine lit per corner per pixel with the engine's own shade table (ADR 0088 §9).
+- [ ] **Shadows between the battle's ships, light from blasts and shots on the hulls** (564, parts 2 and 3).
 - [ ] **A richer starmap** (565).
 - [ ] **Effects as data, drawn on the graphics card** (566).
 - [ ] **Texture pack tool** (567).

@@ -2136,6 +2136,7 @@ impl ResearchModels {
             },
             draws,
             dynamic,
+            lights: crate::lighting::sets(),
         });
         let target = match &mut self.target {
             Some(t) => t,
@@ -2299,7 +2300,7 @@ fn bake_part(p: &scene::Part, m: &M3, at: V3, tex: TexId, alpha: f32, lights: &l
             // Lit per vertex by the engine's model (`lighting`, research.md §2.1); transparent parts are lit too
             // (property 8: the colour lit, the opacity in alpha). The colour bytes multiply the texture in the gamma
             // pass (re/screens/render.md §2).
-            let rgb = lights.rgb(lighting::normal(m, x.lnormal));
+            let (n, rgb) = lights.vertex(lighting::normal(m, x.lnormal), n);
             out.push(MeshVertex { pos: q, normal: n, uv: x.uv, color: [rgb[0], rgb[1], rgb[2], a] });
         }
     }
