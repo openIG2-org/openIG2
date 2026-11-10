@@ -1324,9 +1324,12 @@ impl<'r> Game<'r> {
         for (p, d) in pl.iter().enumerate() {
             let at = va::PLANETS + (p * PLANET_SIZE) as u32;
             self.state.mem.set_u8(at + 0x20, d.owner);
-            for e in 0..EMPIRES {
-                self.state.mem.write(at + 0xd8 + 2 * e as u32, &d.visible[e].to_le_bytes());
+            // One write of the whole table: a write per empire cost half of the diplomacy tick (docs/perf.md).
+            let mut visible = [0u8; 2 * EMPIRES];
+            for (b, v) in visible.chunks_exact_mut(2).zip(&d.visible) {
+                b.copy_from_slice(&v.to_le_bytes());
             }
+            self.state.mem.write(at + 0xd8, &visible);
         }
     }
 
@@ -1448,7 +1451,7 @@ impl<'r> Game<'r> {
         self.state.mem.set_i32(va::GVALUE, gvalue);
         let clock = ground::Clock { speed: self.state.mem.i32(va::BATTLE_SPEED), paused: false };
         for p in 1..=self.state.mem.i32(va::PLANET_COUNT2).max(0) as usize {
-            let due = gvalue % 300 == 0 || self.state.ground_field(p).is_some_and(|f| f.self_destruct > -1);
+            let due = gvalue % 300 == 0 || self.state.ground_field_with(p, |f| f.self_destruct > -1) == Some(true);
             if due {
                 self.with_war(p, |w| w.grwar_planet(clock, gvalue));
             }
@@ -2012,16 +2015,17 @@ impl<'r> Game<'r> {
         let g = self.globals();
         let mut map = self.state.starmap();
         let mut rng = self.state.rng();
-        let mut colony = self.state.colony();
+        let mut colony = None;
         let mut combat = self.state.combat();
         let mut fleet_numbers = self.state.mem.i32s(va::FLEET_NUMBERS);
         let econ = self.economy_context(&g);
         let state = &self.state;
         let vehicles = |p: usize| state.vehicle_cells(p);
+        let load = || state.colony();
         let (events, extra, side, overflow, merges) = {
             let mut hooks = StarmapHooks {
                 colony: ColonyArrivals {
-                    world: &mut colony, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, vehicles: &vehicles,
+                    world: &mut colony, load: &load, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, vehicles: &vehicles,
                     events: Vec::new(),
                 },
                 combat: &mut combat,
@@ -2040,7 +2044,9 @@ impl<'r> Game<'r> {
                 _ => {}
             }
         }
-        self.state.store_colony(&colony);
+        if let Some(colony) = &colony {
+            self.state.store_colony(colony);
+        }
         // The combat view holds the totals, ships and vehicles; the starmap's records the rest (stored last).
         self.state.store_combat(&combat);
         self.state.store_starmap(&map);
@@ -2143,13 +2149,14 @@ impl<'r> Game<'r> {
         let s = &self.state;
         let m = &s.mem;
         let combat = s.combat();
+        let (ships, vehicles, designs) = (combat.ships, combat.vehicles, combat.designs);
         Shipyard {
             planets: (0..=s.planet_count()).map(|p| yard_planet(&m.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE))).collect(),
             fleets: s.fleets.iter().map(|r| YardFleet { fleet: crate::fleet::Fleet::from_record(r), totals: crate::spacewar::FleetTotals::from_record(r) }).collect(),
-            ships: combat.ships.clone(),
-            vehicles: combat.vehicles.clone(),
-            designs: combat.designs.clone(),
-            last_fleet: (0..crate::colony_side::PLANET_SLOTS).map(|p| m.i32(va::LAST_NEAR_FLEET + 4 * p as u32)).collect(),
+            ships,
+            vehicles,
+            designs,
+            last_fleet: m.i32_vec(va::LAST_NEAR_FLEET, crate::colony_side::PLANET_SLOTS),
             fleet_numbers: m.i32s(va::FLEET_NUMBERS),
             colony_ship_pool: m.i32s(va::COLONY_SHIP_POOL),
             terraformer_pool: m.i32s(va::TERRAFORMER_POOL),

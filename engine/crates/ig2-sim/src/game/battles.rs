@@ -605,7 +605,21 @@ impl Game<'_> {
     /// `GroundWarSetBattleStatus` (exe 0x47caa0, `ground-combat.md` §6.4): every planet's war flag `+0x64` from
     /// its field's status, the attackers' fleets marked in battle while it is contested.
     pub(super) fn ground_battle_status(&mut self) {
-        let all: Vec<usize> = (1..=self.state.planet_count()).collect();
+        // `battle_status` of an unowned planet, or of one whose cached status is a settled side, only clears the war
+        // flag: such a planet whose battlefield is stored and settled skips the war's setup and write-back (most of
+        // the cost of the starmap's ground marks, docs/perf.md).
+        let story_planet = adat_i32(&self.adat(), ADAT_STORY_PLANET);
+        let mut all = Vec::new();
+        for p in 1..=self.state.planet_count() {
+            let at = va::PLANETS + (p * PLANET_SIZE) as u32;
+            let unowned = self.state.mem.u8(at + 0x20) == 0;
+            let quiet = |f: &crate::ground::Field| unowned || f.cached_status(p as i32, story_planet).is_some_and(|s| s != crate::ground::CONTESTED);
+            if self.state.ground_field_settled(p) && self.state.ground_field_with(p, quiet) == Some(true) {
+                self.state.mem.set_u8(at + 0x64, 0);
+            } else {
+                all.push(p);
+            }
+        }
         self.with_wars(&all, |w| w.battle_status());
     }
 

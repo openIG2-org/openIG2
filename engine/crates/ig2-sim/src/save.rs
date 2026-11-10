@@ -412,15 +412,22 @@ impl Memory {
         self.write(at, &v.to_le_bytes());
     }
     /// `n` consecutive i32 at `at`.
+    /// `N` consecutive `i32`s, read at once (a lookup of the runs per value made the state views' decode slow,
+    /// docs/perf.md).
     pub fn i32s<const N: usize>(&self, at: u32) -> [i32; N] {
-        std::array::from_fn(|i| self.i32(at + 4 * i as u32))
+        let b = self.read(at, 4 * N);
+        std::array::from_fn(|i| i32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap()))
+    }
+    /// [`Memory::i32s`] of a length known at run time.
+    pub fn i32_vec(&self, at: u32, n: usize) -> Vec<i32> {
+        self.read(at, 4 * n).chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect()
     }
     pub fn set_i32s(&mut self, at: u32, v: &[i32]) {
         let b: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
         self.write(at, &b);
     }
     pub fn f32s<const N: usize>(&self, at: u32) -> [f32; N] {
-        std::array::from_fn(|i| self.f32(at + 4 * i as u32))
+        self.i32s::<N>(at).map(|v| f32::from_bits(v as u32))
     }
     pub fn set_f32s(&mut self, at: u32, v: &[f32]) {
         let b: Vec<u8> = v.iter().flat_map(|x| x.to_le_bytes()).collect();
@@ -1125,6 +1132,31 @@ impl SaveState {
         if let Some(f) = self.fields.get(&p) {
             return Some(f.clone());
         }
+        self.saved_ground_field(p)
+    }
+
+    /// [`SaveState::ground_field`] read in place: `f` of the stored battlefield without a copy (the per-tick
+    /// checks of every planet), else of the save's.
+    pub fn ground_field_with<R>(&self, p: usize, f: impl FnOnce(&crate::ground::Field) -> R) -> Option<R> {
+        match self.fields.get(&p) {
+            Some(x) => Some(f(x)),
+            None => self.saved_ground_field(p).map(|x| f(&x)),
+        }
+    }
+
+    /// Whether planet `p` has a battlefield ([`SaveState::ground_field`] is `Some`), without decoding it.
+    pub fn has_ground_field(&self, p: usize) -> bool {
+        self.fields.contains_key(&p) || p.checked_sub(1).is_some_and(|i| self.wf_ranges.contains_key(&i))
+    }
+
+    /// Whether planet `p`'s battlefield is stored and has no new or grown units waiting for their uninitialised
+    /// bytes ([`crate::game::Game`]'s `with_wars` fills them).
+    pub fn ground_field_settled(&self, p: usize) -> bool {
+        self.fields.get(&p).is_some_and(|f| f.tail.created.is_empty() && f.tail.grown.is_empty())
+    }
+
+    /// The loaded save's battlefield of planet `p`, decoded.
+    fn saved_ground_field(&self, p: usize) -> Option<crate::ground::Field> {
         let i = p.checked_sub(1)?;
         let r = self.wf_ranges.get(&i)?.clone();
         Some(wf::decode(self.template[r].iter().map(|(n, b)| (n.as_str(), &b[..])), &format!("WF[{i}]")))
@@ -1135,7 +1167,7 @@ impl SaveState {
     pub fn vehicle_cells(&self, p: usize) -> Vec<(i32, i32)> {
         match self.fields.get(&p) {
             Some(f) => f.placed_cells(),
-            None => self.ground_field(p).map_or_else(Vec::new, |f| f.placed_cells()),
+            None => self.saved_ground_field(p).map_or_else(Vec::new, |f| f.placed_cells()),
         }
     }
 
@@ -1487,7 +1519,7 @@ impl SaveState {
         self.mem.read(va::PLANETS + (p * PLANET_SIZE) as u32, PLANET_SIZE)
     }
     fn per_planet(&self, at: u32) -> Vec<i32> {
-        (0..PLANET_SLOTS).map(|p| self.mem.i32(at + 4 * p as u32)).collect()
+        self.mem.i32_vec(at, PLANET_SLOTS)
     }
     /// The used building slots of planet `p` (`Epuletek[p][1..=HanyEpuletLefoglalva[p]]`).
     fn slots(&self, p: usize) -> &[[u8; BUILDING_SIZE]] {
@@ -1821,9 +1853,8 @@ impl SaveState {
         t.spy_capacity = m.i32s(va::SPY_CAPACITY);
         t.spy_centres = m.i32s(va::SPY_CENTRES);
         for e in 0..9 {
-            for p in 0..PLANET_SLOTS {
-                t.spy_centres_by_planet[e][p] = m.i32(va::SPY_CENTRES_BY_PLANET + 4 * (e * PLANET_SLOTS + p) as u32);
-            }
+            let row = m.i32_vec(va::SPY_CENTRES_BY_PLANET + 4 * (e * PLANET_SLOTS) as u32, PLANET_SLOTS);
+            t.spy_centres_by_planet[e][..PLANET_SLOTS].copy_from_slice(&row);
         }
         t.trade_ports = m.i32s(va::TRADE_PORTS);
         t.full_gdp = m.i32s(va::FULL_GDP);
@@ -2224,7 +2255,7 @@ impl SaveState {
             planets: m.i32s(va::EMPIRE_PLANETS),
             countdown: m.i32s(va::EMPIRE_COUNTDOWN),
             danger: m.i32s(va::AI_DANGER),
-            last_contact: (0..LAST_CONTACT_CELLS).map(|i| m.i32(va::LAST_CONTACT + 4 * i as u32)).collect(),
+            last_contact: m.i32_vec(va::LAST_CONTACT, LAST_CONTACT_CELLS),
             known_since: self.known_since(),
             players: (0..max).map(|i| player_slot(&m.read(va::CONTACTS + (i * PLAYER_SLOT) as u32, PLAYER_SLOT))).collect(),
             ghost: player_slot(&m.read(va::CONTACT_GHOST, PLAYER_SLOT)),
@@ -2302,17 +2333,22 @@ impl SaveState {
             centre_y: m.i32s(va::AI_CENTRE_Y),
             ..Default::default()
         };
+        // Each empire's tables read at once (a lookup of the memory's runs per value, docs/perf.md).
         for e in 0..EMPIRES {
-            for k in 0..DESIGN_SLOTS {
-                a.designs[crate::ai::BEST][e][k] = m.i16(va::AI_DESIGNS + (e * 0x32 + 2 * k) as u32);
-                a.designs[crate::ai::SPECIAL][e][k] = m.i16(va::AI_DESIGNS_SPECIAL + (e * 0x32 + 2 * k) as u32);
+            for (list, at) in [(crate::ai::BEST, va::AI_DESIGNS), (crate::ai::SPECIAL, va::AI_DESIGNS_SPECIAL)] {
+                let b = m.read(at + (e * 0x32) as u32, 2 * DESIGN_SLOTS);
+                for (k, c) in b.chunks_exact(2).enumerate() {
+                    a.designs[list][e][k] = i16::from_le_bytes([c[0], c[1]]);
+                }
             }
             for c in 0..CATEGORIES {
                 a.categories[e][c] = Category::from_bytes(&m.read(va::AI_CATEGORIES + (e * 0x18c + c * CATEGORY_SIZE) as u32, CATEGORY_SIZE));
             }
-            a.sliders[e] = std::array::from_fn(|i| m.f64(va::SLIDERS + (e * 48 + 8 * i) as u32));
-            for x in 0..GRID {
-                a.scout[e][x] = m.bytes(va::AI_SCOUT + (e * GRID * GRID + x * GRID) as u32);
+            let b = m.read(va::SLIDERS + (e * 48) as u32, 48);
+            a.sliders[e] = std::array::from_fn(|i| f64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap()));
+            let b = m.read(va::AI_SCOUT + (e * GRID * GRID) as u32, GRID * GRID);
+            for (row, c) in a.scout[e].iter_mut().zip(b.chunks_exact(GRID)) {
+                row.copy_from_slice(c);
             }
         }
         a.empty_planets = m.bytes(va::AI_EMPTY_PLANETS);
@@ -2330,19 +2366,16 @@ impl SaveState {
         m.set_i32s(va::AI_CENTRE_X, &a.centre_x);
         m.set_i32s(va::AI_CENTRE_Y, &a.centre_y);
         for e in 0..EMPIRES {
-            for k in 0..DESIGN_SLOTS {
-                m.write(va::AI_DESIGNS + (e * 0x32 + 2 * k) as u32, &a.designs[crate::ai::BEST][e][k].to_le_bytes());
-                m.write(va::AI_DESIGNS_SPECIAL + (e * 0x32 + 2 * k) as u32, &a.designs[crate::ai::SPECIAL][e][k].to_le_bytes());
+            for (list, at) in [(crate::ai::BEST, va::AI_DESIGNS), (crate::ai::SPECIAL, va::AI_DESIGNS_SPECIAL)] {
+                let b: Vec<u8> = a.designs[list][e].iter().flat_map(|d| d.to_le_bytes()).collect();
+                m.write(at + (e * 0x32) as u32, &b);
             }
             for c in 0..CATEGORIES {
                 m.write(va::AI_CATEGORIES + (e * 0x18c + c * CATEGORY_SIZE) as u32, &a.categories[e][c].to_bytes());
             }
-            for i in 0..6 {
-                m.set_f64(va::SLIDERS + (e * 48 + 8 * i) as u32, a.sliders[e][i]);
-            }
-            for x in 0..GRID {
-                m.write(va::AI_SCOUT + (e * GRID * GRID + x * GRID) as u32, &a.scout[e][x]);
-            }
+            let b: Vec<u8> = a.sliders[e].iter().flat_map(|v| v.to_le_bytes()).collect();
+            m.write(va::SLIDERS + (e * 48) as u32, &b);
+            m.write(va::AI_SCOUT + (e * GRID * GRID) as u32, a.scout[e].as_flattened());
         }
         m.write(va::AI_EMPTY_PLANETS, &a.empty_planets);
         m.set_i32s(va::AI_LAST_BAD_COLONY, &a.last_bad_colony);
@@ -2580,6 +2613,19 @@ mod tests {
         }
         merged[(at - lo) as usize..(at - lo) as usize + bytes.len()].copy_from_slice(bytes);
         runs.insert(lo, merged);
+    }
+
+    #[test]
+    fn memory_bulk_reads_match_the_values_read_one_by_one() {
+        let mut m = Memory::default();
+        m.write(0x100, &[1, 2, 3, 4, 5, 6]);
+        m.write(0x10a, &[7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        for at in 0xf8..0x118 {
+            let one: Vec<i32> = (0..5).map(|i| m.i32(at + 4 * i)).collect();
+            assert_eq!(m.i32_vec(at, 5), one);
+            assert_eq!(m.i32s::<5>(at).to_vec(), one);
+            assert_eq!(m.f32s::<5>(at).map(f32::to_bits).to_vec(), (0..5).map(|i| m.f32(at + 4 * i).to_bits()).collect::<Vec<_>>());
+        }
     }
 
     #[test]

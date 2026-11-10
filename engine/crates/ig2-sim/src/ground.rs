@@ -402,6 +402,13 @@ pub struct Field {
 }
 
 impl Field {
+    /// What [`War::status`] of planet `planet` returns without reading the units or the buildings: the cached
+    /// status when the end-of-battle countdown is idle, the cache valid and the planet not the story's (whose
+    /// buildings can hold it). `None` when `status` has to work it out.
+    pub fn cached_status(&self, planet: i32, story_planet: i32) -> Option<i32> {
+        (self.countdown == -1 && self.status_valid && planet != story_planet).then_some(self.last_status)
+    }
+
     /// The cells of the units on the map: used, placed (flags without 2 / 0x40000000) and without flags2 bit 2.
     /// `LocateSuitableLocation` blocks each as a 1 × 1 footprint (`colony-placement.md` §1),
     /// `LocateTankSuitablePosition` as a 3 × 3 block (§11.1).
@@ -2533,6 +2540,27 @@ mod tests {
         };
         x.draws += n;
         r
+    }
+
+    #[test]
+    fn cached_status_is_what_status_returns() {
+        for last in [2, 3, EMPTY, CONTESTED] {
+            let mut x = fx();
+            (x.field.countdown, x.field.status_valid, x.field.last_status) = (-1, true, last);
+            assert_eq!(x.field.cached_status(5, 0), Some(last));
+            let before = x.world.fleets.clone();
+            assert_eq!(with_war(&mut x, |w| w.status()), last);
+            with_war(&mut x, |w| w.battle_status());
+            assert_eq!(x.planet.in_war, (last == CONTESTED) as u8);
+            assert_eq!(x.world.fleets, before);
+        }
+        let mut x = fx();
+        (x.field.countdown, x.field.status_valid) = (-1, true);
+        assert_eq!(x.field.cached_status(5, 5), None, "the story planet's buildings can hold it");
+        x.field.countdown = 10;
+        assert_eq!(x.field.cached_status(5, 0), None);
+        (x.field.countdown, x.field.status_valid) = (-1, false);
+        assert_eq!(x.field.cached_status(5, 0), None);
     }
 
     #[test]

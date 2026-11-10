@@ -772,7 +772,10 @@ impl ColonyWorld {
 /// The colony side of fleet arrivals (`fleet-movement.md` §4.3 cases 1–2), run inside the movement loop
 /// by [`crate::fleet::Starmap::tick`]: colonisation with the colony-map search, terraforming.
 pub struct ColonyArrivals<'a> {
-    pub world: &'a mut ColonyWorld,
+    /// The colony world, decoded by `load` on the first arrival that needs it: most movement steps have none, and
+    /// the decode and store cost a seventh of a late tick (docs/perf.md).
+    pub world: &'a mut Option<ColonyWorld>,
+    pub load: &'a dyn Fn() -> ColonyWorld,
     pub rules: &'a SideRules,
     pub ctx: &'a EconomyContext,
     pub placement: &'a PlacementRules,
@@ -785,9 +788,10 @@ impl Arrivals for ColonyArrivals<'_> {
     fn colonise(&mut self, p: usize, owner: u8, star: &mut StarPlanet, rng: &mut Streams) {
         let (placement, vehicles) = (self.placement, self.vehicles);
         let mut place = |pl: &Planet, p: usize, k: u8| placement.place(pl, k, &vehicles(p));
-        self.world.colonise(p, owner, &mut place, self.rules, self.ctx, rng, &mut self.events);
+        let world = self.world.get_or_insert_with(self.load);
+        world.colonise(p, owner, &mut place, self.rules, self.ctx, rng, &mut self.events);
         // The starmap's view of the planet.
-        let pl = &self.world.planets[p];
+        let pl = &world.planets[p];
         star.owner = pl.owner;
         star.visible = pl.visibility;
         star.epidemic = pl.epidemic;
@@ -795,13 +799,14 @@ impl Arrivals for ColonyArrivals<'_> {
     }
 
     fn terraform(&mut self, p: usize, owner: u8) -> u8 {
-        self.world.terraform(p, owner, self.rules, self.placement).0
+        self.world.get_or_insert_with(self.load).terraform(p, owner, self.rules, self.placement).0
     }
 
     fn trader_paid(&mut self, e: u8, amount: i32) {
         let e = e as usize;
-        self.world.add_money(e, 0, amount as f64, self.rules, self.ctx);
-        let t = &mut self.world.empires.trade_this_year[e];
+        let world = self.world.get_or_insert_with(self.load);
+        world.add_money(e, 0, amount as f64, self.rules, self.ctx);
+        let t = &mut world.empires.trade_this_year[e];
         *t = t.wrapping_add(amount);
     }
 }

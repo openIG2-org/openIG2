@@ -961,7 +961,7 @@ impl Game<'_> {
     /// The dropships of every battlefield (`WF::Refresh2`'s pass, exe 0x48ce10), once per tick in canonical MP:
     /// the original's 100 Hz UI tick runs it on every fifth pass, 20 times a second like the sim.
     pub(super) fn dropships_mp(&mut self) {
-        let planets: Vec<usize> = (1..=self.state.planet_count()).filter(|&p| self.state.ground_field(p).is_some()).collect();
+        let planets: Vec<usize> = (1..=self.state.planet_count()).filter(|&p| self.state.has_ground_field(p)).collect();
         self.with_wars(&planets, |w| w.dropships());
     }
 }

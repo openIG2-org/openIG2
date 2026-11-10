@@ -168,3 +168,43 @@ cadence: left on the frame thread.
 
 Next candidates: `with_wars` over every planet for the battle status (skip planets without a battlefield); the
 state views kept decoded across a tick's systems; the hires textures' levels made on the GPU or on a worker.
+
+## Measurements (part 3, the sim tick, 2026-11-10)
+
+One machine, release; `--playthrough skirmish:1:7 --seed 7` (34,834 ticks to 2357), `IG2_PROFILE=1`'s `World::tick`
+mean per 10,000 ticks, the old and new builds run in turn, best of 3. The state hash
+(`ig2_net::replay::sp_hash`) at 10,000, 20,000 and 30,000 ticks is the same before and after: the change is
+behaviour-neutral.
+
+| `World::tick` mean at 10,000 / 20,000 / 30,000 ticks | before | after |
+|---|---|---|
+| Sim tick | 1.63 / 1.61 / 1.24 ms | 0.95 / 1.03 / 1.03 ms |
+
+Where a late tick went before (per tick, ticks 20,000–30,000 of an instrumented build; the fleet movement itself,
+`Starmap::tick_until_battle`, was 0.007 ms): `starmap` 0.62 ms (the colony world decoded and stored for the arrival
+hooks 0.19, the ground marks 0.16, production 0.12), `daily` 0.41 ms (the AI 0.17, of which its own work 0.02 and
+the views' decode and store the rest), `diplomacy_tick` 0.16 ms (the planets' visibility tables written back 0.08),
+`grwar` 0.11 ms, the rest under 0.07. The fixes:
+
+- **Bulk reads of the memory image** (`Memory::i32s`, `i32_vec`, `f32s`, the AI's tables): a lookup of the runs per
+  value made a decode of the colony world about 3,400 lookups (`per_planet`, the spy centres per planet). They now
+  read each table once (test `memory_bulk_reads_match_the_values_read_one_by_one`); the AI's tables and the
+  diplomacy's visibility tables are written back in one write per row.
+- **The starmap pass decodes the colony world only for an arrival that needs it** (`ColonyArrivals::world` is
+  loaded on the first colonisation, terraforming or trader payment, and stored only then).
+- **The ground marks** (`GroundWarSetBattleStatus` over every planet) skip the war's setup for an unowned planet and
+  for one whose cached status is a settled side (`Field::cached_status`, test
+  `cached_status_is_what_status_returns`): they only clear its war flag.
+- **`FRISSIT_Grwar`'s self-destruct check** read every planet's battlefield as a copy; it reads it in place
+  (`SaveState::ground_field_with`).
+- Production's view moves the combat view's ships, vehicles and designs instead of copying them.
+
+Checked and left alone: the space battle's step (`Battle::step` over the 73,998 traced SpwC ticks: 0.031 ms mean)
+and its candidates (`live_guns`, the scenery list, the weapon clones, the enemy list, `fighter_pick_ship`,
+`tick_rules`): the whole step is a small part of a frame; `with_battle`'s state round-trip around it costs about what
+the views above cost and now shares their faster reads. The spy recount (0.02 ms), `market_context` (the whole trade
+pass 0.015 ms), the `starmap_context`s (0.007–0.01 ms), the radar and the colony-ship heading (inside the 0.007 ms
+movement and the 0.02 ms AI work) are below the noise.
+
+Next candidates: the views still decoded and stored whole by each system (production 0.06, the AI 0.17 per day,
+the diplomacy 0.05 per tick): a view kept decoded across a tick's systems.

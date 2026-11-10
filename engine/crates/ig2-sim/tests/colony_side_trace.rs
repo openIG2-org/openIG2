@@ -742,9 +742,12 @@ fn fleet_arrivals_match_the_game() {
             let ectx = context(before);
             let (mut map, mut sctx) = starmap(before, &w);
             let map_before = map.fleets.clone();
-            let mut arrivals = ColonyArrivals { world: &mut w, rules: &rules, ctx: &ectx, placement: &placement, vehicles: &|_| Vec::new(), events: Vec::new() };
+            let mut held = Some(w);
+            let given = || unreachable!("the world is given");
+            let mut arrivals = ColonyArrivals { world: &mut held, load: &given, rules: &rules, ctx: &ectx, placement: &placement, vehicles: &|_| Vec::new(), events: Vec::new() };
             let events = map.tick(&[], &mut sctx, &mut rng, &mut arrivals);
             let side_events = arrivals.events.len();
+            let w = held.unwrap();
             let (mut theirs, trng) = world(after);
             // Bit 7 of a newly appended building slot is uninitialised memory (spec §6.3): masked like `compare`.
             let slots: Vec<usize> = world(before).0.planets.iter().map(|p| p.buildings.len()).collect();
