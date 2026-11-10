@@ -306,14 +306,14 @@ const COLS: [f32; 4] = [92.0, 170.0, 130.0, 170.0];
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
-    let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
     let top = sm::bar_bottom(ctx) + 20.0;
     // Shorter windows (a larger UI scale) close the board's gaps; the panels keep their sizes.
     let g = ds::squeeze(h);
-    // The void behind the panels; the panel takes every press the parts don't.
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
+    // Nothing painted behind the panels (the dimmed game shows, as on the other screens); the panel takes every
+    // press the parts don't.
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
         let r = ui.max_rect();
         ui.allocate_rect(r, Sense::click_and_drag());
     });

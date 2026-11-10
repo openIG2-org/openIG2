@@ -100,12 +100,12 @@ const LIST_GAP: f32 = 11.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
-    let k = ds::tokens();
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
     let top = sm::bar_bottom(ctx) + TOP - 44.0;
     let g = ds::squeeze(h);
-    egui::CentralPanel::default().frame(egui::Frame::new().fill(k.void.gamma_multiply(0.94))).show(ctx, |ui| {
+    // Nothing painted behind the panels: the dimmed game shows; the panel takes every press the parts don't.
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
         ui.allocate_rect(ui.max_rect(), Sense::click_and_drag());
     });
     let bottom = ds::board_bottom(ctx);
