@@ -17,9 +17,8 @@ import json
 import os
 import shutil
 import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -46,17 +45,9 @@ tag = a.tag or (f"skirmish-e{sk['en']}-a{sk['ais']}-t{sk['tech']}-p{sk['planets'
 
 data_dir = os.path.join(os.environ["LOCALAPPDATA"], "GyroscopeGames", "ig2")
 os.makedirs(a.out, exist_ok=True)
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "newgame.js"), encoding="utf-8").read()
-finished = False
 
 
-def on_message(msg, data):
-    global finished
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
+def on_payload(p, data):
     kind = p.get("type")
     if kind == "dump":
         with open(os.path.join(a.out, f"{tag}-{p['tag']}.bin"), "wb") as f:
@@ -73,32 +64,19 @@ def on_message(msg, data):
                        "storyline": a.storyline, "storymap": a.storymap, "scenario": a.scenario, "tutorial": a.tutorial, "mp": mp, "skirmish": sk, **p}, f)
         print("save:", p["log"], "ido", p["ido"])
     elif kind == "done":
-        finished = True
+        t.finished = True
     else:
         print("agent:", p)
 
 
 reg = a.registry if a.registry == "none" else int(a.registry)
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"campaign": a.campaign, "difficulty": a.difficulty, "seed": a.seed, "slot": a.slot,
-                                           "registry": reg, "storyline": a.storyline, "storymap": a.storymap,
-                                           "scenario": a.scenario, "tutorial": a.tutorial, "mp": mp, "skirmish": sk}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
-t0 = time.time()
+t = Tracer(a.install, agent_source("newgame.js"), on_payload=on_payload, banner=f"spawned ig2.exe pid {{pid}}; up to {a.seconds}s",
+           config={"campaign": a.campaign, "difficulty": a.difficulty, "seed": a.seed, "slot": a.slot,
+                   "registry": reg, "storyline": a.storyline, "storymap": a.storymap,
+                   "scenario": a.scenario, "tutorial": a.tutorial, "mp": mp, "skirmish": sk})
 try:
-    while time.time() - t0 < a.seconds and not finished:
-        time.sleep(1)
-    time.sleep(1)
+    t.start()
+    t.wait(a.seconds)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
+    t.stop()
     print(f"-> {a.out}/{tag}.*")

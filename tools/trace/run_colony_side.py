@@ -10,12 +10,9 @@ every --every frames, --count times. The output holds game state from the user's
 _local/, never commit it.
 """
 import argparse
-import json
-import os
 import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -30,53 +27,27 @@ ap.add_argument("--speed", type=int, default=3)
 ap.add_argument("--scenario", default="scenario/quick.scn")
 a = ap.parse_args()
 
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "colony_side.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
 records = 0
 
 
-def on_message(msg, _data):
+def on_event(ev):
     global records
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
-    if p.get("type") == "batch":
-        for ev in p["events"]:
-            if ev["k"] not in ("loaded", "static"):
-                records += 1
-                if ev["k"] == "error":
-                    print("agent exception:", ev["msg"], file=sys.stderr)
-                elif records % 10 == 1:
-                    print(f"{ev['k']} #{ev.get('seq')}")
-            out.write(json.dumps(ev) + "\n")
-        out.flush()
-    else:
-        print("agent:", p)
+    if ev["k"] not in ("loaded", "static"):
+        records += 1
+        if ev["k"] == "error":
+            print("agent exception:", ev["msg"], file=sys.stderr)
+        elif records % 10 == 1:
+            print(f"{ev['k']} #{ev.get('seq')}")
 
 
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"scenario": a.scenario, "startAfterFrames": 1200, "speed": a.speed,
-                                         "mode": a.mode, "fuzz": a.fuzz, "count": a.count, "every": a.every,
-                                         "seed": a.seed}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; mode {a.mode}; tracing for {a.seconds}s")
+t = Tracer(a.install, agent_source("colony_side.js"), a.out, on_event=on_event,
+           banner=f"spawned ig2.exe pid {{pid}}; mode {a.mode}; tracing for {a.seconds}s",
+           config={"scenario": a.scenario, "startAfterFrames": 1200, "speed": a.speed,
+                   "mode": a.mode, "fuzz": a.fuzz, "count": a.count, "every": a.every,
+                   "seed": a.seed})
 try:
-    time.sleep(a.seconds)
+    t.start()
+    t.wait(a.seconds, until_done=False, tail=0)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    try:
-        device.kill(pid)
-    except frida.ProcessNotFoundError:
-        print("game process already gone (crashed?)", file=sys.stderr)
-    out.close()
+    t.stop()
     print(f"{records} records written to {a.out}")

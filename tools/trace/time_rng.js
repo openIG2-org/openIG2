@@ -2,9 +2,6 @@
 // Addresses are image VAs from re/symbols + re/rules/time-and-rng.md; rebased at runtime.
 'use strict';
 
-const IMAGE_BASE = 0x400000;
-const mod = Process.getModuleByName('ig2.exe');
-const va = (x) => mod.base.add(x - IMAGE_BASE);
 
 const A = {
   IG2_gameUpdate: va(0x4e0440),   // entered once: the remaster's main loop lives inside it

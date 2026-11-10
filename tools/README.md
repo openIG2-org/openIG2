@@ -16,6 +16,7 @@ How to run the decompiler, the Frida tracers and their lessons.
   - `exe_builds/align.py <gog ig2.exe> <other ig2.exe> <name> [--rs out.rs]`: aligns another ig2.exe build's data
     sections with the GOG 2017 build and prints the Rust segment table (`re/formats/exe-builds.md`)
   - `trace/` (Frida):
+    - frida_run.py: shared by the `run_*.py` tracers (agent header with `IMAGE_BASE`/`mod`/`va`, spawn/attach/resume/kill, event-batch handler, hang probe, PNG writer); `run_screen/screendiff/spwc/replay/video` use only its agent header or PNG helper
     - run_trace.py + time_rng.js
     - run_colony.py + colony.js
     - run_colony_side.py + colony_side.js (rebellion, conquest, colonisation, autobuild, money)

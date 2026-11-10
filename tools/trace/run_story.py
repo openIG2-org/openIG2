@@ -31,12 +31,9 @@ Run in the foreground with --seconds 540 (the tool limit is 600 s).
 Spec: re/rules/campaign.md.
 """
 import argparse
-import json
-import os
-import sys
 import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -59,87 +56,46 @@ ap.add_argument("--keep", default="", help="comma-separated scripts not to patch
 a = ap.parse_args()
 registry = None if a.registry is None else ("none" if a.registry == "none" else int(a.registry))
 
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "story.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
-counts = {}
-finished = False
-last_event = time.time()
+
 # The last record (tick, staged, hook check): a game that left the scenario (or hangs) writes none; after 150 s the
 # run stops early.
 last_record = None
-PROBE = """
-const mod = Process.getModuleByName('ig2.exe');
-const rel = (p) => { const o = p.sub(mod.base).toInt32(); return o >= 0 && o < mod.size ? '0x' + (o + 0x400000).toString(16) : String(p); };
-const raw = (sp) => { for (const n of [0x10000, 0x4000, 0x1000, 0x400]) { try { const w = new Uint32Array(sp.readByteArray(n)); const out = []; for (const x of w) { const o = x - mod.base.toUInt32(); if (o > 0x1000 && o < 0x430000) out.push('0x' + (o + 0x400000).toString(16)); } return out.slice(0, 60); } catch (e) {} } return []; };
-const sym = (p) => { const m = Process.findModuleByAddress(p); return m ? m.name + '+0x' + p.sub(m.base).toString(16) : String(p); };
-const g = (va) => mod.base.add(va - 0x400000);
-send({ kep: g(0xbae0fc).readS32(), kepkell: g(0xbae250).readS32(), ido: g(0xbae04c).readS32(), speed: g(0xbae25c).readS32(),
-  threads: Process.enumerateThreads().slice(0, 4).map((t) => ({ id: t.id, pc: sym(t.context.pc), bt: Thread.backtrace(t.context, Backtracer.FUZZY).slice(0, 20).map(sym), raw: raw(t.context.sp) })) });
-"""
 
 
-def on_message(msg, _data):
-    global finished, last_event, last_record
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
-    last_event = time.time()
-    if p.get("type") == "batch":
-        for ev in p["events"]:
-            counts[ev["k"]] = counts.get(ev["k"], 0) + 1
-            if ev["k"] in ("error", "setup", "stall"):
-                print("agent:", ev)
-            if ev["k"] == "done":
-                finished = True
-            if ev["k"] in ("tick", "staged", "check"):
-                last_record = time.time()
-            out.write(json.dumps(ev) + "\n")
-        out.flush()
-    else:
-        print("agent:", p)
+def on_event(ev):
+    global last_record
+    if ev["k"] in ("error", "setup", "stall"):
+        print("agent:", ev)
+    if ev["k"] in ("tick", "staged", "check"):
+        last_record = time.time()
 
 
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
+t = Tracer(a.install, agent_source("story.js"), a.out, on_event=on_event, v8=True,
+           banner=f"spawned ig2.exe pid {{pid}}; fuzz {a.fuzz}, up to {a.seconds}s",
+           config={"scenario": a.scenario, "count": a.count, "fuzz": a.fuzz, "seed": a.seed,
+                   "every": a.every, "speed": a.speed, "campaign": a.campaign,
+                   "difficulty": a.difficulty, "registry": registry, "storyline": a.storyline,
+                   "storymap": a.storymap,
+                   "inline": [int(x) for x in a.inline.split(",") if x],
+                   "keep": [x for x in a.keep.split(",") if x], "debug": a.debug})
+probed = False
+
+
+def each():
+    global probed
+    if last_record is not None and time.time() - last_record > 150:
+        print("no records for 150 s: stopping")
+        return True
+    if a.debug and not probed and time.time() - t.last_event > 25:
+        # The game thread is stuck (possibly inside the tracer's own callbacks): sample every stack from a
+        # second script, which has its own lock.
+        probed = True
+        t.probe_hang()
+
+
 try:
-    script = session.create_script(agent, runtime="v8")
-except frida.InvalidArgumentError:
-    script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"scenario": a.scenario, "count": a.count, "fuzz": a.fuzz, "seed": a.seed,
-                                           "every": a.every, "speed": a.speed, "campaign": a.campaign,
-                                           "difficulty": a.difficulty, "registry": registry, "storyline": a.storyline,
-                                           "storymap": a.storymap,
-                                           "inline": [int(x) for x in a.inline.split(",") if x],
-                                           "keep": [x for x in a.keep.split(",") if x], "debug": a.debug}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; fuzz {a.fuzz}, up to {a.seconds}s")
-t0 = time.time()
-try:
-    probed = False
-    while time.time() - t0 < a.seconds and not finished:
-        time.sleep(1)
-        if last_record is not None and time.time() - last_record > 150:
-            print("no records for 150 s: stopping")
-            break
-        if a.debug and not probed and time.time() - last_event > 25:
-            # The game thread is stuck (possibly inside the tracer's own callbacks): sample every stack from a
-            # second script, which has its own lock.
-            probed = True
-            probe = session.create_script(PROBE)
-            probe.on("message", lambda m, _d: out.write(json.dumps({"k": "hang", "threads": m.get("payload")}) + chr(10)))
-            probe.load()
-            time.sleep(2)
-    time.sleep(1)
+    t.start()
+    t.wait(a.seconds, each=each)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
-    out.close()
-    print(f"events: {counts} -> {a.out}")
+    t.stop()
+    print(f"events: {t.counts} -> {a.out}")

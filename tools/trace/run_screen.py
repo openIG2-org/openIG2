@@ -39,6 +39,8 @@ import zlib
 
 import frida
 
+from frida_run import agent_source, png_rgba_bottom_up
+
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
 ap.add_argument("save")
@@ -180,14 +182,6 @@ if a.script:
 frames_meta = {"start": None, "frames": [], "done": None}
 
 
-def png_rgba_bottom_up(path, w, h, rgba):
-    # glReadPixels' rows, bottom first, RGBA.
-    rows = b"".join(b"\0" + b"".join(rgba[((h - 1 - y) * w + px) * 4:((h - 1 - y) * w + px) * 4 + 3] for px in range(w)) for y in range(h))
-    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
-
-
 def on(msg, data):
     if msg["type"] == "send":
         p = msg["payload"]
@@ -259,7 +253,7 @@ device = frida.get_local_device()
 pid = device.spawn([exe] + a.exe_args, cwd=a.install)
 session = device.attach(pid)
 here = os.path.dirname(os.path.abspath(__file__))
-source = open(os.path.join(here, "screen.js"), encoding="utf-8").read() + "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
+source = agent_source("screen.js") + "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
 if a.probe:
     source += "\n" + open(a.probe, encoding="utf-8").read().replace("TUT_CHAPTER", str(a.tutorial))
 agent = session.create_script(source)

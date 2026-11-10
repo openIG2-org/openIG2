@@ -16,9 +16,6 @@
 // for scenarios).
 'use strict';
 
-const IMAGE_BASE = 0x400000;
-const mod = Process.getModuleByName('ig2.exe');
-const va = (x) => mod.base.add(x - IMAGE_BASE);
 
 const A = {
   Fake_FRISSITES: va(0x4de720), TutorialSetCampaignGameOptions: va(0x504250), SetScirmishGameOptions: va(0x503e80), Betolt_Scenario: va(0x4f5ba0), CampaignGameStart: va(0x4f5e90), InitNewGame: va(0x4e1130), LoadSave: va(0x543c80),

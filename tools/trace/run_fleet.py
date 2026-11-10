@@ -11,12 +11,8 @@ pass's "enemy approaching" SetIdoLelassit(1) slows the same tick's movement (fle
 The output holds game state derived from the user's install: keep it under _local/, never commit it.
 """
 import argparse
-import json
-import os
-import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -31,53 +27,24 @@ ap.add_argument("--mp-radar", action="store_true", help="MultiPlayerMode 1 durin
 ap.add_argument("--mp-move", action="store_true", help="a second human: MP mode with EN = another empire made human, wormholes, staged attacks (fleet-movement.md 6.4)")
 a = ap.parse_args()
 
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fleet.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
-ticks = 0
+
+def on_event(ev):
+    if ev["k"] == "tick" and t.counts["tick"] % 250 == 0:
+        b = ev["before"]
+        print(f"tick #{ev['seq']}: ido2 {b['ido2']} x{b['mult']}, {len(b['fleets'])} fleets")
 
 
-def on_message(msg, _data):
-    global ticks
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
-    if p.get("type") == "batch":
-        for ev in p["events"]:
-            if ev["k"] == "tick":
-                ticks += 1
-                if ticks % 250 == 0:
-                    b = ev["before"]
-                    print(f"tick #{ev['seq']}: ido2 {b['ido2']} x{b['mult']}, {len(b['fleets'])} fleets")
-            out.write(json.dumps(ev) + "\n")
-        out.flush()
-    else:
-        print("agent:", p)
-
-
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
 plan = [{"at": 0, "speed": 1}, {"at": 20000, "speed": 3}, {"at": 45000, "speed": 2}]
 if a.fuzz or a.fuzz_radar or a.fuzz_approach or a.mp_radar or a.mp_move:
     plan = [{"at": 0, "speed": 3}, {"at": 90000, "speed": 1}]
-script.post({"type": "config", "payload": {"scenario": a.scenario, "startAfterFrames": 1200,
-                                           "speedPlan": plan, "ticks": a.ticks, "fuzz": a.fuzz,
-                                           "fuzzRadar": a.fuzz_radar, "fuzzApproach": a.fuzz_approach,
-                                           "mpRadar": a.mp_radar, "mpMove": a.mp_move}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; tracing for {a.seconds}s")
+t = Tracer(a.install, agent_source("fleet.js"), a.out, on_event=on_event, banner=f"spawned ig2.exe pid {{pid}}; tracing for {a.seconds}s",
+           config={"scenario": a.scenario, "startAfterFrames": 1200,
+                   "speedPlan": plan, "ticks": a.ticks, "fuzz": a.fuzz,
+                   "fuzzRadar": a.fuzz_radar, "fuzzApproach": a.fuzz_approach,
+                   "mpRadar": a.mp_radar, "mpMove": a.mp_move})
 try:
-    time.sleep(a.seconds)
+    t.start()
+    t.wait(a.seconds, until_done=False, tail=0)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
-    out.close()
-    print(f"{ticks} ticks written to {a.out}")
+    t.stop()
+    print(f"{t.counts.get('tick', 0)} ticks written to {a.out}")

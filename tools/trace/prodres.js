@@ -10,9 +10,6 @@
 // Addresses are image VAs, rebased at runtime. Output holds game state: keep it under _local/.
 'use strict';
 
-const IMAGE_BASE = 0x400000;
-const mod = Process.getModuleByName('ig2.exe');
-const va = (x) => mod.base.add(x - IMAGE_BASE);
 
 const A = {
   Fake_FRISSITES: va(0x4de720), Betolt_Scenario: va(0x4f5ba0),

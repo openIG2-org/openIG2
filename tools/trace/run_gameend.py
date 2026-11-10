@@ -7,13 +7,10 @@ Usage (project venv): _local/venv/Scripts/python.exe tools/trace/run_gameend.py 
 The game is killed after the trace's `done` (or --seconds). Nothing in the install is modified.
 """
 import argparse
-import json
 import os
 import shutil
-import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -69,51 +66,14 @@ if a.plant:
         pairs[f"{key}_crc".encode()] = str(crc(scores, names) + (0 if good else 1)).encode()
     open(opts, "wb").write(write_pairs(list(pairs.items())))
 
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gameend.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
-counts = {}
-finished = False
 
-
-def on_message(msg, _data):
-    global finished
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
-    if p.get("type") == "batch":
-        for ev in p["events"]:
-            counts[ev["k"]] = counts.get(ev["k"], 0) + 1
-            out.write(json.dumps(ev) + "\n")
-            if ev["k"] == "done":
-                finished = True
-    else:
-        print("agent:", p)
-
-
-device = frida.get_local_device()
-pid = None
+t = Tracer(a.install, agent_source("gameend.js"), a.out, banner=f"spawned ig2.exe pid {{pid}}; mode {a.mode}",
+           config={"mode": a.mode})
 try:
-    pid = device.spawn([exe], cwd=a.install)
-    session = device.attach(pid)
-    script = session.create_script(agent)
-    script.on("message", on_message)
-    script.load()
-    script.post({"type": "config", "payload": {"mode": a.mode}})
-    device.resume(pid)
-    print(f"spawned ig2.exe pid {pid}; mode {a.mode}")
-    t0 = time.time()
-    while not finished and time.time() - t0 < a.seconds:
-        time.sleep(0.5)
-    time.sleep(1)
+    t.start()
+    t.wait(a.seconds, poll=0.5)
 finally:
-    if pid is not None:
-        try:
-            device.kill(pid)
-        except frida.ProcessNotFoundError:
-            pass
-    out.close()
+    t.stop()
     if a.plant:
         shutil.move(backup, opts)
-    print("events:", counts)
+    print("events:", t.counts)

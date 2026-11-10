@@ -9,11 +9,8 @@ run_newgame.py --mp). The humans are handed to the AI. One JSON line per month: 
 """
 import argparse
 import json
-import os
-import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -23,40 +20,20 @@ ap.add_argument("--mp")
 ap.add_argument("--seconds", type=float, default=560)
 a = ap.parse_args()
 
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "soak.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
 
-
-def on_message(msg, _data):
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
+def on_payload(p, _data):
     if p.get("type") == "sample":
-        out.write(json.dumps(p) + "\n")
-        out.flush()
+        t.out.write(json.dumps(p) + "\n")
+        t.out.flush()
         print(p["date"], [(e[0], e[3], e[5]) for e in p["empires"] if e[1]])
     else:
         print("agent:", p)
 
 
-device = frida.get_local_device()
-pid = device.spawn([os.path.join(a.install, "ig2.exe")], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"ais": a.ais, "mp": json.loads(a.mp) if a.mp else None}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
-t0 = time.time()
+t = Tracer(a.install, agent_source("soak.js"), a.out, on_payload=on_payload, banner=f"spawned ig2.exe pid {{pid}}; up to {a.seconds}s",
+           config={"ais": a.ais, "mp": json.loads(a.mp) if a.mp else None})
 try:
-    while time.time() - t0 < a.seconds:
-        time.sleep(1)
+    t.start()
+    t.wait(a.seconds, until_done=False, tail=0)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
-    out.close()
+    t.stop()

@@ -7,12 +7,8 @@ call FRISSIT_Planet(true, 0) as a before/after snapshot, then the game process i
 The output holds game state derived from the user's install: keep it under _local/, never commit it.
 """
 import argparse
-import json
-import os
-import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -23,48 +19,19 @@ ap.add_argument("--speed", type=int, default=3)
 ap.add_argument("--fuzz", action="store_true", help="randomise live planet state before each economy call")
 a = ap.parse_args()
 
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "colony.js"), encoding="utf-8").read()
-out = open(a.out, "w", encoding="utf-8")
-calls = 0
+
+def on_event(ev):
+    if ev["k"] == "economy":
+        b = ev["before"]
+        print(f"economy #{ev['seq']}: {b['ev']}-{b['honap']}-{b['nap']}, "
+              f"{len(b['planets'])} planets, {len(ev['rnds'])} rnd/nested events")
 
 
-def on_message(msg, _data):
-    global calls
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
-    if p.get("type") == "batch":
-        for ev in p["events"]:
-            if ev["k"] == "economy":
-                calls += 1
-                b = ev["before"]
-                print(f"economy #{ev['seq']}: {b['ev']}-{b['honap']}-{b['nap']}, "
-                      f"{len(b['planets'])} planets, {len(ev['rnds'])} rnd/nested events")
-            out.write(json.dumps(ev) + "\n")
-        out.flush()
-    else:
-        print("agent:", p)
-
-
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"scenario": a.scenario, "startAfterFrames": 1200, "speed": a.speed,
-                                         "fuzz": a.fuzz}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; tracing for {a.seconds}s")
+t = Tracer(a.install, agent_source("colony.js"), a.out, on_event=on_event, banner=f"spawned ig2.exe pid {{pid}}; tracing for {a.seconds}s",
+           config={"scenario": a.scenario, "startAfterFrames": 1200, "speed": a.speed, "fuzz": a.fuzz})
 try:
-    time.sleep(a.seconds)
+    t.start()
+    t.wait(a.seconds, until_done=False, tail=0)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
-    out.close()
-    print(f"{calls} economy calls written to {a.out}")
+    t.stop()
+    print(f"{t.counts.get('economy', 0)} economy calls written to {a.out}")

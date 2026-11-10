@@ -22,6 +22,8 @@ import time
 
 import frida
 
+from frida_run import agent_source
+
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
 ap.add_argument("save")
@@ -96,7 +98,7 @@ for n in [a.slot, a.pre_slot] + list(range(a.slot_base, a.slot_base + a.ticks + 
 shutil.copyfile(a.save, slot_file(a.slot))
 
 exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "replay.js"), encoding="utf-8").read()
+agent = agent_source("replay.js")
 log = open(os.path.join(a.out, "replay.jsonl"), "w", encoding="utf-8")
 finished = False
 saved = 0

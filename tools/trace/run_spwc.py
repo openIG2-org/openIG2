@@ -36,8 +36,8 @@ import time
 
 import frida
 import shutil
-import struct
-import zlib
+
+from frida_run import agent_source, png_rgba_bottom_up
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -77,7 +77,7 @@ frames_meta = {"entry": None, "frames": [], "done": None}
 
 exe = os.path.join(a.install, "ig2.exe")
 here = os.path.dirname(os.path.abspath(__file__))
-agent = open(os.path.join(here, "spwc.js"), encoding="utf-8").read()
+agent = agent_source("spwc.js")
 sound_tables = None
 if sounds:
     agent += "\n" + open(os.path.join(here, "sound.js"), encoding="utf-8").read()
@@ -96,14 +96,6 @@ STATE_SLOT = 9
 state_slot = os.path.join(data_dir, f"save{STATE_SLOT}.sav") if a.state_out else None
 if state_slot and os.path.exists(state_slot):
     shutil.move(state_slot, state_slot + ".spwc-aside")
-
-
-def png_rgba_bottom_up(path, w, h, rgba):
-    # glReadPixels' rows, bottom first, RGBA.
-    rows = b"".join(b"\0" + b"".join(rgba[((h - 1 - y) * w + px) * 4:((h - 1 - y) * w + px) * 4 + 3] for px in range(w)) for y in range(h))
-    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
 
 
 def on_message(msg, data):

@@ -18,9 +18,8 @@ import json
 import os
 import shutil
 import sys
-import time
 
-import frida
+from frida_run import Tracer, agent_source
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -43,18 +42,11 @@ a = ap.parse_args()
 
 data_dir = os.path.join(os.environ["LOCALAPPDATA"], "GyroscopeGames", "ig2")
 os.makedirs(a.out, exist_ok=True)
-exe = os.path.join(a.install, "ig2.exe")
-agent = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "save.js"), encoding="utf-8").read()
-finished = False
 saved = 0
 
 
-def on_message(msg, _data):
-    global finished, saved
-    if msg["type"] == "error":
-        print("agent error:", msg.get("description"), msg.get("stack", "")[:400], file=sys.stderr)
-        return
-    p = msg["payload"]
+def on_payload(p, _data):
+    global saved
     if p.get("type") != "batch":
         print("agent:", p)
         return
@@ -75,32 +67,19 @@ def on_message(msg, _data):
             saved += 1
             print(f"save {ev['idx']} (slot {ev['slot']}, frame {ev['frames']}): {os.path.getsize(base + '.sav')} B -> {base}.sav")
         elif ev["k"] == "done":
-            finished = True
+            t.finished = True
         else:
             print("agent:", ev)
 
 
-device = frida.get_local_device()
-pid = device.spawn([exe], cwd=a.install)
-session = device.attach(pid)
-script = session.create_script(agent)
-script.on("message", on_message)
-script.load()
-script.post({"type": "config", "payload": {"scenario": a.scenario, "days": [int(x) for x in a.days.split(",")],
-                                           "slot": a.slot, "ships": a.ships, "mp": a.mp, "seed": a.seed,
-                                           "refit": a.refit, "wormholes": a.wormholes,
-                                           "cursor": a.cursor}})
-device.resume(pid)
-print(f"spawned ig2.exe pid {pid}; up to {a.seconds}s")
-t0 = time.time()
+t = Tracer(a.install, agent_source("save.js"), on_payload=on_payload, banner=f"spawned ig2.exe pid {{pid}}; up to {a.seconds}s",
+           config={"scenario": a.scenario, "days": [int(x) for x in a.days.split(",")],
+                   "slot": a.slot, "ships": a.ships, "mp": a.mp, "seed": a.seed,
+                   "refit": a.refit, "wormholes": a.wormholes,
+                   "cursor": a.cursor})
 try:
-    while time.time() - t0 < a.seconds and not finished:
-        time.sleep(1)
-    time.sleep(2)
+    t.start()
+    t.wait(a.seconds, tail=2)
 finally:
-    try:
-        script.unload()
-    except frida.InvalidOperationError:
-        pass
-    device.kill(pid)
+    t.stop()
     print(f"{saved} saves -> {a.out}")

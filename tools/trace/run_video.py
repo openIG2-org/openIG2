@@ -16,12 +16,12 @@ import atexit
 import json
 import os
 import re
-import struct
 import sys
 import time
-import zlib
 
 import frida
+
+from frida_run import png_rgba_bottom_up
 
 ap = argparse.ArgumentParser()
 ap.add_argument("install")
@@ -39,13 +39,6 @@ ap.add_argument("--once", action="store_true", help="--open plays once (the end 
 ap.add_argument("--after", type=int, default=120, help="--open's frame (Fake_FRISSITES calls) after the start")
 ap.add_argument("--step", type=int, default=0, help="also move the clock N ms a swap")
 a = ap.parse_args()
-
-
-def png_rgba_bottom_up(path, w, h, rgba):
-    rows = b"".join(b"\0" + b"".join(rgba[((h - 1 - y) * w + px) * 4:((h - 1 - y) * w + px) * 4 + 3] for px in range(w)) for y in range(h))
-    chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-    with open(path, "wb") as f:
-        f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(rows, 6)) + chunk(b"IEND", b""))
 
 
 grabs = [int(x) for x in a.grabs.split(",") if x]

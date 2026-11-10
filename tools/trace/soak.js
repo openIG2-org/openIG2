@@ -6,9 +6,6 @@
 // Addresses are image VAs, rebased at runtime.
 'use strict';
 
-const IMAGE_BASE = 0x400000;
-const mod = Process.getModuleByName('ig2.exe');
-const va = (x) => mod.base.add(x - IMAGE_BASE);
 
 const A = {
   Fake_FRISSITES: va(0x4de720), SetScirmishGameOptions: va(0x503e80), InitNewGame: va(0x4e1130), ShowAnim: va(0x602bb0),
