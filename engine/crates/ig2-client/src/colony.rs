@@ -1588,7 +1588,7 @@ impl ColonyScene {
             .entry(kind)
             .or_insert_with(|| {
                 let bm = rules.building_models.get(kind as usize)?;
-                let mut model = Model::load(install, "vector/colony/", &bm.model, "textures/colony/").map_err(|e| eprintln!("ig2-client: building {kind}: {e}")).ok()?;
+                let mut model = building_levels(install, &bm.model)?.swap_remove(0);
                 let texs = building_looks(r, install, textures, white, sky.as_deref(), &mut model);
                 Some(UnitMesh { model, texs })
             })
@@ -2050,11 +2050,8 @@ fn building_levels(install: &Install, name: &str) -> Option<Vec<Model>> {
         m.set_look("_c_", Look::Glass(0.4));
         levels.push(m);
     }
-    let origin = levels.first()?.origin;
-    for m in &mut levels {
-        m.origin = origin;
-    }
-    Some(levels)
+    scene::settle_chain(&mut levels);
+    (!levels.is_empty()).then_some(levels)
 }
 
 /// `Kocka`'s level-of-detail step (exe 0x5281f0, re/formats/xv.md) for a building: `size = |M·(1, 1, 1)|²·(fov/−z)²`
@@ -3239,6 +3236,19 @@ mod tests {
         // Close up: the chain's end; one level: always 0.
         assert_eq!(lod_pick(&basis, 47628.0, [-200.0, 0.0, 0.0], 3), 2);
         assert_eq!(lod_pick(&basis, 47628.0, [-200.0, 0.0, 0.0], 1), 0);
+    }
+
+    #[test]
+    fn building_levels_share_one_size() {
+        // A chain whose finest level skips the recount (`hgyv2`, `kgyv2`, `hhv2`, `fr1v2`: ten frames) keeps the file's
+        // size on every level: the far levels were 1.13 to 2.66 times the near one.
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        for bm in tables.building_models.iter().filter(|bm| !bm.model.is_empty()) {
+            let Some(levels) = building_levels(&install, &bm.model) else { continue };
+            let reach: Vec<f32> = levels.iter().map(|m| m.reach().into_iter().fold(0.0, f32::max)).collect();
+            assert!(reach.iter().all(|r| (r / reach[0] - 1.0).abs() < 0.01), "{}: {reach:?}", bm.model);
+        }
     }
 
     #[test]

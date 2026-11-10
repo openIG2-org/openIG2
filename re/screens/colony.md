@@ -157,7 +157,7 @@ colour·`shade[1024]`(205)>>8 = 190 a channel on the colony, the same for every 
 (kind 10) gets the same on its whole model. [obs: `probes/flat.js`: the exe's tree vertices are 0xffbebebe; fog adds under 1
 level since the colony fog table stays 254 up to depth 2000; trees go through `kirak2` exe 0x530b20.] The Park's
 `+r+Rectangle01/2` tree quads live in the child archive `prkv2-fa.xvb`, which the `+r` pass never searches: they keep casting
-and don't receive (render.md §4). Buildings step their LOD chain per frame like `Kocka` (xv.md, Level of detail); most draw
+and don't receive (render.md §4). Buildings step their LOD chain per frame like `Kocka` (xv.md, Level of detail; every level of a chain has one size); most draw
 level 1 at the default zoom [obs, `probes/lod_colony.js`, grwar:17 of quick-1.sav: slot 18 kind 26: size 3075.7 at depth
 2361.1 → level 1, slot 16 kind 53: 1118.05 → level 0].
 

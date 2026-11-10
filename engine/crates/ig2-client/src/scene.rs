@@ -184,6 +184,8 @@ pub struct Model {
     pub nodes: Vec<NodePose>,
     /// `BoxUjraszamol` ran ([`skips_box_recount`] false): the half-extents became the vertices' reach.
     pub recounted: bool,
+    /// The factor [`Model::box_recount`] scaled the model by (1.0: none).
+    grown: f32,
 }
 
 /// Where a child (`GetSubMeshid` chain `index`) was placed: its parent's matrix, its record translation, its matrix
@@ -299,7 +301,7 @@ impl Model {
         };
         w.node(&scene, &IDENTITY, &IDENTITY, [0.0; 3], "", &[]);
         let recounted = !skips_box_recount(&scene);
-        let mut model = Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes, recounted };
+        let mut model = Self { origin: scene.header.origin, parts: w.parts, nodes: w.nodes, recounted, grown: 1.0 };
         if recounted {
             model.box_recount();
         }
@@ -326,7 +328,11 @@ impl Model {
         if me <= 0.0 || !me.is_finite() {
             return;
         }
-        let g = mx / me;
+        self.grown = mx / me;
+        self.scale(self.grown);
+    }
+
+    fn scale(&mut self, g: f32) {
         for p in &mut self.parts {
             for v in &mut p.verts {
                 v.pos = v.pos.map(|x| x * g);
@@ -521,6 +527,21 @@ impl Walk<'_, '_> {
                 }
                 ChildContent::Missing => {}
             }
+        }
+    }
+}
+
+/// A level-of-detail chain's levels (the head first) as the head places them: the head's half-extents on every level,
+/// and `BoxUjraszamol`'s scale only when every level allows the recount (re/formats/xv.md, LOD: `kemv2`'s ten frames
+/// keep `kemv0`'s header), so a chain never changes size between its levels.
+pub fn settle_chain(levels: &mut [Model]) {
+    let Some(origin) = levels.first().map(|m| m.origin) else { return };
+    let all = levels.iter().all(|m| m.recounted);
+    for m in levels {
+        m.origin = origin;
+        if !all && m.recounted {
+            m.scale(1.0 / m.grown);
+            (m.recounted, m.grown) = (false, 1.0);
         }
     }
 }

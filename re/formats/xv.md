@@ -98,7 +98,10 @@ Child resolution (`LoadXVB` loop): `<prefix><name>.xvb` via a recursive `LoadXVB
   (1024, 857.8, 406.6) takes x and y from `romb60`, z from `romb61`/`romb62`. The colony's buildings: `M = R·diag(e)·s` with `e` the
   per-axis reach of the chain's vertices when `BoxUjraszamol` ran on every level, else the header's half-extents (`kemv2`'s ten
   frames keep `kemv0`'s header; `npv0` (3040, 3040, 3040) records (100.32, 100.32, 31.25)·…) [obs, `probes/lod_colony.js`;
-  test `building_lod_steps_like_kocka`].
+  test `building_lod_steps_like_kocka`]. The drawn size follows the same all-or-nothing rule: in a mixed chain (the finest
+  level skips the recount, e.g. `hgyv`, `hgyav`, `kgyv`, `hhv`, `fr1v`) no level is rescaled and every level has the file's size,
+  where rescaling the far levels alone drew them 1.13x (`kgyv`) to 2.66x (`fr1v`) too large [inferred from the rule, not
+  observed in the exe; test `colony::tests::building_levels_share_one_size`].
 - [obs: `probes/lod.js` on the starmap fleet panel: `romb60` at `AddToScene` 0.04 (the cells) has size 3119.55,
   at 0.08 (the big preview) 12478.14, `z` −0.5859, `valtashatar` 1600: the cells draw `romb61`, the preview `romb62`;
   test `scene::tests::panel_hulls_step_down_their_lod_chain_like_kocka`.]
