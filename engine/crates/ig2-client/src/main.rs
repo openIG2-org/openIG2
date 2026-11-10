@@ -902,6 +902,13 @@ fn main() {}
 fn main() {
     #[cfg(windows)]
     stdio::route();
+    // A crash report needs the version and the call path: the default message has neither.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default_hook(info);
+        eprintln!("openIG2 {}
+{}", version(), std::backtrace::Backtrace::force_capture());
+    }));
     prof::start();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {

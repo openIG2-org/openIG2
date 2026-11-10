@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Windows: the log of the start before is kept as `ig2-client.log.old`, and a crash now writes the openIG2 version and the call path into the log, so a crash report can be traced.
 - The galaxy simulation does about a third less work every tick (late in a game about 1.0 ms instead of 1.6 ms); nothing in the game plays differently.
 - Modern interface: does less work every frame (its theme is read once, and the starmap's planet and ship pictures are no longer copied on every draw); nothing looks different.
 - Single player: losing every tank in a ground war no longer leaves the fleet stuck over the planet; as in the original, the rest of the galaxy now pauses while a ground battle is on screen.

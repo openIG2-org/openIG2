@@ -1,8 +1,8 @@
 //! Where the output goes on Windows. Release builds use the windows subsystem (no console window beside the game,
 //! docs/USER_GUIDE.md → Running), so they start with no stdout or stderr unless the parent handed some over (a pipe,
 //! a file: scripts and tests read them as before). A missing one goes to the console of the terminal that started
-//! the client, else to `ig2-client.log` in the settings folder, emptied each start; a panic's message goes with
-//! stderr.
+//! the client, else to `ig2-client.log` in the settings folder, emptied each start (the last start's stays beside it as `ig2-client.log.old`); a panic's
+//! message goes with stderr.
 
 use std::fs::{File, OpenOptions};
 use std::os::windows::io::IntoRawHandle;
@@ -48,5 +48,8 @@ pub fn route() {
 fn log_file() -> Option<File> {
     let dir = ig2_formats::options::Options::path()?.parent()?.to_path_buf();
     std::fs::create_dir_all(&dir).ok()?;
-    File::create(dir.join(LOG_FILE)).ok()
+    let path = dir.join(LOG_FILE);
+    // A crash report is usually written after the next start: that start must not empty the evidence.
+    let _ = std::fs::rename(&path, path.with_extension("log.old"));
+    File::create(path).ok()
 }
