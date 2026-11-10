@@ -246,6 +246,11 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             }
             return dec(bspline(t), d) * v.color;
         }
+        // A planet's halo (ADR 0088): full up to `param.x` of the radius (the planet's limb), fading out to the edge.
+        case 9u: {
+            let g = clamp((1.0 - length(q)) / (1.0 - v.param.x), 0.0, 1.0);
+            return vec4(v.color.rgb, v.color.a * g * g);
+        }
         // Soft round glow (procedural stars).
         default: {
             let r = length(q);
@@ -318,6 +323,8 @@ pub mod kind {
     pub const GLYPH: u32 = 7;
     /// A scene's glow or particle sprite (ADR 0064): [`SPRITE`] without "Sharp UI", smooth with "Smooth glows".
     pub const SOFT: u32 = 8;
+    /// A mod's planet halo (ADR 0088): `param.x` = the planet's radius in the quad's.
+    pub const HALO: u32 = 9;
 }
 
 /// One quad, in physical pixels (origin top left).

@@ -86,6 +86,12 @@ fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Gro
         g.record(from.clone(), checked.map(|n| format!("{from} sets {n} lines")));
     }
     story_files(inst, &mut g);
+    // Each look file on its own (ADR 0088).
+    for (name, bytes) in inst.visual_files().unwrap_or_default() {
+        let from = format!("mod {name}: {}", ig2_formats::visuals::VISUALS_FILE);
+        let checked = utf8(bytes).and_then(|t| ig2_formats::visuals::Visuals::parse(&t, &from));
+        g.record(from.clone(), checked.map(|_| format!("{from} reads")));
+    }
     g
 }
 

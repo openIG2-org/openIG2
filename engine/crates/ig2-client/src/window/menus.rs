@@ -511,9 +511,7 @@ impl App {
         crate::render::set_sharp_ui(d.sharp_ui);
         crate::render::set_sharp_text(d.sharp_text);
         crate::upscale::set_factor(d.upscale);
-        crate::render3d::set_lighting(d.lighting);
-        crate::battle_fx::set_enhanced(d.battle_effects);
-        crate::render::set_smooth_glows(d.smooth_glows);
+        crate::visuals::apply(d.lighting, d.battle_effects, d.smooth_glows);
         crate::gui::ds::cursor::set_modern(d.modern);
         crate::gui::set_ui_scale(crate::display::ui_scale(&self.settings));
         self.bindings = crate::bindings::Bindings::from_settings(&self.settings);

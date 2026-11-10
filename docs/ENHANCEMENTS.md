@@ -12,7 +12,7 @@ How an idea moves:
 4. **Shipped**: the option exists; the row names its setting and ADR.
 
 Ideas have no number; a row gets one when it is proposed. Numbers are shared with `re/deviations.md` (one
-counter): a proposed row takes the next free number there (562).
+counter): a proposed row takes the next free number there (570).
 
 ## Decisions
 
@@ -33,6 +33,7 @@ counter): a proposed row takes the next free number there (562).
 | 2026-11-01 | No console window beside the game. |
 | 2026-11-01 | CI runs on pull requests, by hand and before every release, not on every push; a release follows every finished bigger package, with its changelog. |
 | 2026-11-01 | Every original screen and in-game UI element gets a modern version on the egui layer: close to the original's layout and flow, yet its own modern look; the classic look keeps the original. Planned, not started. |
+| 2026-11-10 | A remaster of the textures, graphics and sprite animations, true to the original's look: built as mods the player installs from the Mods page, nothing in the game replaced; the engine gains the abilities, a mod's `visuals.toml` switches them on (rows 562–569, ADR 0088). |
 | 2026-11-08 | A custom game with every start setting (galaxy, each empire's race, money, technology, planets, level, aggressiveness, relations, the start position), in the modern and, with the enhanced ruleset, the classic interface: accepted (row 546, ADR 0085). |
 
 ## Ideas
@@ -71,10 +72,18 @@ Specific enough to decide; the maintainers accept or reject each row. Rows 554�
 
 Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shipped". Rows 547–553 (the mod repository, ADR 0086, accepted
 2026-11-08) are built in their order; before 549 the maintainers make the index repository and its signing key
-(ADR 0086 §1.5).
+(ADR 0086 §1.5). Rows 563–569 (the remaster, ADR 0088, accepted 2026-11-10) are built in their order; each is engine
+work that does nothing until a mod switches it on.
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 563 | remaster (HDR, bloom) | a mod's `visuals.toml` turns on a floating-point scene target with tone mapping and a bloom over the whole scene (the starmap's stars and clouds, the battle's shots, the colony's lights), not only the additive mesh parts of ADR 0055; the exe draws 8-bit; no mod = the exe. 1 week | yes | ADR 0088 §5 |
+| 564 | remaster (lights and shadows) | per-pixel lighting on every 3D screen (colony, starmap planets, the panels' models; ADR 0055 has the battle's ships), soft shadows in the space battle, light from blasts and shots on nearby hulls; switched on by `visuals.toml`. 1–2 weeks | yes | ADR 0088 §5 |
+| 565 | remaster (starmap) | a richer starmap from `visuals.toml`: denser and deeper star and cloud layers from the original's generator, star glows with rays, the planets' night side and cloud shadows, fleets' engine trails; the original's places, colours and sizes kept. 1–2 weeks | yes | ADR 0088 §5, starmap.md §6 |
+| 566 | remaster (effects as data) | the particle effects of ADR 0057 (blasts, sparks, smoke, engine glows, shot trails) described in a mod's `effects.toml` (counts, sizes, colours, lifetimes, the mod's own pictures) and drawn on the graphics card, started at the original's moments and places. 2 weeks | yes | ADR 0088 §5, ADR 0057 |
+| 567 | remaster (texture pack tool) | a tool in the release that makes a `hires/` pack (ADR 0054) from the player's own install on their machine: a learned upscaler for the scene textures, an edge-keeping one for interface art, with normal maps where 564 uses them; the pack is never shared (it derives from the game's files). 1–2 weeks plus computing time | yes | ADR 0088 §5–6, ADR 0054 |
+| 568 | remaster (sprite animations) | the frame-by-frame effect animations (blasts, fire, smoke) drawn as the smooth particle effects of 566 with the original's timing, size and colours; the animations that stay pictures (talking heads, videos) get in-between frames from the tool of 567. 2 weeks | yes | ADR 0088 §5 |
+| 569 | remaster (models) | more detailed ships, buildings and vehicles as `hires/` model packs (ADR 0054), the most seen first, with the original's outline and proportions; newly made models can be shared through the mod index. open-ended, by hand | yes | ADR 0088 §5, ADR 0054 |
 | 549 | mods (index repository) | the public `openIG2-org/mods` repository: one TOML per mod release (id, version, `requires`, `depends`, `conflicts`, licence, picture, download URL, size, SHA-256; downloads are release assets), the entry schema and contribution rules in its README, CI that checks every pull request (schema, size, hash, zip rules, data-only file kinds, `--package`'s format checks) and builds a signed `index.json` (Ed25519, minisign; the private key outside every repository, a second public key accepted for rotation). Needs the maintainers' steps of ADR 0086 §1.5. 1 week | modders | ADR 0086 §1.2, §1.3 |
 | 551 | mods (Package, Publish) | a Package button on the Mods page (548's `--package`) and a Publish button that opens the index repository's add-file page in the browser with the entry filled in (the author uploads the zip as a release asset and opens the pull request); the reviewers' checklist and the takedown routine; the walk-throughs of ADR 0086 §4 after "Your first mod"; later option: GitHub's device-flow sign-in so the client opens the pull request itself. 1–2 weeks | yes | ADR 0086 §1.2, §4 |
 | 553 | mods (counts and likes, optional) | a small companion service the maintainers host (it can share the project's own server): counts downloads and likes per index id, Browse shows them when it answers and works without it; the index stays the source of truth; likes need an install key or a GitHub sign-in against ballot stuffing; the project becomes the data controller, so it keeps no addresses beyond short-lived rate limiting, deletes like keys on request and has a privacy notice on the Mods page; opt-in like Browse. 1–2 weeks | yes | ADR 0086 §1.4 |
@@ -93,6 +102,7 @@ Accepted on 2026-11-01; each gets an ADR when it is built, then moves to "Shippe
 
 | # | Area | What differs (ours vs exe) | Player-visible? | Spec |
 |---|---|---|---|---|
+| 562 | mods (`visuals.toml`), starmap planets | a mod's `visuals.toml` switches looks on while the mod is enabled: anti-aliasing, per-pixel lighting, soft shadows, bloom (ADR 0055), battle effects (ADR 0057), smooth glows (ADR 0064) and a halo round the starmap's planets (strength, size, colour); display only, outside the multiplayer check; a wrong file is skipped and named on the Mods page and by `openIG2-check`; the first remaster mod's source is `mods-src/remaster-look`; no such mod = the exe (ADR 0088) | yes | ADR 0088 |
 | 547 | mods (`mod.toml` 2, Mods page) | `mod.toml` takes an `id`, a semantic `version`, `requires` (an openIG2 version range, `game` still read as a hint), `depends`, `conflicts`, `license` (SPDX) and `kind = "visual"` (look-only, outside the multiplayer fingerprint); the Mods page orders dependencies, refuses a mod with a missing dependency or an excluded version and says why, and has a "How to make a mod" link to the tutorial; old `mod.toml` files stay valid; the exe has no mods. 1 week | yes | ADR 0086 §2, §4 |
 | 548 | mods (modder tools) | the release's `openIG2-check` gains `--dump-rules FILE` (the rule ids and values of the player's own install), `--dump-texts FILE` (every text file's keys and lines) and `--package FOLDER` (checks the mod, writes the zip, its SHA-256 and the index entry; the format checks also run without an install, as the index's CI needs); the dumps are for the player's own use. Shipped in the release's `openIG2-check`; without an install `--package` runs the format checks only | modders | ADR 0086 §1.2, §5 |
 | 550 | mods (Browse, Install, Update) | the Mods page's Browse tab fetches `index.json` over HTTPS only when opened (said on the page), checks its signature against the key built into the client and caches it for offline use; it lists the compatible mods with search and details (picture, author, licence, size, dependencies) and installs, updates and removes them (SHA-256 and zip rules checked before a file lands in `mods/`; the old zip kept until the new one is verified; dependencies installed with the mod); installed mods with a newer compatible release show Update; manual installs unchanged. 2 weeks | yes | ADR 0086 §1.2 |

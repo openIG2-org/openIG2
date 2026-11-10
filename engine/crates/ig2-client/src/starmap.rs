@@ -183,6 +183,11 @@ pub(crate) fn particle_color(c: u32) -> [f32; 4] {
     [(c & 0xff) as f32 * k, ((c >> 8) & 0xff) as f32 * k, ((c >> 16) & 0xff) as f32 * k, 1.0]
 }
 
+/// A planet's radius in world units: the mesh's 1024 × 0.846 at `AddToScene` scale `(bolygomeret/200000 + 0.002)/8`.
+fn planet_radius(size: u8) -> f32 {
+    1024.0 * 0.846 * (size as f32 / 200000.0 + 0.002) / 8.0
+}
+
 /// `fov` (`calculateclipplanes`: `zoom · 600`, zoom 1).
 pub(crate) const FOV: f32 = 600.0;
 /// `xcenter`, `ycenter` as `ShowStarmap` sets them.
@@ -1012,8 +1017,20 @@ impl View {
         let planet_rotate = ui / 150.0;
         let clouds = self.star_scale.map(|s| s.0);
         let eye = cam.eye_world();
-        f.mark_late();
         let hidden = self.battle_fade.is_some_and(|e| e <= 0.0);
+        // A mod's planet halo (ADR 0088), under the planets: its rim shows around them.
+        if let Some((size, col)) = crate::visuals::atmosphere().filter(|_| !hidden) {
+            let e = self.battle_fade.unwrap_or(1.0);
+            for p in self.planets(curr) {
+                let Some((c, px)) = cam.project(orbit_position(p, clock)) else { continue };
+                let half = planet_radius(p.look.size) * px * size;
+                if half < 1.5 * self.scale || c[0] < -half || c[1] < -half || c[0] > cam.size[0] + half || c[1] > cam.size[1] + half {
+                    continue;
+                }
+                f.push(a.white, Blend::GammaAdditive, Instance { param: [1.0 / size, 0.0], ..Instance::new(kind::HALO, c, [half; 2], [col[0] * e, col[1] * e, col[2] * e, 1.0]) });
+            }
+        }
+        f.mark_late();
         for p in self.planets(curr).filter(|_| !hidden) {
             let at = orbit_position(p, clock);
             let spin = p.look.spin as f32 / 100.0;
@@ -1030,7 +1047,7 @@ impl View {
             }
             // Without the meshes: a shaded sprite of the surface map.
             let Some((c, px)) = cam.project(at) else { continue };
-            let half = (1024.0 * 0.846 * (p.look.size as f32 / 200000.0 + 0.002) / 8.0 * px).max(0.75 * self.scale);
+            let half = (planet_radius(p.look.size) * px).max(0.75 * self.scale);
             if c[0] < -half || c[1] < -half || c[0] > cam.size[0] + half || c[1] > cam.size[1] + half {
                 continue;
             }

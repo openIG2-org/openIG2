@@ -550,6 +550,32 @@ In multiplayer every player needs the same mod files, `rules.toml`s and text pat
 ("Other mods enabled"; a dialog lists what differs, and "Download and join" installs the mods from the index, restarts and joins again), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
 
+### Look files
+A mod's `visuals.toml` (at the mod's top) switches looks on while the mod is enabled (ADR 0088). It changes only what
+you see: it is never part of the multiplayer check.
+
+```toml
+[lighting]
+anti_aliasing = true     # the Graphics options of the same names
+per_pixel = true
+soft_shadows = true
+bloom = true
+
+[effects]
+battle = true            # Battle effects: Enhanced
+smooth_glows = true
+
+[starmap]
+atmosphere = 0.6             # a halo round the planets: strength 0..1
+atmosphere_size = 1.35       # its radius in planet radii, 1..3
+atmosphere_color = "#7fb2ff"
+```
+
+Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting
+alone, and a mod never switches anything off. With several mods a switch on in any is on, and a value comes from the
+highest mod that sets it. A misspelt name or a value out of range is shown under the mod on the Mods page and by
+`openIG2-check`; the file is then skipped. `mods-src/remaster-look` in the source is a ready example.
+
 ### Texture and model packs
 A pack is a mod whose `hires` folder holds better versions of the game's pictures and models (ADR 0054). Unlike a
 plain replacement, a pack's file can be any size: the game still places and sizes everything by the install's

@@ -129,6 +129,10 @@ fn check(install: &Install, rules: &Result<ig2_rules::Rules, String>, m: &Mod) -
         let checked = text(b).and_then(|t| ig2_sim::story_mods::parse(&t, name));
         problems.extend(checked.err().map(|e| format!("{}: {e}", ig2_formats::vfs::STORY_FILE)));
     }
+    for (_, b) in solo.visual_files().unwrap_or_default() {
+        let checked = text(b).and_then(|t| ig2_formats::visuals::Visuals::parse(&t, ig2_formats::visuals::VISUALS_FILE));
+        problems.extend(checked.err());
+    }
     (problems, files)
 }
 

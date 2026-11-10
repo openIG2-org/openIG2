@@ -643,11 +643,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     crate::render::set_sharp_ui(o.sharp_ui || app.display.sharp_ui);
     crate::render::set_sharp_text(o.sharp_text || app.display.sharp_text);
     crate::upscale::set_factor(o.upscale.max(app.display.upscale));
-    if !o.modern_lighting {
-        crate::render3d::set_lighting(app.display.lighting);
-    }
-    crate::battle_fx::set_enhanced(o.battle_effects || app.display.battle_effects);
-    crate::render::set_smooth_glows(o.smooth_glows || app.display.smooth_glows);
+    let lighting = if o.modern_lighting { crate::render3d::lighting() } else { app.display.lighting };
+    crate::visuals::apply(lighting, o.battle_effects || app.display.battle_effects, o.smooth_glows || app.display.smooth_glows);
     crate::gui::ds::cursor::set_modern(app.display.modern);
     crate::gui::set_ui_scale(o.ui_scale.unwrap_or(crate::display::ui_scale(&app.settings)));
     // `IG2_PROFILE_BATTLE=DUMP`: a battle capture's dump goes live in slot 0 and the screen opens (crate::prof).

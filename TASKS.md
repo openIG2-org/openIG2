@@ -77,6 +77,18 @@ at the next cleanup.
   - [x] Part 4: aggressiveness and start relations, measured in the play-through harness (8 seeds, 10 years).
   - [x] Part 5: the multiplayer room's settings and the classic skirmish panel's "Advanced" label (enhanced ruleset).
 
+## Remaster (as mods)
+The plan and its rules: ADR 0088. Each part is engine work that does nothing until a mod switches it on.
+- [x] **Look files** (562): a mod's `visuals.toml`, the planets' halo, the first mod `mods-src/remaster-look`.
+- [ ] **HDR, tone mapping, bloom over the whole scene** (563).
+- [ ] **Lights and shadows on every 3D screen** (564).
+- [ ] **A richer starmap** (565).
+- [ ] **Effects as data, drawn on the graphics card** (566).
+- [ ] **Texture pack tool** (567).
+- [ ] **Sprite animations as smooth effects** (568).
+- [ ] **Model packs** (569).
+- [ ] **Publish the remaster mods in the mod index** (needs the index repository, 549).
+
 ## After 1.0
 - The minor and keep rows of `re/deviations.md`.
 - The ideas in `docs/ENHANCEMENTS.md` (sharper text, upscaled textures, play in the browser, …).

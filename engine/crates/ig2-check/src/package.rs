@@ -129,6 +129,8 @@ fn check_file(rel: &str, bytes: &[u8]) -> Result<(), String> {
             let top = !rel.contains('/');
             if top && rel == STORY_FILE {
                 ig2_sim::story_mods::parse(t, "package").map(drop)
+            } else if top && rel == ig2_formats::visuals::VISUALS_FILE {
+                ig2_formats::visuals::Visuals::parse(t, rel).map(drop)
             } else if let Some(lang) = top.then(|| ig2_formats::textpatch::file_lang(rel)).flatten() {
                 ig2_formats::textpatch::TextPatch::default().add(t, rel, lang).map(drop)
             } else {
