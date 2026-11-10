@@ -32,7 +32,7 @@ jobs:
           fi
 
   windows:
-    name: Windows tests, clippy, bundle
+    name: Windows build, tests, clippy
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,7 +84,7 @@ jobs:
         run: cargo clippy --locked --target wasm32-unknown-unknown -p ig2-formats -p ig2-rules -p ig2-sim -p ig2-net -p ig2-client -- -D warnings
 
   linux:
-    name: Linux tests, clippy, bundle
+    name: Linux build, tests, clippy
     # The oldest supported glibc (2.35): what the release archive is built on.
     runs-on: ubuntu-22.04
     steps:
@@ -117,7 +117,7 @@ jobs:
           retention-days: 7
 
   macos:
-    name: macOS tests, clippy, bundle
+    name: macOS build, tests, clippy
     # Apple Silicon (arm64): what the release archive is built on.
     runs-on: macos-15
     steps:
