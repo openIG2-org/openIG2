@@ -1,5 +1,7 @@
 # openIG2 in the browser (ADR 0047), optionally with the game's files hosted by this server (ADR 0081).
 #   IG2_GAME_DIR=/path/to/Imperium_Galactica_II docker compose -f deploy/web/compose.yaml up -d --build
+# Each release publishes the image: `docker compose -f deploy/web/compose.yaml pull && ... up -d` (no --build) runs
+# the newest one without building (docs/BUILDING.md -> Web server).
 # Visitors open the page, agree to download the game files, and the main menu loads. Without IG2_GAME_DIR the page
 # asks each player for their own install folder instead.
 #
@@ -12,6 +14,8 @@ services:
     build:
       context: ../..
       dockerfile: deploy/web/Dockerfile
+      args:
+        OPENIG2_VERSION: "${OPENIG2_VERSION:-}"
     image: ghcr.io/openig2-org/openig2-web:latest
     restart: unless-stopped
     ports:

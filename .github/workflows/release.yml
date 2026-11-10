@@ -2,6 +2,8 @@ name: Release
 
 # Beta: run by hand (Actions -> Release -> Run workflow) -> release vMAJOR.MINOR.N named "(beta)", marked Latest.
 # Stable: push a tag vMAJOR.MINOR.N that matches tools/release/version.py -> the same, without "(beta)".
+# The archives are the ones CI built and tested in this run; the browser image is built beside CI and becomes
+# `latest` only once the release is out.
 on:
   workflow_dispatch:
   push:
@@ -10,45 +12,79 @@ on:
 permissions:
   contents: write
 
+# One release at a time; a second one waits.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  WEB_IMAGE: ghcr.io/openig2-org/openig2-web
+
 jobs:
   ci:
     name: CI
     uses: ./.github/workflows/ci.yml
 
-  windows:
-    name: Windows zip
-    # No release from a commit that fails the build, the tests, clippy or the asset guard.
-    needs: ci
-    runs-on: windows-latest
+  web-image:
+    name: Browser image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable-x86_64-pc-windows-gnu
       - name: Version
         id: v
-        shell: bash
+        run: echo "version=$(python3 -I tools/release/version.py)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/web/Dockerfile
+          push: true
+          tags: ${{ env.WEB_IMAGE }}:${{ steps.v.outputs.version }}
+          build-args: OPENIG2_VERSION=${{ steps.v.outputs.version }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,scope=web,mode=max
+
+  publish:
+    name: Publish the release
+    # No release from a commit that fails the tests, clippy or the asset guard.
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Version
+        id: v
         run: |
-          v=$(python -I tools/release/version.py)
+          v=$(python3 -I tools/release/version.py)
           if [ "${{ github.ref_type }}" = "tag" ] && [ "${{ github.ref_name }}" != "v$v" ]; then
             echo "tag ${{ github.ref_name }} does not match the computed version v$v" >&2; exit 1
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
-      - name: MinGW g++ with static libraries
-        shell: bash
-        run: g++ --version && g++ -print-file-name=libstdc++.a
-      - name: Build the zip
-        shell: bash
-        run: python -I tools/release/build_windows.py --out dist
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          path: dist
+          merge-multiple: true
       - name: Release notes
-        shell: bash
         run: |
+          ls -l dist
           minor=$(cut -d. -f1,2 <<< "${{ steps.v.outputs.version }}")
           awk -v h="## $minor" 'index($0, h) == 1 {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
           printf '\nNeeds your own copy of Imperium Galactica II (GOG). Unzip into the game folder and run `openIG2.exe`.\n' >> notes.md
+      # One action creates the release with every archive: a published release under a v* tag cannot be edited.
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
@@ -58,54 +94,25 @@ jobs:
           prerelease: false
           make_latest: true
           body_path: notes.md
-          files: dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip
+          fail_on_unmatched_files: true
+          files: |
+            dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip
+            dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz
+            dist/openig2-${{ steps.v.outputs.version }}-macos-arm64.tar.gz
 
-  linux:
-    name: Linux archive
-    # After the Windows job: that one creates the release, this one adds its archive.
-    needs: windows
-    runs-on: ubuntu-22.04
+  web-latest:
+    name: Browser image -> latest
+    # Servers that follow `latest` (docs/BUILDING.md -> Web server) get the new page once the release is out.
+    needs: [publish, web-image]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
         with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
-      - name: Version
-        id: v
-        run: |
-          v=$(python3 -I tools/release/version.py)
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
-      - name: Build the archive
-        run: python3 -I tools/release/build_unix.py --out dist
-      # Upload only: updating the existing release is refused (the v* tag rules), so no release action here.
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "v${{ steps.v.outputs.version }}" "dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz" --clobber
-
-  macos:
-    name: macOS archive
-    # After the Windows job: that one creates the release, this one adds its archive (unsigned).
-    needs: windows
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Version
-        id: v
-        run: |
-          v=$(python3 -I tools/release/version.py)
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "OPENIG2_VERSION=$v" >> "$GITHUB_ENV"
-      - name: Build the archive
-        run: python3 -I tools/release/build_unix.py --out dist
-      # Upload only: updating the existing release is refused (the v* tag rules), so no release action here.
-      - name: Publish
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "v${{ steps.v.outputs.version }}" "dist/openig2-${{ steps.v.outputs.version }}-macos-arm64.tar.gz" --clobber
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag as latest
+        run: docker buildx imagetools create -t "$WEB_IMAGE:latest" "$WEB_IMAGE:${{ needs.web-image.outputs.version }}"

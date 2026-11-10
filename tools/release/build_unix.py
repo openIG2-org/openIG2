@@ -6,8 +6,8 @@ nothing else (no game data; the engine reads the player's own install).
 Version from `tools/release/version.py` (MAJOR.MINOR.N), passed to the build as `OPENIG2_VERSION`. Builds into the
 workspace's own target (nothing is linked differently from a normal release build), lists the shared libraries each
 binary needs, stages `_local/release/openig2-<version>-<os>-<arch>/` (linux-x64, macos-arm64, macos-x64) and packs it
-beside as a .tar.gz. The macOS binaries are not signed or notarized. CI runs it on
-every push (.github/workflows/ci.yml), the release workflow publishes its archive.
+beside as a .tar.gz. The macOS binaries are not signed or notarized. CI runs it
+(.github/workflows/ci.yml), the release workflow publishes that archive.
 """
 import argparse
 import os
@@ -49,7 +49,7 @@ def main() -> int:
     version = os.environ.get("OPENIG2_VERSION") or release_version()
     env = dict(os.environ, OPENIG2_VERSION=version)
     manifest = ROOT / "engine" / "Cargo.toml"
-    cmd = ["cargo", "build", "--release", "-j", "4", "--manifest-path", str(manifest)]
+    cmd = ["cargo", "build", "--release", "--locked", "-j", "4", "--manifest-path", str(manifest)]
     for b, _ in BINS:
         cmd += ["-p", b]
     run(cmd, env)

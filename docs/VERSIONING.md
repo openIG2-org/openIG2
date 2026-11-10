@@ -22,7 +22,8 @@ openIG2 versions are **MAJOR.MINOR.N**:
 | 0.7 | Playable 1.0: the last features, install detection, release builds, internet play |
 
 ## Releases
-The release workflow (`.github/workflows/release.yml`) builds the Windows zip and publishes it on GitHub:
+The release workflow (`.github/workflows/release.yml`) runs CI, publishes the Windows, Linux and macOS archives CI
+built and tested, and tags the browser image of that version `latest` (`docs/BUILDING.md` → Web server):
 
 - **Beta**: started by hand from the Actions tab (Release → Run workflow), from the current `main`. Named
   "openIG2 MAJOR.MINOR.N (beta)".

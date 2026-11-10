@@ -1,7 +1,7 @@
 name: CI
 
 # Not on every push to main: on pull requests, by hand (Actions -> CI -> Run workflow) and as the first step of every
-# release (release.yml).
+# release (release.yml), which publishes the bundles these jobs upload: what is released is what was tested.
 on:
   pull_request:
   workflow_dispatch:
@@ -32,7 +32,7 @@ jobs:
           fi
 
   windows:
-    name: Windows build, tests, clippy
+    name: Windows tests, clippy, bundle
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,21 +42,29 @@ jobs:
         with:
           toolchain: stable-x86_64-pc-windows-gnu
           components: clippy
+      # The release's version and static-runtime flags for every step, so the tests, clippy and the bundle share one
+      # build. Before the cache step: its key covers the flags.
+      - name: Release build settings
+        shell: bash
+        run: python -I tools/release/build_windows.py --env >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
-      - name: Version
-        shell: bash
-        run: echo "OPENIG2_VERSION=$(python -I tools/release/version.py)" >> "$GITHUB_ENV"
-      - name: Build
-        working-directory: engine
-        run: cargo build --release --workspace
       - name: Test
         working-directory: engine
-        run: cargo test --release --workspace
+        run: cargo test --release --workspace --locked
       - name: Clippy
         working-directory: engine
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --all-targets --locked -- -D warnings
+      - name: Release bundle
+        shell: bash
+        run: python -I tools/release/build_windows.py --out dist --target engine/target
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-windows
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7
 
   wasm:
     name: Browser target check
@@ -73,10 +81,10 @@ jobs:
           workspaces: engine
       - name: Clippy for wasm32
         working-directory: engine
-        run: cargo clippy --target wasm32-unknown-unknown -p ig2-formats -p ig2-rules -p ig2-sim -p ig2-net -p ig2-client -- -D warnings
+        run: cargo clippy --locked --target wasm32-unknown-unknown -p ig2-formats -p ig2-rules -p ig2-sim -p ig2-net -p ig2-client -- -D warnings
 
   linux:
-    name: Linux build, tests, clippy
+    name: Linux tests, clippy, bundle
     # The oldest supported glibc (2.35): what the release archive is built on.
     runs-on: ubuntu-22.04
     steps:
@@ -93,20 +101,23 @@ jobs:
           workspaces: engine
       - name: Version
         run: echo "OPENIG2_VERSION=$(python3 -I tools/release/version.py)" >> "$GITHUB_ENV"
-      - name: Build
-        working-directory: engine
-        run: cargo build --release --workspace
       - name: Test
         working-directory: engine
-        run: cargo test --release --workspace
+        run: cargo test --release --workspace --locked
       - name: Clippy
         working-directory: engine
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --all-targets --locked -- -D warnings
       - name: Release bundle
         run: python3 -I tools/release/build_unix.py --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
   macos:
-    name: macOS build, tests, clippy
+    name: macOS tests, clippy, bundle
     # Apple Silicon (arm64): what the release archive is built on.
     runs-on: macos-15
     steps:
@@ -121,14 +132,17 @@ jobs:
           workspaces: engine
       - name: Version
         run: echo "OPENIG2_VERSION=$(python3 -I tools/release/version.py)" >> "$GITHUB_ENV"
-      - name: Build
-        working-directory: engine
-        run: cargo build --release --workspace
       - name: Test
         working-directory: engine
-        run: cargo test --release --workspace
+        run: cargo test --release --workspace --locked
       - name: Clippy
         working-directory: engine
-        run: cargo clippy --release --all-targets -- -D warnings
+        run: cargo clippy --release --all-targets --locked -- -D warnings
       - name: Release bundle
         run: python3 -I tools/release/build_unix.py --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle-macos
+          path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7

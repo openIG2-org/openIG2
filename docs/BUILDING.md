@@ -26,19 +26,20 @@ own icon; `README.txt`, `VERSION.txt`) plus the zip (about 14 MB; no game data).
 `openIG2 --version` and `openIG2-check`; builds outside the release script show `VERSION` with `-dev`. The gnu toolchain's C++ runtime (openh264) and C runtime are linked
 statically (`CXXSTDLIB=static=stdc++`, `crt-static`), which needs a MinGW-w64 `g++` with static libs (e.g. WinLibs)
 on the PATH; the script fails if a binary imports a non-system DLL. A full build takes about 5 minutes.
-The release workflow (`.github/workflows/release.yml`) runs it and publishes the zip.
+CI runs it with `--target engine/target` after the tests (its settings exported to the whole job with `--env`, so
+the tests and the zip share one build), and the release workflow (`.github/workflows/release.yml`) publishes that zip.
 
 On Linux, `python3 -I tools/release/build_unix.py [--out DIR]` builds both binaries in the workspace's own
 target and stages `_local/release/openig2-<version>-linux-x64/` plus the `.tar.gz`, listing the shared libraries
 each binary needs (glibc, libstdc++, libasound; X11/Wayland and Vulkan are loaded at run time). CI runs it on
-pull requests (and by hand); the release workflow adds its archive to the release after the Windows zip. Build it on the oldest
+pull requests (and by hand); the release workflow publishes the archive CI built. Build it on the oldest
 glibc you want to support (CI: Ubuntu 22.04, glibc 2.35).
 
 On macOS the same script stages `openig2-<version>-macos-arm64/` (or `-macos-x64` on an Intel Mac) plus the
 `.tar.gz`, listing the dylibs each binary links (system frameworks only). The binaries are **not signed or
 notarized** (no Apple developer account): Gatekeeper blocks them until the player clears the quarantine
-(`xattr -dr com.apple.quarantine .`, `tools/release/README.txt`). CI and the release workflow build the arm64
-archive on macOS 15; there is no Intel archive.
+(`xattr -dr com.apple.quarantine .`, `tools/release/README.txt`). CI builds the arm64 archive on macOS 15; there
+is no Intel archive.
 
 `ig2-check` (`engine/crates/ig2-check`) validates an install: `cargo run --release -p ig2-check -- [DIR] [--quick]`.
 `ig2-rendezvous` (`engine/crates/ig2-rendezvous`) is the optional internet relay service (`docs/RENDEZVOUS.md`).
@@ -72,6 +73,15 @@ IG2_GAME_DIR=/path/to/Imperium_Galactica_II docker compose -f deploy/web/compose
 The page listens on port `IG2_WEB_PORT` (8080). Browsers need HTTPS for it outside localhost: put it behind your
 reverse proxy, or add `--profile https` with `IG2_DOMAIN=play.example.org` for Caddy with an automatic certificate.
 Without `IG2_GAME_DIR` each player picks their own install, as above.
+
+Every release publishes the image as `ghcr.io/openig2-org/openig2-web:<version>` and, once the release is out,
+`:latest`. A server that should follow the releases needs no build: leave out `--build` and let a timer pull, for
+example every five minutes from cron (the page is replaced only when the image changed):
+```bash
+cd /path/to/openIG2 && docker compose -f deploy/web/compose.yaml pull -q && docker compose -f deploy/web/compose.yaml up -d
+```
+The server only fetches; nothing outside it needs a key or an open port. To stay on one version, set the image's
+tag in the compose file.
 
 ## Tests
 ```bash

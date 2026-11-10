@@ -10,7 +10,9 @@ COPY engine/vendor engine/vendor
 # wasm-bindgen-cli must match the wasm-bindgen crate in the lock file (tools/build_web.py checks the same).
 RUN cargo install wasm-bindgen-cli --locked --version "$(awk '/^name = "wasm-bindgen"$/ { getline; gsub(/version = |"/, ""); print }' engine/Cargo.lock)"
 COPY engine/crates engine/crates
-RUN cd engine && cargo build --release --locked --target wasm32-unknown-unknown -p ig2-client \
+# The release's version (docs/VERSIONING.md); without it the page shows VERSION with -dev.
+ARG OPENIG2_VERSION
+RUN cd engine && if [ -z "$OPENIG2_VERSION" ]; then unset OPENIG2_VERSION; fi && cargo build --release --locked --target wasm32-unknown-unknown -p ig2-client \
  && wasm-bindgen --target web --no-typescript --out-name ig2_client --out-dir /out/pkg \
       target/wasm32-unknown-unknown/release/ig2-client.wasm
 COPY web/index.html web/main.js /out/
