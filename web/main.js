@@ -13,12 +13,47 @@ const DONE = ".openig2-complete";
 function status(text, error = false) {
   $("status").textContent = text;
   $("status").classList.toggle("error", error);
+  if (error) progress();
 }
+
+// The bar over the status line: `done` of `total`, or hidden without them.
+function progress(done, total) {
+  $("bar").hidden = total === undefined;
+  if (total) $("bar").value = done / total;
+}
+
+// Nothing can be pressed while files are copied or loaded.
+function busy(on) {
+  for (const e of $("setup").querySelectorAll("button, input")) e.disabled = on;
+}
+
+const LANGS = ["en", "de", "fr", "es", "it", "hu"];
+// The game's language: the page's choice. It decides which files are downloaded and loaded, so the client always
+// gets it (`--lang`).
+const language = () => document.querySelector("input[name=lang]:checked").value;
+
+// The choice a visit starts with: the last one, else `?lang=`, else the browser's language, else English.
+function firstLanguage() {
+  let kept;
+  try {
+    kept = localStorage.getItem("lang");
+  } catch {}
+  const wish = [kept, new URLSearchParams(location.search).get("lang"), ...navigator.languages.map((l) => l.slice(0, 2))];
+  return wish.find((l) => LANGS.includes(l)) ?? "en";
+}
+
+// The language whose copy of a file this is (`localization/<lang>/…`); undefined for the files every language reads.
+const langOf = (path) => /^localization\/([^/]+)\//i.exec(path)?.[1].toLowerCase();
+// The client reads `localization/<lang>/` only in that language (ig2-formats' vfs): the other languages' copies,
+// most of the install's files, are neither downloaded nor loaded.
+const wanted = (path, lang) => [undefined, lang].includes(langOf(path));
+const mb = (bytes) => Math.ceil(bytes / 1e6);
 
 // The client's report when its start fails after the page handed over (no WebGPU, say).
 window.ig2_failed = (message) => {
   document.querySelector("canvas")?.remove();
   $("setup").hidden = false;
+  busy(false);
   status(`The client stopped: ${message}`, true);
 };
 
@@ -113,18 +148,22 @@ function looksLikeInstall(files) {
   return names.has("ig2.exe") && names.has("dataraw/text/scenario.txt");
 }
 
-async function copy(files) {
+// Copies [path, File or URL, size] entries into the stored copy; `fresh` replaces the copy, else they are added to it.
+async function copy(files, fresh = true) {
   await navigator.storage.persist?.();
   const root = await navigator.storage.getDirectory();
-  await root.removeEntry(STORE, { recursive: true }).catch(() => {});
+  if (fresh) await root.removeEntry(STORE, { recursive: true }).catch(() => {});
   const store = await storeDir(true);
+  const total = files.reduce((n, [, , size]) => n + size, 0);
+  const verb = typeof files[0]?.[1] === "string" ? "Downloading" : "Copying";
   let done = 0;
+  let bytes = 0;
   let next = 0;
   // A few files at a time: one by one, a distant server's round trips would take most of the download.
   const worker = async () => {
     while (next < files.length) await copyOne(...files[next++]);
   };
-  const copyOne = async (path, file) => {
+  const copyOne = async (path, file, size) => {
     const parts = path.split("/");
     let dir = store;
     for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p, { create: true });
@@ -138,30 +177,63 @@ async function copy(files) {
       await w.write(file);
       await w.close();
     }
-    if (++done % 50 === 0) status(`Copying the install into this browser: ${done} / ${files.length} files`);
+    bytes += size;
+    if (++done % 20 === 0 || done === files.length) {
+      progress(bytes, total);
+      status(`${verb} the game files: ${mb(bytes)} / ${mb(total)} MB, ${done} / ${files.length} files`);
+    }
   };
   await Promise.all(Array.from({ length: 6 }, worker));
   await (await (await store.getFileHandle(DONE, { create: true })).createWritable()).close();
 }
 
+// The game files this server hosts (ADR 0081): [path, size] pairs, or null where it hosts none.
+let hosted = null;
+
+const hostedFor = (lang) => hosted.filter(([path]) => wanted(path, lang));
+const asDownloads = (files) => files.map(([path, size]) => [path, gameUrl(path), size]);
+
+// The stored copy's files as [path, handle].
+async function storedFiles() {
+  const files = [];
+  for await (const f of walk(await storeDir())) if (f[0] !== DONE) files.push(f);
+  return files;
+}
+
 async function play() {
-  $("pick").disabled = $("play").disabled = true;
+  busy(true);
   try {
+    const lang = language();
+    let files = await storedFiles();
+    if (hosted) {
+      // A language picked after the download: its files come now, beside the stored ones.
+      const have = new Set(files.map(([path]) => path));
+      const missing = hosted.filter(([path]) => langOf(path) === lang && !have.has(path));
+      if (missing.length) {
+        await copy(asDownloads(missing), false);
+        files = await storedFiles();
+      }
+    }
+    files = files.filter(([path]) => wanted(path, lang));
     let n = 0;
-    for await (const [path, h] of walk(await storeDir())) {
-      if (path === DONE) continue;
+    for (const [path, h] of files) {
       add_file(path, new Uint8Array(await (await h.getFile()).arrayBuffer()));
-      if (++n % 200 === 0) status(`Loading the game files: ${n}`);
+      if (++n % 100 === 0) {
+        progress(n, files.length);
+        status(`Loading the game files: ${n} / ${files.length}`);
+      }
     }
     const user = await (await navigator.storage.getDirectory()).getDirectoryHandle(USER, { create: true });
     for await (const [path, h] of walk(user)) add_user_file(path, new Uint8Array(await (await h.getFile()).arrayBuffer()));
+    progress();
     status("Starting…");
     $("setup").hidden = true;
     const params = new URLSearchParams(location.search);
     // Testing only: `?args=--multiplayer` and the like, the native client's options, on localhost.
     const args = isLocal() ? params.get("args") ?? undefined : undefined;
-    start($("lang").value || params.get("lang") || undefined, params.has("webgl"), args);
+    start(lang, params.has("webgl"), args);
   } catch (e) {
+    busy(false);
     $("setup").hidden = false;
     status(`The client stopped: ${e}`, true);
     console.error(e);
@@ -170,7 +242,6 @@ async function play() {
 
 const isLocal = () => ["127.0.0.1", "localhost", "[::1]"].includes(location.hostname);
 
-// The game files this server hosts (ADR 0081): [path, size] pairs, or null where it hosts none.
 async function hostedFiles() {
   try {
     const r = await fetch("game/index.json", { cache: "no-cache" });
@@ -183,31 +254,46 @@ async function hostedFiles() {
 
 const gameUrl = (path) => "game/" + path.split("/").map(encodeURIComponent).join("/");
 
-async function download(files) {
-  await copy(files.map(([path]) => [path, gameUrl(path)]));
+async function download() {
+  await copy(asDownloads(hostedFor(language())));
   await play();
 }
 
 // Testing only: `tools/serve_web.py --install` serves the install on this machine; `?dev-install` downloads it without
 // asking. Pages not on localhost ignore it.
-async function devInstall(hosted) {
+async function devInstall() {
   if (!isLocal() || !hosted || !new URLSearchParams(location.search).has("dev-install")) return false;
   if (await stored()) await play();
-  else await download(hosted);
+  else await download();
   return true;
 }
 
 async function main() {
+  document.querySelector(`input[name=lang][value=${firstLanguage()}]`).checked = true;
   await init();
-  const have = await stored();
-  const hosted = await hostedFiles();
-  $("play").hidden = $("forget").hidden = !have;
-  $("offer").hidden = !hosted || have;
-  if (hosted) {
-    const mb = Math.ceil(hosted.reduce((n, [, size]) => n + size, 0) / 1e6);
-    $("offer-size").textContent = `${hosted.length} files, ${mb} MB`;
+  let have = await stored();
+  hosted = await hostedFiles();
+  // What the page offers: Play from a stored copy, else this server's files where it hosts them, and the own folder.
+  const show = () => {
+    $("stored").hidden = $("forget").hidden = !have;
+    $("offer").hidden = !hosted || have;
+    $("own").hidden = have;
+    $("pick").classList.toggle("primary", !have && !hosted);
+    $("pick").textContent = have ? "Use another folder…" : hosted ? "Use my own install folder…" : "Choose the install folder…";
+    if (hosted) {
+      const files = hostedFor(language());
+      $("offer-size").textContent = `${files.length.toLocaleString("en")} files · ${mb(files.reduce((n, [, size]) => n + size, 0))} MB`;
+    }
+  };
+  show();
+  for (const input of document.querySelectorAll("input[name=lang]")) {
+    input.onchange = () => {
+      try {
+        localStorage.setItem("lang", language());
+      } catch {}
+      show();
+    };
   }
-  status(have ? "The install is stored in this browser." : "");
   $("pick").onclick = async () => {
     try {
       const files = await pickFiles();
@@ -215,29 +301,32 @@ async function main() {
         status("That folder has no ig2.exe and DataRaw/Text/Scenario.txt: pick the install's own folder.", true);
         return;
       }
-      await copy(files);
+      busy(true);
+      // Every language of an own install is kept: another one needs no second pick.
+      await copy(files.map(([path, file]) => [path, file, file.size]));
       await play();
     } catch (e) {
+      busy(false);
       if (e.name !== "AbortError") status(`${e}`, true);
     }
   };
   $("play").onclick = play;
   $("download").onclick = async () => {
-    $("download").disabled = $("pick").disabled = true;
+    busy(true);
     try {
-      await download(hosted);
+      await download();
     } catch (e) {
-      $("download").disabled = $("pick").disabled = false;
+      busy(false);
       status(`The download stopped: ${e}`, true);
     }
   };
-  if (await devInstall(hosted)) return;
+  if (await devInstall()) return;
   $("forget").onclick = async () => {
     // The install's copy only: the saves and settings stay.
     const root = await navigator.storage.getDirectory();
     await root.removeEntry(STORE, { recursive: true }).catch(() => {});
-    $("play").hidden = $("forget").hidden = true;
-    $("offer").hidden = !hosted;
+    have = false;
+    show();
     status("The stored copy is gone.");
   };
 }

@@ -5,6 +5,7 @@ What changed in each version. Versions are MAJOR.MINOR.N (docs/VERSIONING.md).
 ## 0.7 — Playable 1.0 (in progress)
 Getting the game from "every part works" to "a player can install it and play it through".
 
+- Browser version: the start page has a new look with a language choice and a progress bar, and a server's game files are downloaded for the chosen language only (in English 7,313 files instead of 17,549); another language's files follow when it is picked.
 - Updates: the game checks at start whether a newer openIG2 is out and the modern main menu shows "New version: X" at the bottom right; on Windows "Update and restart" downloads, checks and installs it (settings, saves and mods stay), elsewhere the button opens the download page; "Check for updates" (Options, Game) turns the check off (ADR 0087).
 - Modern Info and Messages screens: the dimmed starmap (or colony) shows behind the panels, as on the other screens, instead of a near-black fill.
 - Colony: factories, forts and other buildings no longer grow when the colony view is zoomed out; every building keeps the same size at every zoom.

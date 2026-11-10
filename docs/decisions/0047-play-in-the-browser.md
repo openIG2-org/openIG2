@@ -58,6 +58,8 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
   `showDirectoryPicker` or a `webkitdirectory` input, checks for `ig2.exe` and `DataRaw/Text/Scenario.txt`, copies
   every file into OPFS (`install/`, a marker file written last) and asks for persistent storage; later visits start
   from that copy. It then hands every file but the videos to the client (`web::add_file`) and calls `web::start`.
+  (Since ADR 0081's language rule: the page's language choice goes to the client, and the other languages'
+  `localization/` copies are not loaded.)
 - The client's store is in memory (`web::Store`, about 400 MB): the main thread cannot read OPFS synchronously, and a
   worker with synchronous access handles (§2) is the change once memory matters or the videos come in.
 - Behind `cfg(target_arch = "wasm32")`: the install root and store (`install_root`, `open_install`), the QUIC lobby

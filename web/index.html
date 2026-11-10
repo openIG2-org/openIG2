@@ -2,51 +2,206 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>openIG2</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#070915">
+<title>openIG2: play in the browser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Hanken+Grotesk:wght@400;500;600&family=Share+Tech+Mono&display=swap">
 <style>
-  html, body { margin: 0; height: 100%; background: #000; color: #ddd; font: 15px/1.5 system-ui, sans-serif; overflow: hidden; }
+  /* The launch console: the project site's colours and faces (site/style.css), one panel that holds every step. */
+  :root {
+    --void: #070915; --hull: #0e1326; --hull-2: #141a33; --line: #262e4c;
+    --ink: #e3e7f3; --dim: #9aa2bd; --brass: #c9a35c; --brass-dim: #7d6638;
+    --readout: #f3cd55; --phosphor: #7fe08f; --alert: #ff9a8f; --ion: #6fa8ff;
+    --f-display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+    --f-body: "Hanken Grotesk", "Segoe UI", system-ui, -apple-system, sans-serif;
+    --f-mono: "Share Tech Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    --gut-l: max(16px, env(safe-area-inset-left, 0px)); --gut-r: max(16px, env(safe-area-inset-right, 0px));
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   /* The client's canvas (winit appends it): the whole page. */
   canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; outline: none; }
-  #setup { max-width: 34em; margin: 12vh auto 0; padding: 0 16px; }
-  #setup h1 { font-size: 1.5em; font-weight: 600; margin: 0 0 .5em; }
-  #setup button, #setup select { font: inherit; padding: .4em 1em; margin: .3em .5em .3em 0; }
-  #status { min-height: 3em; color: #aaa; white-space: pre-wrap; }
-  #status.error { color: #f88; }
   [hidden] { display: none !important; }
+  ::selection { background: var(--readout); color: #1a1306; }
+  :focus-visible { outline: 2px solid var(--readout); outline-offset: 3px; border-radius: 2px; }
+
+  #setup {
+    position: fixed; inset: 0; overflow: auto; display: flex; flex-direction: column;
+    color: var(--ink); font: 400 1rem/1.6 var(--f-body);
+    scrollbar-color: var(--line) var(--void);
+    /* A still star field: three tiles of different sizes, so the repeat doesn't show. */
+    background:
+      radial-gradient(1px 1px at 37px 61px, #fff9 50%, #0000 51%) 0 0 / 241px 197px,
+      radial-gradient(1.5px 1.5px at 190px 140px, #bed2ff8c 50%, #0000 51%) 70px 30px / 313px 271px,
+      radial-gradient(1px 1px at 88px 300px, #ffe2aa80 50%, #0000 51%) 20px 110px / 397px 349px,
+      radial-gradient(1px 1px at 150px 90px, #fff6 50%, #0000 51%) 130px 60px / 173px 229px,
+      var(--void);
+  }
+  .bar { display: flex; align-items: center; gap: 20px; padding: 12px var(--gut-r) 12px var(--gut-l); border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--void) 86%, transparent); }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none;
+    font: 600 1.15rem/1 var(--f-display); letter-spacing: .04em; }
+  .brand b { color: var(--readout); font-weight: 700; }
+  .bar nav { margin-left: auto; display: flex; gap: 18px; }
+  .bar nav a { color: var(--dim); text-decoration: none; font: 500 .92rem/1 var(--f-display); letter-spacing: .06em; text-transform: uppercase; padding: 8px 0; }
+  .bar nav a:hover { color: var(--ink); }
+
+  .deck {
+    flex: 1; width: 100%; max-width: 1080px; margin: 0 auto; padding: 48px var(--gut-r) 48px var(--gut-l);
+    display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 56px; align-items: center;
+  }
+  h1, h2 { font-family: var(--f-display); margin: 0; line-height: 1.1; text-wrap: balance; }
+  h1 { font-size: 2.75rem; font-weight: 700; letter-spacing: -.01em; }
+  h1 em { font-style: normal; color: var(--readout); }
+  h2 { font-size: 1.125rem; font-weight: 600; letter-spacing: .02em; }
+  .intro { display: grid; gap: 20px; }
+  .intro p { margin: 0; max-width: 44ch; color: var(--dim); }
+  .intro strong { color: var(--ink); font-weight: 600; }
+  code { font-family: var(--f-mono); color: var(--readout); font-size: .95em; }
+
+  .console {
+    display: grid; gap: 28px; padding: 28px; border: 1px solid var(--brass-dim); border-radius: 4px;
+    background: linear-gradient(var(--hull-2), var(--hull) 140px);
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--brass) 30%, transparent), 0 24px 60px -30px #000;
+  }
+  .step { display: grid; gap: 12px; min-width: 0; }
+  .step p { margin: 0; color: var(--dim); max-width: 60ch; }
+  fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  legend { padding: 0; margin-bottom: 12px; font: 600 1.125rem/1.1 var(--f-display); letter-spacing: .02em; }
+  .langs { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; }
+  .langs label { position: relative; display: block; }
+  .langs input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; }
+  .langs span {
+    display: block; text-align: center; padding: 10px 4px; border: 1px solid var(--line); border-radius: 3px;
+    background: var(--void); color: var(--dim); font: 500 .95rem/1.2 var(--f-body);
+    transition: border-color .15s, color .15s, background .15s;
+  }
+  .langs input:hover + span { border-color: var(--brass-dim); color: var(--ink); }
+  .langs input:checked + span { border-color: var(--readout); color: var(--readout); background: color-mix(in srgb, var(--readout) 9%, var(--void)); }
+  .langs input:focus-visible + span { outline: 2px solid var(--readout); outline-offset: 3px; }
+  .langs input:disabled { cursor: default; }
+  .langs input:disabled + span { opacity: .55; }
+
+  .readout { justify-self: start; font: 400 .95rem/1 var(--f-mono); color: var(--readout); letter-spacing: .04em; font-variant-numeric: tabular-nums;
+    padding: 8px 10px; border: 1px solid var(--brass-dim); border-radius: 3px; background: var(--void); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+  .stored { display: flex; align-items: center; gap: 10px; color: var(--ink); }
+  .pip { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--phosphor); }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn {
+    min-height: 46px; padding: 12px 20px; border-radius: 4px; border: 1px solid var(--line); background: var(--hull);
+    color: var(--ink); font: 600 1rem/1 var(--f-display); letter-spacing: .05em; text-transform: uppercase;
+    transition: border-color .15s, transform .15s, opacity .15s;
+  }
+  .btn:hover { border-color: var(--brass); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary {
+    color: #1a1306; border-color: var(--readout);
+    background: linear-gradient(180deg, #f8dc7a, var(--readout) 55%, #d9ab34);
+    box-shadow: 0 0 0 1px #000 inset;
+  }
+  .btn.primary:hover { transform: translateY(-1px); }
+  .btn.wide { min-width: 220px; }
+  .link { padding: 8px 0; border: 0; background: none; color: var(--dim); text-decoration: underline; text-underline-offset: 3px; }
+  .link:hover { color: var(--ink); }
+  button:disabled { opacity: .5; cursor: default; transform: none !important; }
+
+  .feed { display: grid; gap: 10px; min-height: 1.5em; align-content: start; }
+  progress { appearance: none; -webkit-appearance: none; display: block; width: 100%; height: 6px; border: 0; border-radius: 3px; overflow: hidden; background: var(--void); }
+  progress::-webkit-progress-bar { background: var(--void); }
+  progress::-webkit-progress-value { background: var(--readout); transition: width .2s; }
+  progress::-moz-progress-bar { background: var(--readout); }
+  #status { margin: 0; color: var(--dim); font: 400 .9rem/1.5 var(--f-mono); font-variant-numeric: tabular-nums; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #status.error { color: var(--alert); }
+
+  @media (max-width: 860px) {
+    .deck { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-block: 32px; align-items: start; }
+    h1 { font-size: 2rem; }
+    .console { padding: 20px; gap: 24px; }
+  }
+  @media (max-width: 480px) {
+    .langs { grid-template-columns: repeat(3, 1fr); }
+    .bar nav a:first-child { display: none; }
+    .btn, .btn.wide { width: 100%; min-width: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
 <div id="setup">
-  <h1>openIG2</h1>
-  <div id="offer" hidden>
-    <p>This server offers the game's files (<span id="offer-size"></span>). With your agreement the page downloads them
-    once into this browser's private storage; later visits start from that copy.</p>
-    <p><button id="download">I agree: download the game files and play</button></p>
-    <p>Or use your own install instead:</p>
-  </div>
-  <p>Pick the folder of your own Imperium Galactica II install (the GOG one, with <code>ig2.exe</code>). The page keeps
-  a copy in this browser's private storage for your next visit; nothing is uploaded.</p>
-  <p>
-    <button id="pick">Choose the install folder…</button>
-    <input id="folder" type="file" webkitdirectory hidden>
-    <button id="play" hidden>Play</button>
-    <button id="forget" hidden>Forget the stored copy</button>
-  </p>
-  <p>
-    <label>Language
-      <select id="lang">
-        <option value="">default</option>
-        <option value="en">English</option>
-        <option value="de">Deutsch</option>
-        <option value="fr">Français</option>
-        <option value="es">Español</option>
-        <option value="it">Italiano</option>
-        <option value="hu">Magyar</option>
-      </select>
-    </label>
-  </p>
-  <p id="status"></p>
+  <header class="bar">
+    <a class="brand" href="https://github.com/openIG2-org/openIG2">
+      <svg width="30" height="30" viewBox="0 0 512 512" aria-hidden="true">
+        <defs>
+          <radialGradient id="planet" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#9fd8ff"/><stop offset=".45" stop-color="#3a7bd5"/><stop offset="1" stop-color="#101a3c"/></radialGradient>
+          <linearGradient id="ring" x1="0" x2="1"><stop offset="0" stop-color="#ffb347" stop-opacity=".1"/><stop offset=".5" stop-color="#ffcf6e"/><stop offset="1" stop-color="#ff7a3c" stop-opacity=".2"/></linearGradient>
+          <clipPath id="front"><rect x="0" y="256" width="512" height="256"/></clipPath>
+        </defs>
+        <circle cx="256" cy="256" r="240" fill="#070b1d"/>
+        <ellipse cx="256" cy="256" rx="210" ry="58" fill="none" stroke="url(#ring)" stroke-width="14" transform="rotate(-18 256 256)"/>
+        <circle cx="256" cy="256" r="120" fill="url(#planet)"/>
+        <ellipse cx="256" cy="256" rx="210" ry="58" fill="none" stroke="url(#ring)" stroke-width="14" transform="rotate(-18 256 256)" clip-path="url(#front)"/>
+        <circle cx="452" cy="198" r="9" fill="#ffcf6e"/>
+      </svg>
+      <span>open<b>IG2</b></span>
+    </a>
+    <nav>
+      <a href="https://github.com/openIG2-org/openIG2/releases/latest">Desktop version</a>
+      <a href="https://github.com/openIG2-org/openIG2">GitHub</a>
+    </nav>
+  </header>
+
+  <main class="deck">
+    <section class="intro">
+      <h1>Imperium Galactica <em>II</em>, in this tab</h1>
+      <p>openIG2 runs the original game from its own files. The page keeps <strong>one copy in this browser's private
+        storage</strong> and starts from it on your next visit.</p>
+      <p><strong>Nothing is uploaded.</strong> Your saves and settings stay in this browser too.</p>
+    </section>
+
+    <section class="console" aria-label="Start the game">
+      <fieldset>
+        <legend>Language</legend>
+        <div class="langs">
+          <label><input type="radio" name="lang" value="en"><span lang="en">English</span></label>
+          <label><input type="radio" name="lang" value="de"><span lang="de">Deutsch</span></label>
+          <label><input type="radio" name="lang" value="fr"><span lang="fr">Français</span></label>
+          <label><input type="radio" name="lang" value="es"><span lang="es">Español</span></label>
+          <label><input type="radio" name="lang" value="it"><span lang="it">Italiano</span></label>
+          <label><input type="radio" name="lang" value="hu"><span lang="hu">Magyar</span></label>
+        </div>
+      </fieldset>
+
+      <div class="step">
+        <h2>Game files</h2>
+        <div class="step" id="stored" hidden>
+          <div class="stored"><span class="pip"></span>Stored in this browser.</div>
+          <div class="row"><button class="btn primary wide" id="play">Play</button></div>
+        </div>
+        <div class="step" id="offer" hidden>
+          <p>This server offers the game's files. With your agreement the page downloads the ones your language needs,
+            once, into this browser's private storage.</p>
+          <span class="readout" id="offer-size"></span>
+          <div class="row"><button class="btn primary wide" id="download">Agree, download and play</button></div>
+        </div>
+        <p id="own">Have the game already? Pick the folder of your own Imperium Galactica II install (the GOG one, with
+          <code>ig2.exe</code>).</p>
+        <div class="row">
+          <button class="btn" id="pick">Choose the install folder…</button>
+          <input id="folder" type="file" webkitdirectory hidden>
+          <button class="link" id="forget" hidden>Forget the stored copy</button>
+        </div>
+      </div>
+
+      <div class="feed">
+        <progress id="bar" max="1" value="0" hidden></progress>
+        <p id="status" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+  </main>
 </div>
 <script type="module" src="main.js"></script>
 </body>
