@@ -29,6 +29,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Discord Rich Presence shows what you are doing, and a host's open room has a Join button for friends.
 - The multiplayer pages fit at any UI scale: the panels no longer run over the Back, Host game and room footer buttons, and a column taller than the window scrolls.
 - The trade, diplomacy and spy pages fit at any UI scale: the Buy plate, message panel, statue arrows and skill buttons no longer cover or touch each other, nothing runs under Exit, and a tall agent card scrolls.
+- The modern Custom game, Information and Help pages fit at a larger UI scale: the empires table and the map keep their size on a narrow page (the page scrolls), the Information screen scrolls with the mouse wheel when the window is too short and keeps its list, charts and Exit button apart, and Help shows a scroll bar when its topics don't fit.
 
 ### Screens and controls
 - Modern interface (Options, Interface; on by default; one switch for every screen): the starmap, colony, production, research, ship design, information, messages, diplomacy, spy and trade screens, the fleet and transfer panels and the space battle are redrawn with the same functions and keys; Classic keeps the original's screens.

@@ -129,10 +129,22 @@ pub fn entrance(ui: &mut Ui) {
 
 /// `add` in a fixed rectangle of the screen (an area `id` of its own, top-down).
 pub fn place<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    place_in(ctx, id, rect, None, add)
+}
+
+/// [`place`] on a page that scrolls: `rect` may reach past the screen, what shows is cut to `clip`.
+pub fn place_cut<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, clip: Rect, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
+    place_in(ctx, id, rect, Some(clip), add)
+}
+
+fn place_in<R>(ctx: &egui::Context, id: impl std::hash::Hash, rect: Rect, clip: Option<Rect>, add: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
     let t = ENTRANCE.with(|e| e.get());
-    egui::Area::new(Id::new(id)).fixed_pos(rect.min + entrance_offset(rect, ctx.screen_rect(), t)).fade_in(false).show(ctx, |ui| {
+    egui::Area::new(Id::new(id)).fixed_pos(rect.min + entrance_offset(rect, ctx.screen_rect(), t)).fade_in(false).constrain(clip.is_none()).show(ctx, |ui| {
         if t < 1.0 {
             ui.multiply_opacity(t);
+        }
+        if let Some(c) = clip {
+            ui.set_clip_rect(ui.clip_rect().intersect(c));
         }
         ui.set_min_size(rect.size());
         ui.set_max_size(rect.size());
@@ -309,10 +321,17 @@ pub fn menu(ui: &mut Ui, id: impl std::hash::Hash, style: MenuStyle, entries: &[
     clicked
 }
 
+const TAB_FONT: Font = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false };
+
+/// The width [`tabs`] of `labels` take uncut.
+pub fn tabs_width(ctx: &egui::Context, labels: &[&str]) -> f32 {
+    labels.iter().map(|s| Text::new(s, TAB_FONT).layout(ctx, f32::INFINITY).width + 36.0).sum::<f32>() + SPACE[0] * labels.len().saturating_sub(1) as f32
+}
+
 /// A horizontal strip of tabs (`.tab`: 36 high, 500 16 / 0.12 em; the chosen one on a gliding plate). Too many for
-/// the width share it and cut their labels. Gives the clicked tab.
+/// the width share it and shrink their labels, then cut them. Gives the clicked tab.
 pub fn tabs(ui: &mut Ui, id: impl std::hash::Hash, labels: &[&str], selected: usize) -> Option<usize> {
-    const FONT: Font = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.12, upper: false, lcd: false };
+    const FONT: Font = TAB_FONT;
     let id = ui.make_persistent_id(id);
     let k = tokens();
     let mut widths: Vec<f32> = labels.iter().map(|s| Text::new(s, FONT).layout(ui.ctx(), f32::INFINITY).width + 36.0).collect();
@@ -338,7 +357,7 @@ pub fn tabs(ui: &mut Ui, id: impl std::hash::Hash, labels: &[&str], selected: us
         let resp = ui.interact(rect, id.with(i), Sense::click());
         let l = look(ui, &resp, false);
         let c = if i == selected { k.ink } else { k.ink_muted.lerp_to_gamma(k.ink_silver, l.hover) };
-        let cut = Text::new(s, FONT).center().color(ink(l.on, c)).paint_only(ui, rect.shrink2(Vec2::new(8.0, 0.0))).cut;
+        let cut = Text::new(s, FONT).center().shrink(12.0).color(ink(l.on, c)).paint_only(ui, rect.shrink2(Vec2::new(8.0, 0.0))).cut;
         if tip_if(resp, cut, s).clicked() && l.on {
             clicked = Some(i);
         }

@@ -54,6 +54,9 @@ bar, ten chart buttons and, in a scenario game, the swap to the star log.
 - No exe capture exists for the new look: screenshots go with the change (`--snapshot --modern-info`).
 - `info_screen::Put` (a positioned text) lets a modern screen reuse the original's text builders while the classic
   drawing stays the same calls in the same order.
+- A window too short for the panels (a larger UI scale) scrolls the page between the top bar and its bottom with the
+  mouse wheel; the list keeps at least 366 points, the charts stop above the Exit plate, and nothing covers the
+  footer buttons.
 
 ## Amendment (2026-11-03): the design boards
 The info boards of the design kit (ADR 0073: the list, the detail mode; 1920 × 1080 at 100 % UI scale, one board

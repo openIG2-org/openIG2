@@ -247,6 +247,23 @@ enum Focus {
     Name(usize),
 }
 
+/// The galaxy column's width.
+const SIDE: f32 = 340.0;
+/// The empires table's narrowest: its fixed columns and gaps (432) and six drop-downs and fields 110 wide. A narrower
+/// page puts the galaxy under the table.
+const TABLE_MIN: f32 = 1092.0;
+/// The map's height on a narrower page (its row beside the galaxy column).
+const NARROW_MAP_H: f32 = 360.0;
+
+/// What a frame of the page gathered: its act, a field under the pointer, a drop-down open as the frame began (this
+/// frame's click only closes it).
+#[derive(Default)]
+struct Out {
+    act: Option<Act>,
+    on_field: bool,
+    dropped: bool,
+}
+
 /// What the page asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
@@ -319,7 +336,9 @@ impl CustomPage {
         let hint = Font { size: 14.0, line: 20.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
         c.add_space(16.0);
         let text = if self.s.start.is_some() { tr("You start on the star you picked.") } else { tr("Click a star to start there.") };
-        Text::new(&text, hint).color(k.ink_muted).show(&mut c, Vec2::new(360.0, 20.0));
+        // What the heading and the plate leave of the row (a narrower map's).
+        let room = (c.available_width() - Text::new(&tr("Start position"), Font::LABEL).layout(c.ctx(), f32::INFINITY).width - 40.0).clamp(0.0, 360.0);
+        Text::new(&text, hint).color(k.ink_muted).shrink(11.0).show(&mut c, Vec2::new(room, 20.0));
         ui.add_space(8.0);
         let h = (size.y - head - 8.0).max(60.0);
         let (frame, resp) = ui.allocate_exact_size(Vec2::new(size.x, h), egui::Sense::click());
@@ -426,167 +445,63 @@ impl CustomPage {
         let k = ds::tokens();
         let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
         let game = |b: &[u8]| ig2_formats::text::decode(b, texts.lang).trim().trim_end_matches(':').trim().to_string();
-        let mut act = None;
         let pressed = ctx.input(|i| i.pointer.any_pressed());
-        let mut on_field = false;
-        // A drop-down open as the frame began: this frame's click only closes it.
-        let mut dropped = false;
-        let races = texts.playable_races();
-        let race_name = |r: u8| game(&texts.race(r));
+        let mut out = Out::default();
         crate::gui::board_at(ctx, "custom-game", Vec2::new(1760.0, 900.0), 0.55, 12.0, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             let w = ui.available_width();
             Text::new(&tr("Custom game"), Font::PAGE_TITLE).color(k.ink_silver).show(ui, Vec2::new(w, 36.0));
             ui.add_space(20.0);
             let body = ui.available_height() - 20.0 - 64.0;
-            const SIDE: f32 = 340.0;
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-                // The galaxy.
-                ui.vertical(|ui| {
-                    ui.set_width(SIDE);
-                    ui.set_height(body);
-                    ui.spacing_mut().item_spacing.y = 12.0;
-                    ds::heading_label(ui, &tr("Galaxy"));
-                    let label = |ui: &mut egui::Ui, s: &str| Text::new(s, Font::LABEL).color(k.ink_muted).show(ui, Vec2::new(SIDE, 18.0));
-                    label(ui, &game(&texts.get(15, 2, 8)));
-                    let (_, d) = ds::stepper(ui, &self.s.planets.to_string(), SIDE - 64.0);
-                    if d != 0 {
-                        let n = (self.s.planets + 5 * d).clamp(PLANETS.0, PLANETS.1);
-                        if n != self.s.planets {
-                            self.s.planets = n;
-                            act = Some(Act::Click);
+            if w >= SIDE + 32.0 + TABLE_MIN {
+                ui.horizontal_top(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    ui.vertical(|ui| {
+                        ui.set_width(SIDE);
+                        ui.set_height(body);
+                        self.galaxy_column(ui, texts, &mut out);
+                    });
+                    ui.add_space(32.0);
+                    ui.vertical(|ui| {
+                        let tw = w - SIDE - 32.0;
+                        ui.set_width(tw);
+                        ui.set_height(body);
+                        self.empire_table(ui, tw, texts, &mut heads, &mut out);
+                        ui.add_space(24.0);
+                        let rest = Vec2::new(tw, ui.available_height());
+                        if self.map(ui, rest, &tr, out.dropped) {
+                            out.act = Some(Act::Click);
                         }
-                    }
-                    ui.add_space(8.0);
-                    label(ui, &tr("Seed"));
-                    let caret = (self.focus == Some(Focus::Seed)).then(|| self.s.seed.to_string().len());
-                    let resp = ds::text_field(ui, &self.s.seed.to_string(), caret, "", Vec2::new(SIDE, 40.0)).on_hover_cursor(egui::CursorIcon::Text);
-                    on_field |= resp.hovered();
-                    if resp.clicked() {
-                        self.focus = Some(Focus::Seed);
-                    }
-                    if ui.add(ds::Plate::new(&tr("New seed")).width(SIDE).height(40.0)).clicked() {
-                        self.s.seed = crate::new_game::wall_ticks().wrapping_mul(2_654_435_761);
-                        act = Some(Act::Click);
-                    }
-                    ui.add_space(8.0);
-                    let hint = Font { size: 14.0, line: 20.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
-                    let text = tr("The same seed and settings make the same galaxy.");
-                    Text::new(&text, hint).color(k.ink_muted).lines(3).show(ui, Vec2::new(SIDE, 60.0));
+                    });
                 });
-                ui.add_space(32.0);
-                // The empires.
-                ui.vertical(|ui| {
-                    let tw = w - SIDE - 32.0;
-                    ui.set_width(tw);
-                    ui.set_height(body);
-                    ds::heading_label(ui, &tr("Empires"));
-                    ui.add_space(12.0);
-                    let widths = [48.0, 0.0, 0.0, 150.0, 0.0, 104.0, 0.0, 0.0, 0.0, 40.0];
-                    let (head, _) = ui.allocate_exact_size(Vec2::new(tw, 24.0), egui::Sense::hover());
-                    let cols = ds::columns(head, &widths, 10.0);
-                    let heads_l = ["".to_string(), tr("Race"), tr("Name"), game(&texts.get(15, 2, 0xb)), game(&texts.get(15, 2, 0xa)), tr("Planets"), tr("Computer"), tr("Aggressiveness"), tr("Relations"), String::new()];
-                    let refs: Vec<&str> = heads_l.iter().map(String::as_str).collect();
-                    ds::table_head(ui, &cols, &refs, &[]);
-                    ui.add_space(6.0);
-                    let mut remove = None;
-                    let n = self.s.empires.len();
-                    let pick = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.04, upper: false, lcd: false };
-                    for i in 0..n {
-                        let (row, resp) = ui.allocate_exact_size(Vec2::new(tw, 52.0), egui::Sense::hover());
-                        ds::row_back(ui, row, ds::hover_t(ui.ctx(), resp.id, ui.rect_contains_pointer(row)) * 0.6, i == 0);
-                        let c = ds::columns(row, &widths, 10.0);
-                        let cell = |r: Rect, h: f32| Rect::from_center_size(r.center(), Vec2::new(r.width(), h));
-                        let mut u: Vec<egui::Ui> = c.iter().map(|&r| ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)))).collect();
-                        let e = &mut self.s.empires[i];
-                        // The race's head.
-                        let hr = Rect::from_center_size(c[0].center(), Vec2::splat(40.0));
-                        let u0 = &u[0];
-                        u0.painter().rect_filled(hr, ds::RADIUS_PLATE, egui::Color32::BLACK);
-                        if let Some(t) = heads(u0.ctx(), e.race) {
-                            egui::Image::new(egui::load::SizedTexture::new(t.id(), hr.size())).corner_radius(ds::RADIUS_PLATE).paint_at(u0, hr);
-                        }
-                        ds::rim(u0.painter(), hr, ds::RADIUS_PLATE, k.rim);
-                        let mut select = |j: usize, id: &str, value: String, rows: Vec<(i32, String, bool)>| -> Option<i32> {
-                            let sid = u[j].id().with((id, i));
-                            dropped |= u[j].memory(|m| m.data.get_temp::<bool>(sid).unwrap_or(false));
-                            ds::select(&mut u[j], (id, i), &value, &rows, cell(c[j], 38.0).size(), pick, k.ink).1.flatten()
-                        };
-                        let race_rows = races.iter().map(|&r| (r as i32, race_name(r), false)).collect();
-                        if let Some(r) = select(1, "cg-race", race_name(e.race), race_rows) {
-                            e.race = r as u8;
-                            act = Some(Act::Click);
-                        }
-                        let tech_rows = (0..=3).map(|t| (t, game(&texts.get(15, 5, t as u16 + 1)), false)).collect();
-                        if let Some(t) = select(4, "cg-tech", game(&texts.get(15, 5, e.tech as u16 + 1)), tech_rows) {
-                            e.tech = t as u8;
-                            act = Some(Act::Click);
-                        }
-                        if i > 0 {
-                            let level_rows = (1..=3).map(|l| (l, game(&texts.get(15, 4, l as u16)), false)).collect();
-                            if let Some(l) = select(6, "cg-level", game(&texts.get(15, 4, e.level as u16)), level_rows) {
-                                e.level = l as u8;
-                                act = Some(Act::Click);
-                            }
-                            let aggr = ["Low", "Normal", "High"];
-                            let aggr_rows = (0..3).map(|a| (a, tr(aggr[a as usize]), false)).collect();
-                            if let Some(a) = select(7, "cg-aggr", tr(aggr[e.aggression.min(2) as usize]), aggr_rows) {
-                                e.aggression = a as u8;
-                                act = Some(Act::Click);
-                            }
-                            let rel = ["Hostile", "Neutral", "Friendly"];
-                            let rel_rows = (0..3).map(|a| (a, tr(rel[a as usize]), false)).collect();
-                            if let Some(a) = select(8, "cg-rel", tr(rel[e.relation.min(2) as usize]), rel_rows) {
-                                e.relation = a as u8;
-                                act = Some(Act::Click);
-                            }
-                        } else {
-                            let f = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
-                            Text::new(&tr("You"), f).color(k.info).paint(&u[6], c[6].shrink2(Vec2::new(14.0, 0.0)));
-                        }
-                        let e = &mut self.s.empires[i];
-                        // The name.
-                        let caret = (self.focus == Some(Focus::Name(i))).then(|| e.name.chars().count());
-                        let resp = ds::text_field(&mut u[2], &e.name, caret, &race_name(e.race), cell(c[2], 38.0).size()).on_hover_cursor(egui::CursorIcon::Text);
-                        on_field |= resp.hovered();
-                        if resp.clicked() {
-                            self.focus = Some(Focus::Name(i));
-                        }
-                        // The money and the start planets.
-                        let (_, d) = ds::stepper(&mut u[3], &format!("$ {}", e.money), c[3].width() - 64.0);
-                        if d != 0 {
-                            e.money = money_step(e.money, d > 0);
-                            act = Some(Act::Click);
-                        }
-                        let (_, d) = ds::stepper(&mut u[5], &e.planets.to_string(), c[5].width() - 64.0);
-                        let p = (e.planets as i32 + d).clamp(START_PLANETS.0 as i32, START_PLANETS.1 as i32) as u8;
-                        if p != e.planets {
-                            e.planets = p;
-                            act = Some(Act::Click);
-                        }
-                        if i > 0 && n - 1 > COMPUTERS.0 && ds::pressed(&u[9].add(ds::IconKey::icon(ds::Icon::Trash).size(Vec2::splat(36.0)).tip(&tr("Remove")))) {
-                            remove = Some(i);
-                        }
-                        ui.add_space(6.0);
-                    }
-                    if let Some(i) = remove {
-                        self.s.empires.remove(i);
-                        self.focus = None;
-                        act = Some(Act::Click);
-                    }
-                    ui.add_space(10.0);
-                    if ui.add_enabled(self.s.empires.len() <= COMPUTERS.1, ds::Plate::new(&tr("Add computer empire")).width(300.0).height(40.0)).clicked() {
-                        self.s.add(&races);
-                        act = Some(Act::Click);
-                    }
-                    ui.add_space(24.0);
-                    let rest = Vec2::new(tw, ui.available_height());
-                    if self.map(ui, rest, &tr, dropped) {
-                        act = Some(Act::Click);
-                    }
+            } else {
+                // A narrower page (a larger UI scale): the table over the galaxy and the map, all scrolling (sideways
+                // too, where the table's narrowest is wider than the page).
+                // Bars that show without the pointer over them: the page hints at what lies past its edge.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_width: 8.0, ..egui::style::ScrollStyle::solid() };
+                let cw = (w - ui.spacing().scroll.allocated_width()).max(TABLE_MIN);
+                egui::ScrollArea::both().id_salt("cg-body").max_height(body).auto_shrink([false; 2]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    ui.vertical(|ui| {
+                        ui.set_width(cw);
+                        self.empire_table(ui, cw, texts, &mut heads, &mut out);
+                        ui.add_space(24.0);
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing = Vec2::ZERO;
+                            ui.vertical(|ui| {
+                                ui.set_width(SIDE);
+                                self.galaxy_column(ui, texts, &mut out);
+                            });
+                            ui.add_space(32.0);
+                            ui.vertical(|ui| {
+                                if self.map(ui, Vec2::new(cw - SIDE - 32.0, NARROW_MAP_H), &tr, out.dropped) {
+                                    out.act = Some(Act::Click);
+                                }
+                            });
+                        });
+                    });
                 });
-            });
+            }
             ui.add_space(20.0);
             // The footer: Start and Back.
             let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 64.0), egui::Sense::hover());
@@ -595,16 +510,159 @@ impl CustomPage {
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
             child.spacing_mut().item_spacing.x = 12.0;
             if child.add(ds::Plate::new(&game(&texts.get(15, 2, 2))).primary(true).width(200.0)).clicked() {
-                act = Some(Act::Start);
+                out.act = Some(Act::Start);
             }
             if child.add(ds::Plate::new(&game(&texts.get(15, 2, 3))).width(200.0)).clicked() {
-                act = Some(Act::Back);
+                out.act = Some(Act::Back);
             }
         });
-        if pressed && !on_field {
+        if pressed && !out.on_field {
             self.focus = None;
         }
-        act
+        out.act
+    }
+
+    /// The galaxy's settings ([`SIDE`] wide): the planet count, the seed, New seed.
+    fn galaxy_column(&mut self, ui: &mut egui::Ui, texts: &UiTexts, out: &mut Out) {
+        let k = ds::tokens();
+        let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
+        let game = |b: &[u8]| ig2_formats::text::decode(b, texts.lang).trim().trim_end_matches(':').trim().to_string();
+        ui.spacing_mut().item_spacing.y = 12.0;
+        ds::heading_label(ui, &tr("Galaxy"));
+        let label = |ui: &mut egui::Ui, s: &str| Text::new(s, Font::LABEL).color(k.ink_muted).show(ui, Vec2::new(SIDE, 18.0));
+        label(ui, &game(&texts.get(15, 2, 8)));
+        let (_, d) = ds::stepper(ui, &self.s.planets.to_string(), SIDE - 64.0);
+        if d != 0 {
+            let n = (self.s.planets + 5 * d).clamp(PLANETS.0, PLANETS.1);
+            if n != self.s.planets {
+                self.s.planets = n;
+                out.act = Some(Act::Click);
+            }
+        }
+        ui.add_space(8.0);
+        label(ui, &tr("Seed"));
+        let caret = (self.focus == Some(Focus::Seed)).then(|| self.s.seed.to_string().len());
+        let resp = ds::text_field(ui, &self.s.seed.to_string(), caret, "", Vec2::new(SIDE, 40.0)).on_hover_cursor(egui::CursorIcon::Text);
+        out.on_field |= resp.hovered();
+        if resp.clicked() {
+            self.focus = Some(Focus::Seed);
+        }
+        if ui.add(ds::Plate::new(&tr("New seed")).width(SIDE).height(40.0)).clicked() {
+            self.s.seed = crate::new_game::wall_ticks().wrapping_mul(2_654_435_761);
+            out.act = Some(Act::Click);
+        }
+        ui.add_space(8.0);
+        let hint = Font { size: 14.0, line: 20.0, weight: Weight::Regular, tracking: 0.04, upper: false, lcd: false };
+        let text = tr("The same seed and settings make the same galaxy.");
+        Text::new(&text, hint).color(k.ink_muted).lines(3).show(ui, Vec2::new(SIDE, 60.0));
+    }
+
+    /// The empires' table `tw` wide and Add computer empire under it.
+    fn empire_table(&mut self, ui: &mut egui::Ui, tw: f32, texts: &UiTexts, heads: &mut dyn FnMut(&egui::Context, u8) -> Option<egui::TextureHandle>, out: &mut Out) {
+        let k = ds::tokens();
+        let tr = |en: &str| ig2_formats::text::decode(&texts.ours(en), texts.lang);
+        let game = |b: &[u8]| ig2_formats::text::decode(b, texts.lang).trim().trim_end_matches(':').trim().to_string();
+        let races = texts.playable_races();
+        let race_name = |r: u8| game(&texts.race(r));
+        ds::heading_label(ui, &tr("Empires"));
+        ui.add_space(12.0);
+        let widths = [48.0, 0.0, 0.0, 150.0, 0.0, 104.0, 0.0, 0.0, 0.0, 40.0];
+        let (head, _) = ui.allocate_exact_size(Vec2::new(tw, 24.0), egui::Sense::hover());
+        let cols = ds::columns(head, &widths, 10.0);
+        let heads_l = ["".to_string(), tr("Race"), tr("Name"), game(&texts.get(15, 2, 0xb)), game(&texts.get(15, 2, 0xa)), tr("Planets"), tr("Computer"), tr("Aggressiveness"), tr("Relations"), String::new()];
+        let refs: Vec<&str> = heads_l.iter().map(String::as_str).collect();
+        ds::table_head(ui, &cols, &refs, &[]);
+        ui.add_space(6.0);
+        let mut remove = None;
+        let n = self.s.empires.len();
+        let pick = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.04, upper: false, lcd: false };
+        for i in 0..n {
+            let (row, resp) = ui.allocate_exact_size(Vec2::new(tw, 52.0), egui::Sense::hover());
+            ds::row_back(ui, row, ds::hover_t(ui.ctx(), resp.id, ui.rect_contains_pointer(row)) * 0.6, i == 0);
+            let c = ds::columns(row, &widths, 10.0);
+            let cell = |r: Rect, h: f32| Rect::from_center_size(r.center(), Vec2::new(r.width(), h));
+            let mut u: Vec<egui::Ui> = c.iter().map(|&r| ui.new_child(egui::UiBuilder::new().max_rect(r).layout(egui::Layout::left_to_right(egui::Align::Center)))).collect();
+            let e = &mut self.s.empires[i];
+            // The race's head.
+            let hr = Rect::from_center_size(c[0].center(), Vec2::splat(40.0));
+            let u0 = &u[0];
+            u0.painter().rect_filled(hr, ds::RADIUS_PLATE, egui::Color32::BLACK);
+            if let Some(t) = heads(u0.ctx(), e.race) {
+                egui::Image::new(egui::load::SizedTexture::new(t.id(), hr.size())).corner_radius(ds::RADIUS_PLATE).paint_at(u0, hr);
+            }
+            ds::rim(u0.painter(), hr, ds::RADIUS_PLATE, k.rim);
+            let mut select = |j: usize, id: &str, value: String, rows: Vec<(i32, String, bool)>| -> Option<i32> {
+                let sid = u[j].id().with((id, i));
+                out.dropped |= u[j].memory(|m| m.data.get_temp::<bool>(sid).unwrap_or(false));
+                ds::select(&mut u[j], (id, i), &value, &rows, cell(c[j], 38.0).size(), pick, k.ink).1.flatten()
+            };
+            let race_rows = races.iter().map(|&r| (r as i32, race_name(r), false)).collect();
+            if let Some(r) = select(1, "cg-race", race_name(e.race), race_rows) {
+                e.race = r as u8;
+                out.act = Some(Act::Click);
+            }
+            let tech_rows = (0..=3).map(|t| (t, game(&texts.get(15, 5, t as u16 + 1)), false)).collect();
+            if let Some(t) = select(4, "cg-tech", game(&texts.get(15, 5, e.tech as u16 + 1)), tech_rows) {
+                e.tech = t as u8;
+                out.act = Some(Act::Click);
+            }
+            if i > 0 {
+                let level_rows = (1..=3).map(|l| (l, game(&texts.get(15, 4, l as u16)), false)).collect();
+                if let Some(l) = select(6, "cg-level", game(&texts.get(15, 4, e.level as u16)), level_rows) {
+                    e.level = l as u8;
+                    out.act = Some(Act::Click);
+                }
+                let aggr = ["Low", "Normal", "High"];
+                let aggr_rows = (0..3).map(|a| (a, tr(aggr[a as usize]), false)).collect();
+                if let Some(a) = select(7, "cg-aggr", tr(aggr[e.aggression.min(2) as usize]), aggr_rows) {
+                    e.aggression = a as u8;
+                    out.act = Some(Act::Click);
+                }
+                let rel = ["Hostile", "Neutral", "Friendly"];
+                let rel_rows = (0..3).map(|a| (a, tr(rel[a as usize]), false)).collect();
+                if let Some(a) = select(8, "cg-rel", tr(rel[e.relation.min(2) as usize]), rel_rows) {
+                    e.relation = a as u8;
+                    out.act = Some(Act::Click);
+                }
+            } else {
+                let f = Font { size: 16.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
+                Text::new(&tr("You"), f).color(k.info).paint(&u[6], c[6].shrink2(Vec2::new(14.0, 0.0)));
+            }
+            let e = &mut self.s.empires[i];
+            // The name.
+            let caret = (self.focus == Some(Focus::Name(i))).then(|| e.name.chars().count());
+            let resp = ds::text_field(&mut u[2], &e.name, caret, &race_name(e.race), cell(c[2], 38.0).size()).on_hover_cursor(egui::CursorIcon::Text);
+            out.on_field |= resp.hovered();
+            if resp.clicked() {
+                self.focus = Some(Focus::Name(i));
+            }
+            // The money and the start planets.
+            let (_, d) = ds::stepper(&mut u[3], &format!("$ {}", e.money), c[3].width() - 64.0);
+            if d != 0 {
+                e.money = money_step(e.money, d > 0);
+                out.act = Some(Act::Click);
+            }
+            let (_, d) = ds::stepper(&mut u[5], &e.planets.to_string(), c[5].width() - 64.0);
+            let p = (e.planets as i32 + d).clamp(START_PLANETS.0 as i32, START_PLANETS.1 as i32) as u8;
+            if p != e.planets {
+                e.planets = p;
+                out.act = Some(Act::Click);
+            }
+            if i > 0 && n - 1 > COMPUTERS.0 && ds::pressed(&u[9].add(ds::IconKey::icon(ds::Icon::Trash).size(Vec2::splat(36.0)).tip(&tr("Remove")))) {
+                remove = Some(i);
+            }
+            ui.add_space(6.0);
+        }
+        if let Some(i) = remove {
+            self.s.empires.remove(i);
+            self.focus = None;
+            out.act = Some(Act::Click);
+        }
+        ui.add_space(10.0);
+        if ui.add_enabled(self.s.empires.len() <= COMPUTERS.1, ds::Plate::new(&tr("Add computer empire")).width(300.0).height(40.0)).clicked() {
+            self.s.add(&races);
+            out.act = Some(Act::Click);
+        }
     }
 }
 

@@ -230,6 +230,8 @@ pub struct State {
     pub pics: Option<Pics>,
     tri: bool,
     limit: bool,
+    /// How far a page too short for its panels is scrolled.
+    scroll: f32,
 }
 
 /// The list's rows in `sort` order (stable: ties keep the original's order).
@@ -298,6 +300,8 @@ const RING_GAP: f32 = 22.0;
 const MONEY_W: f32 = 400.0;
 const EMPIRE_W: f32 = 960.0;
 const ROW_H: f32 = 92.0;
+/// The list panel's least height: the charts beside it (60 shorter) keep their two columns of five plates and the swap.
+const LIST_MIN: f32 = 366.0;
 const GLYPH: egui::Vec2 = egui::Vec2::new(76.0, 40.0);
 /// The part of a leader's picture the rings show: the face (the 128-point picture has a wide margin).
 const HEAD_UV: Rect = Rect { min: pos2(0.14, 0.08), max: pos2(0.86, 0.80) };
@@ -308,18 +312,21 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
     let screen = ctx.screen_rect();
     let (w, h) = (screen.width(), screen.height());
-    let top = sm::bar_bottom(ctx) + 20.0;
-    // Shorter windows (a larger UI scale) close the board's gaps; the panels keep their sizes.
+    // Shorter windows (a larger UI scale) close the board's gaps; the panels keep their sizes, and a page still too
+    // short for them scrolls between the bar and the page's bottom.
     let g = ds::squeeze(h);
+    let bar = sm::bar_bottom(ctx);
+    let band = Rect::from_min_max(pos2(screen.left(), bar), pos2(screen.right(), ds::board_bottom(ctx)));
+    let top = bar + 20.0 - st.scroll;
     // Nothing painted behind the panels (the dimmed game shows, as on the other screens); the panel takes every
     // press the parts don't.
     egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
         let r = ui.max_rect();
         ui.allocate_rect(r, Sense::click_and_drag());
     });
-    let ring = RING.min(((w - 2.0 * ds::BOARD_EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(56.0);
-    rings(ctx, v, st, top, w, ring, &mut acts);
-    let money = ds::place(ctx, "imh-money", Rect::from_min_size(pos2((w - MONEY_W) / 2.0, top), vec2(MONEY_W, 186.0)), |ui| {
+    let ring = RING.min(((w - 2.0 * ds::BOARD_EDGE - MONEY_W - 2.0 * RING_GAP) / 2.0 - 3.0 * RING_GAP) / 4.0).max(40.0);
+    rings(ctx, v, st, top, ring, band, &mut acts);
+    let money = ds::place_cut(ctx, "imh-money", Rect::from_min_size(pos2((w - MONEY_W) / 2.0, top), vec2(MONEY_W, 186.0)), band, |ui| {
         if let Some(m) = &v.money {
             money_panel(ui, m, st, &mut acts);
         }
@@ -327,42 +334,67 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let money_bottom = if v.money.is_some() { money.response.rect.bottom() } else { top + ring + 24.0 };
     let ew = EMPIRE_W.min(w - 2.0 * ds::BOARD_EDGE);
     let ey = (top + 228.0 * g).max(money_bottom + 16.0);
-    let emp = ds::place(ctx, "imh-empire", Rect::from_min_size(pos2((w - ew) / 2.0, ey), vec2(ew, 0.0)), |ui| empire_panel(ui, v, st, ew, &mut acts));
+    let emp = ds::place_cut(ctx, "imh-empire", Rect::from_min_size(pos2((w - ew) / 2.0, ey), vec2(ew, 0.0)), band, |ui| empire_panel(ui, v, st, ew, &mut acts));
     let low = (top + 406.0 * g).max(emp.response.rect.bottom() + 20.0 * g);
-    let bottom = h - 80.0 * g;
+    let bottom = h - 80.0 * g - st.scroll;
     let half = (w - 3.0 * ds::BOARD_EDGE) / 2.0;
-    let list = Rect::from_min_max(pos2(ds::BOARD_EDGE, low), pos2(ds::BOARD_EDGE + half, bottom.max(low + 240.0)));
+    let list = Rect::from_min_max(pos2(ds::BOARD_EDGE, low), pos2(ds::BOARD_EDGE + half, bottom.max(low + LIST_MIN)));
     let t = ctx.animate_bool_with_time(egui::Id::new("imh-detail"), v.detail.is_some(), ds::anim(ds::OPEN_TIME));
     if t < 1.0 {
-        ds::place(ctx, "imh-list", list.translate(vec2(-12.0 * t, 0.0)), |ui| {
+        ds::place_cut(ctx, "imh-list", list.translate(vec2(-12.0 * t, 0.0)), band, |ui| {
             ui.set_opacity(1.0 - t);
             list_panel(ui, v, st, list.size(), &mut acts)
         });
     }
     if let Some(d) = &v.detail {
-        ds::place(ctx, "imh-detail", list.translate(vec2(12.0 * (1.0 - t), 0.0)), |ui| {
+        ds::place_cut(ctx, "imh-detail", list.translate(vec2(12.0 * (1.0 - t), 0.0)), band, |ui| {
             ui.set_opacity(t);
             detail_panel(ui, v, d, st, list.size(), &mut acts)
         });
     }
-    let charts = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - half, low), vec2(half, (list.height() - 60.0).max(200.0)));
-    ds::place(ctx, "imh-charts", charts, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
+    let charts = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - half, low), vec2(half, list.height() - 60.0));
+    let above_foot = band.with_max_y(band.bottom() - ds::FOOT_H - 12.0);
+    ds::place_cut(ctx, "imh-charts", charts, above_foot, |ui| charts_panel(ui, v, st, charts.size(), &mut acts));
     if ds::exit_plate(ctx, "imh-exit", &v.labels.exit, true) {
         acts.push(Act::Bar(sm::Act::Screen(2)));
     }
+    // How much taller the page is than the window: the list may reach the page's bottom beside the Exit plate, the
+    // charts stop above it.
+    let over = (list.bottom() - band.bottom()).max(charts.bottom() - above_foot.bottom()) + st.scroll;
+    page_scroll(ctx, st, band, over.max(0.0));
     acts
+}
+
+/// A page `over` points taller than `band`: the wheel the lists left scrolls it, a thin track at the right shows where.
+fn page_scroll(ctx: &egui::Context, st: &mut State, band: Rect, over: f32) {
+    if over <= 0.5 {
+        st.scroll = 0.0;
+        return;
+    }
+    let wheel = ctx.input(|i| if i.pointer.hover_pos().is_some_and(|p| band.contains(p)) { i.smooth_scroll_delta.y } else { 0.0 });
+    st.scroll = (st.scroll - wheel).clamp(0.0, over);
+    let k = ds::tokens();
+    let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Middle, egui::Id::new("imh-page-track")));
+    let x = band.right() - ds::BOARD_EDGE / 2.0;
+    let track = Rect::from_min_max(pos2(x - 3.0, band.top() + 20.0), pos2(x + 3.0, band.bottom() - ds::FOOT_H - 12.0));
+    p.rect_filled(track, 3, Color32::BLACK);
+    ds::rim(&p, track, 3, k.rim);
+    let all = track.height() + over;
+    let thumb = Rect::from_min_size(pos2(track.left(), track.top() + track.height() * st.scroll / all), vec2(track.width(), track.height() * track.height() / all));
+    p.rect_filled(thumb, 3, k.rim_bright);
 }
 
 /// The eight race columns as rings, four left of the money panel and four right of it: a met empire's leader in its
 /// ring and its name under it in the relation's colour, the others empty and faded.
-fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, w: f32, d: f32, acts: &mut Vec<Act>) {
+fn rings(ctx: &egui::Context, v: &View, st: &State, top: f32, d: f32, band: Rect, acts: &mut Vec<Act>) {
     let k = ds::tokens();
+    let w = ctx.screen_rect().width();
     let side = 4.0 * d + 3.0 * RING_GAP;
     for e in 1..=8usize {
         let x = if e <= 4 { ds::BOARD_EDGE + (e - 1) as f32 * (d + RING_GAP) } else { w - ds::BOARD_EDGE - side + (e - 5) as f32 * (d + RING_GAP) };
         let slot = Rect::from_min_size(pos2(x, top), vec2(d, d + 24.0));
         let row = v.empires.iter().find(|r| r.e == e);
-        ds::place(ctx, ("imh-ring", e), slot, |ui| {
+        ds::place_cut(ctx, ("imh-ring", e), slot, band, |ui| {
             let resp = ui.allocate_rect(slot, if row.is_some() { Sense::click() } else { Sense::hover() });
             let ring = Rect::from_min_size(slot.min, vec2(d, d));
             let on = v.selected == e;
@@ -547,12 +579,17 @@ fn list_panel(ui: &mut Ui, v: &View, st: &mut State, size: egui::Vec2, acts: &mu
     let planets = v.rows.iter().filter(|r| !r.fleet).count();
     let fleets = v.rows.len() - planets;
     let tabs = [format!("{}  {planets}", v.labels.planets), format!("{}  {fleets}", v.labels.fleets), format!("{}  {}", v.labels.empires, v.empires.len())];
-    let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(inner.min, vec2(inner.width() * 0.62, 36.0))));
-    if let Some(t) = ds::tabs(&mut strip, "imh-tabs", &tabs.iter().map(String::as_str).collect::<Vec<_>>(), st.tab) {
+    let tabs: Vec<&str> = tabs.iter().map(String::as_str).collect();
+    // Tabs too wide for their part (a narrower list) take the empire's name's room too (the empire panel shows it).
+    let named = ds::tabs_width(ui.ctx(), &tabs) <= inner.width() * 0.62;
+    let mut strip = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(inner.min, vec2(inner.width() * if named { 0.62 } else { 1.0 }, 36.0))));
+    if let Some(t) = ds::tabs(&mut strip, "imh-tabs", &tabs, st.tab) {
         st.tab = t;
     }
-    let name = Rect::from_min_max(pos2(inner.left() + inner.width() * 0.64, inner.top()), pos2(inner.right(), inner.top() + 36.0));
-    Text::new(&v.selected_name.0, Font::LABEL).right().shrink(10.0).color(k.ink_muted).paint(ui, name);
+    if named {
+        let name = Rect::from_min_max(pos2(inner.left() + inner.width() * 0.64, inner.top()), pos2(inner.right(), inner.top() + 36.0));
+        Text::new(&v.selected_name.0, Font::LABEL).right().shrink(10.0).color(k.ink_muted).paint(ui, name);
+    }
     let head = Rect::from_min_size(pos2(inner.left(), inner.top() + 46.0), vec2(inner.width(), 26.0));
     let foot = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 18.0), inner.right_bottom());
     let body = Rect::from_min_max(pos2(inner.left(), head.bottom() + 6.0), pos2(inner.right(), foot.top() - 10.0));
@@ -809,10 +846,20 @@ fn charts_panel(ui: &mut Ui, v: &View, st: &State, size: egui::Vec2, acts: &mut 
     let title = if v.star_log { &v.labels.star_log } else { v.charts.get(v.chart).unwrap_or(&v.labels.charts) };
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), 26.0));
     let tw = Text::new(title, Font::HEADING).shrink(15.0).color(k.ink).paint(ui, head.with_max_x(head.left() + head.width() * 0.55)).width;
+    let mut below = head.bottom();
     if !v.star_log {
-        Text::new(&v.series_names, Font::LABEL).right().shrink(10.0).baseline(ds::fit::baseline(head, Font::HEADING)).color(k.ink_muted).paint(ui, head.with_min_x(head.left() + tw + 16.0));
+        // The empires' names after the title, or on lines of their own under it where they don't fit there.
+        let legend = Text::new(&v.series_names, Font::LABEL).right().shrink(10.0).color(k.ink_muted);
+        let beside = head.with_min_x(head.left() + tw + 16.0);
+        if !legend.layout(ui.ctx(), beside.width()).cut {
+            legend.baseline(ds::fit::baseline(head, Font::HEADING)).paint(ui, beside);
+        } else {
+            let lines = Rect::from_min_size(pos2(head.left(), head.bottom() + 6.0), vec2(head.width(), 36.0));
+            Text::new(&v.series_names, Font::LABEL).lines(2).color(k.ink_muted).paint(ui, lines);
+            below = lines.bottom();
+        }
     }
-    let body = Rect::from_min_max(pos2(inner.left(), head.bottom() + 14.0), inner.right_bottom());
+    let body = Rect::from_min_max(pos2(inner.left(), below + 14.0), inner.right_bottom());
     if v.star_log {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
         egui::ScrollArea::vertical().id_salt("imh-log").auto_shrink([false; 2]).stick_to_bottom(true).show(&mut child, |ui| {

@@ -234,9 +234,13 @@ impl Page {
             let back_h = 44.0;
             // The board's rows 2 lower than the field's 12, their text 2 above the row's middle (the sections' 1).
             let list = Rect::from_min_max(Pos2::new(inner.left(), field.bottom() + 14.0), Pos2::new(inner.right(), inner.bottom() - back_h - 12.0));
-            // The list scrolls when the open topic's sections or a small window don't leave it room.
-            let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(list).layout(egui::Layout::top_down(egui::Align::Min)));
-            egui::ScrollArea::vertical().id_salt("help-topics").auto_shrink([false; 2]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded).show(&mut rows_ui, |ui| {
+            // The list scrolls when the open topic's sections or a small window don't leave it room, with the page's
+            // track at its right.
+            let rows_h: f32 = shown.iter().map(|&i| 42.0 + if i == s.sel { 36.0 * s.topics[i].subs.len() as f32 } else { 0.0 }).sum();
+            let over = rows_h > list.height() + 2.0;
+            let rows = if over { list.with_max_x(list.right() - 16.0) } else { list };
+            let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(rows).layout(egui::Layout::top_down(egui::Align::Min)));
+            let out = egui::ScrollArea::vertical().id_salt("help-topics").auto_shrink([false; 2]).scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden).show(&mut rows_ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
                 let row_font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
                 let sub_font = Font { size: 15.0, line: 18.0, weight: Weight::Medium, tracking: 0.10, upper: true, lcd: false };
@@ -271,6 +275,9 @@ impl Page {
                     }
                 }
             });
+            if over {
+                track(ui, &out, Rect::from_min_max(Pos2::new(list.right() - 8.0, list.top() + 4.0), Pos2::new(list.right(), list.bottom() - 4.0)), "help-topics-track");
+            }
             if shown.is_empty() {
                 Text::new(&tr("No topic found."), Font::BODY).color(k.ink_muted).paint(ui, Rect::from_min_size(Pos2::new(list.left() + 16.0, list.top()), Vec2::new(list.width() - 16.0, 26.0)));
             }
@@ -368,27 +375,33 @@ impl Page {
                 }
                 ui.add_space(24.0);
             });
-            // The board's track: 8 wide, 18 from the right edge, the thumb a lit plate; dragged, it scrolls.
-            let (view, content) = (out.inner_rect.height(), out.content_size.y);
-            if content > view + 1.0 {
-                let track = Rect::from_min_max(Pos2::new(art.right() - 26.0, art.top() + 32.0), Pos2::new(art.right() - 18.0, art.bottom() - 32.0));
-                let p = ui.painter();
-                p.rect_filled(track, 4, k.glass_deep);
-                ds::rim(p, track, 4, k.rim);
-                let th = (track.height() * view / content).max(24.0);
-                let max = content - view;
-                let mut state = out.state;
-                let resp = ui.interact(track.expand2(Vec2::new(6.0, 0.0)), ui.id().with("help-track"), Sense::click_and_drag());
-                if let Some(at) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
-                    state.offset.y = ((at.y - track.top() - th / 2.0) / (track.height() - th) * max).clamp(0.0, max);
-                    state.store(ui.ctx(), out.id);
-                }
-                let y = track.top() + (track.height() - th) * (state.offset.y / max).clamp(0.0, 1.0);
-                ui.painter().rect_filled(Rect::from_min_size(Pos2::new(track.left(), y), Vec2::new(track.width(), th)), 4, k.plate_high);
-            }
+            // The board's track: 8 wide, 18 from the right edge.
+            track(ui, &out, Rect::from_min_max(Pos2::new(art.right() - 26.0, art.top() + 32.0), Pos2::new(art.right() - 18.0, art.bottom() - 32.0)), "help-track");
         });
         act
     }
+}
+
+/// A scroll area's track at `track` while its content is taller than it: the thumb a lit plate; dragged, it scrolls.
+fn track<R>(ui: &egui::Ui, out: &egui::scroll_area::ScrollAreaOutput<R>, track: Rect, id: &str) {
+    let k = ds::tokens();
+    let (view, content) = (out.inner_rect.height(), out.content_size.y);
+    if content <= view + 1.0 {
+        return;
+    }
+    let p = ui.painter();
+    p.rect_filled(track, 4, k.glass_deep);
+    ds::rim(p, track, 4, k.rim);
+    let th = (track.height() * view / content).max(24.0);
+    let max = content - view;
+    let mut state = out.state;
+    let resp = ui.interact(track.expand2(Vec2::new(6.0, 0.0)), ui.id().with(id), Sense::click_and_drag());
+    if let Some(at) = resp.interact_pointer_pos().filter(|_| resp.dragged() || resp.clicked()) {
+        state.offset.y = ((at.y - track.top() - th / 2.0) / (track.height() - th) * max).clamp(0.0, max);
+        state.store(ui.ctx(), out.id);
+    }
+    let y = track.top() + (track.height() - th) * (state.offset.y / max).clamp(0.0, 1.0);
+    p.rect_filled(Rect::from_min_size(Pos2::new(track.left(), y), Vec2::new(track.width(), th)), 4, k.plate_high);
 }
 
 /// An all-capitals name ("GYÁRTÁS") in sentence case ("Gyártás"); others as they are.
