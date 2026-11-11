@@ -422,6 +422,20 @@ pub struct Target {
     pub tex: TexId,
     texture: wgpu::Texture,
     pub size: (u32, u32),
+    /// Where a dropped target hands its slot back for the next [`Renderer::target`] (`None`: kept for good).
+    release: Option<Released>,
+}
+
+/// The slots of dropped [`Target`]s: a screen opened again draws into its old ones (window-sized pictures piled up on
+/// the GPU until it ran out of memory).
+type Released = std::sync::Arc<std::sync::Mutex<Vec<usize>>>;
+
+impl Drop for Target {
+    fn drop(&mut self) {
+        if let Some(r) = &self.release {
+            r.lock().unwrap_or_else(|e| e.into_inner()).push(self.tex.0);
+        }
+    }
 }
 
 impl Target {
@@ -608,6 +622,10 @@ pub struct Renderer {
     format: wgpu::TextureFormat,
     /// The video frames' textures (one level, rewritten in place each frame), by texture id.
     videos: Vec<(TexId, wgpu::Texture)>,
+    /// Install pictures already uploaded, by path: a screen opened again reuses them (textures are never freed).
+    pub files: std::collections::HashMap<String, TexId>,
+    released: Released,
+    white: Option<TexId>,
     /// `--snapshot --backdrop`: the picture under a snapshot frame that has none (crate::backdrop).
     pub snapshot_backdrop: Option<(TexId, f32)>,
 }
@@ -717,6 +735,9 @@ impl Renderer {
             pipe3d,
             format,
             videos: Vec::new(),
+            files: Default::default(),
+            released: Default::default(),
+            white: None,
             snapshot_backdrop: None,
         }
     }
@@ -785,6 +806,29 @@ impl Renderer {
             })
         };
         [group(&view, &self.sampler), group(&view, &self.sampler_rep), group(&raw, &self.sampler_raw), group(&raw, &self.sampler_rep)]
+    }
+
+    /// Install picture `path`, uploaded once for the whole run ([`Renderer::files`]).
+    pub fn file_texture(&mut self, install: &ig2_formats::Install, path: &str) -> Result<TexId, String> {
+        if let Some(&t) = self.files.get(path) {
+            return Ok(t);
+        }
+        let t = self.add_texture(&Image::load(install, path)?);
+        self.files.insert(path.to_owned(), t);
+        Ok(t)
+    }
+
+    /// One shared white texture.
+    pub fn white(&mut self) -> TexId {
+        if self.white.is_none() {
+            self.white = Some(self.add_texture(&Image::white()));
+        }
+        self.white.unwrap_or(TexId(0))
+    }
+
+    /// How many texture slots the renderer holds.
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
     }
 
     /// A texture for a video's frames (re/screens/video.md §6): one level, bilinear like the remaster's video
@@ -1019,19 +1063,31 @@ impl Renderer {
 
     /// Draw `frame` into a new texture the quads can sample (the colony radar's picture of the terrain).
     pub fn render_texture(&mut self, frame: &Frame, size: (u32, u32)) -> TexId {
-        let t = self.target(size);
+        let mut t = self.target(size);
         self.draw(frame, &t.texture, size, 0.0);
+        // The caller keeps only the id.
+        t.release = None;
         t.tex
     }
 
     /// A texture the quads can sample that frames can be drawn into again and again ([`Renderer::draw_into`]).
     pub fn target(&mut self, size: (u32, u32)) -> Target {
         let (texture, [a, b, c, e]) = self.target_texture(size);
-        self.textures.push(a);
-        self.textures_rep.push(b);
-        self.textures_raw.push(c);
-        self.textures_raw_rep.push(e);
-        Target { tex: TexId(self.textures.len() - 1), texture, size }
+        let free = self.released.lock().unwrap_or_else(|e| e.into_inner()).pop();
+        let id = match free {
+            Some(k) => {
+                (self.textures[k], self.textures_rep[k], self.textures_raw[k], self.textures_raw_rep[k]) = (a, b, c, e);
+                k
+            }
+            None => {
+                self.textures.push(a);
+                self.textures_rep.push(b);
+                self.textures_raw.push(c);
+                self.textures_raw_rep.push(e);
+                self.textures.len() - 1
+            }
+        };
+        Target { tex: TexId(id), texture, size, release: Some(self.released.clone()) }
     }
 
     /// Draw `frame` into `t`, resized to `size` first (same [`TexId`]).
@@ -2644,6 +2700,24 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A screen opened again draws into its dropped targets' slots and shares the white texture, so its textures don't
+    /// pile up on the GPU; a [`Renderer::render_texture`] keeps its slot.
+    #[test]
+    fn reopened_screens_reuse_their_textures() {
+        let Ok(mut r) = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb) else { return };
+        let white = r.white();
+        let kept = r.render_texture(&Frame::new([0.0; 4]), (4, 4));
+        let first = r.target((64, 64)).tex;
+        let n = r.texture_count();
+        for _ in 0..5 {
+            assert_eq!(r.white(), white);
+            let t = r.target((64, 64));
+            assert_ne!(t.tex, kept);
+            assert_eq!(t.tex, first);
+        }
+        assert_eq!(r.texture_count(), n);
+    }
 
     /// ADR 0054 §2: an upscaled picture is the top level and halves down to the image's own pixels, then the PVR's
     /// levels; a pack's picture of any size is box-filtered all the way; without either the image's chain is unchanged.

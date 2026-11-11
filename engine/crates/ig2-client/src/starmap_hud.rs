@@ -242,7 +242,7 @@ impl Console {
         let place = Placement::add_to_scene(model.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
         let mut dynamic = Vec::new();
         let mut draws = Vec::new();
-        let white = r.add_texture(&crate::assets::Image::white());
+        let white = r.white();
         for p in &model.parts {
             let start = dynamic.len() as u32;
             for v in &p.verts {

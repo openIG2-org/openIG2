@@ -337,8 +337,7 @@ impl Mesh {
             .into_iter()
             .filter_map(|p| {
                 let path = p.texture.as_deref()?;
-                let t = crate::assets::Image::load(install, path).ok()?;
-                Some((p.verts, r.add_texture(&t)))
+                Some((p.verts, r.file_texture(install, path).ok()?))
             })
             .collect();
         Some(Self { origin: m.origin, parts })
@@ -366,7 +365,7 @@ pub struct Panel {
 impl Panel {
     pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install) -> Self {
         let icons = (0..10).map(|i| Mesh::load(r, install, "vector/spacewar/", &format!("ikon{i}.xvb"), "textures/spacewar/")).collect();
-        let final2x = crate::assets::Image::load(install, "dataraw/textures/spacewar/final2x_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
+        let final2x = r.file_texture(install, "dataraw/textures/spacewar/final2x_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok();
         Self { icons, no: Mesh::load(r, install, "vector/spacewar/", "no.xvb", "textures/spacewar/"), clock: HashMap::new(), final2x }
     }
 
@@ -383,7 +382,7 @@ impl Mesh {
     /// A `vector/spacewar/` model posed at animation frame `frame` (`SetFrame`).
     fn load_at(r: &mut crate::render::Renderer, install: &ig2_formats::Install, name: &str, frame: usize) -> Option<Self> {
         let m = crate::scene::Model::load_at(install, "vector/spacewar/", name, "textures/spacewar/", Some(frame)).ok()?;
-        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
+        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.file_texture(install, p.texture.as_deref()?).ok()?))).collect();
         Some(Mesh { origin: m.origin, parts })
     }
 
@@ -397,7 +396,7 @@ impl Mesh {
         if w > 0.0 {
             m = m.lerp(&at(f1)?, w);
         }
-        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.add_texture(&crate::assets::Image::load(install, p.texture.as_deref()?).ok()?)))).collect();
+        let parts = m.parts.into_iter().filter_map(|p| Some((p.verts, r.file_texture(install, p.texture.as_deref()?).ok()?))).collect();
         Some(Mesh { origin: m.origin, parts })
     }
 
@@ -448,7 +447,7 @@ pub struct FxGfx {
 impl FxGfx {
     fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install) -> Self {
         let debris = std::array::from_fn(|i| Mesh::load(r, install, "vector/spacewar/", &format!("darab{}.xvb", i + 1), "textures/spacewar/"));
-        let tex = |r: &mut crate::render::Renderer, n: &str| crate::assets::Image::load(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
+        let tex = |r: &mut crate::render::Renderer, n: &str| r.file_texture(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok();
         let fighter = Mesh::load(r, install, "vector/spacewar/", "vad10.xvb", "textures/spacewar/");
         let extra = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
         Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare"), extra }
@@ -1532,11 +1531,11 @@ impl Gfx {
         let console = crate::starmap_hud::Console::load_sides(r, install, s.kering, &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]).map_err(|e| eprintln!("ig2-client: kezel.xvb: {e}")).ok();
         let fx_textures = std::array::from_fn(|i| {
             let path = format!("dataraw/textures/spacewar/{}_bmp.pvr", crate::spacewar_fx::SET_TEXTURES[i]);
-            crate::assets::Image::load(install, &path).map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t))
+            r.file_texture(install, &path).map_err(|e| eprintln!("ig2-client: {e}")).ok()
         });
         let forms = s.fx.map_or_else(Vec::new, |(fx, _)| fx.tables.forms.iter().map(|f| if f.name.is_empty() { None } else { Mesh::load(r, install, "vector/spacewar/", &f.name, "textures/spacewar/") }).collect());
-        let szar = crate::assets::Image::load(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t));
-        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), point: crate::assets::Image::load(install, "star.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| r.add_texture(&t)), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None, column_tex: None, info_tex: None }
+        let szar = r.file_texture(install, "dataraw/textures/spacewar/szar_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok();
+        Self { models: Models::load(r, install, s), panel: Panel::load(r, install), console, stars: star_field(), fx_textures, forms, szar, fx: FxGfx::load(r, install), point: r.file_texture(install, "star.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok(), cursor: crate::assets::Image::load(install, "dataraw/screen/mouse_bmp.pvr").map_err(|e| eprintln!("ig2-client: {e}")).ok().map(|t| (r.add_texture(&t), [t.width as f32, t.height as f32])), column_target: None, info_target: None, column_tex: None, info_tex: None }
     }
 }
 

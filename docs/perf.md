@@ -87,6 +87,10 @@ the start:
 - **The colony scene rebuilt from disk** (`ColonyScene::load` on every building built, destroyed or finished: in a
   ground war at each building lost) read and uploaded every texture again (and kept the old ones on the GPU) and
   decoded every building's levels of detail again. `ColonyScene::reload` keeps the scene's textures and models.
+- **Textures were never freed** (video memory ran out after many colony visits and space battles, worse with texture
+  upscaling). Install pictures are uploaded once per run by path (`Renderer::file_texture`), there is one shared white
+  texture, and a dropped render target hands its slot back so a reopened screen reuses it
+  (`render::tests::reopened_screens_reuse_their_textures`).
 - **The spy recount of every tick** (`MULTIGET_Spy`'s `HanyKemVan`, `Game::run_tick`) went through `with_spies`,
   which reads and writes back the colony, combat, research, relations, kidnap and random worlds for a count of the
   rosters: a sixth of a late tick. It now reads and writes the rosters only.

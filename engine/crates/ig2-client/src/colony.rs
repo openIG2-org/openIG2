@@ -9,7 +9,6 @@ use ig2_rules::UnitModels;
 use ig2_sim::ground::{flag, Field, GroundMap};
 use ig2_sim::save::SaveState;
 
-use crate::assets::Image;
 use crate::render::{Frame, Renderer, TexId};
 use crate::render3d::{MeshDraw, MeshId, MeshVertex, Scene3d, SceneUniforms, Shadow, ShadowMap};
 use crate::scene::{self, Look, Model, Placement, Transform, V3, M3};
@@ -1241,8 +1240,8 @@ fn texture(r: &mut Renderer, install: &Install, cache: &mut HashMap<String, TexI
     if let Some(&t) = cache.get(path) {
         return t;
     }
-    let t = match Image::load(install, path) {
-        Ok(img) => r.add_texture(&img),
+    let t = match r.file_texture(install, path) {
+        Ok(t) => t,
         Err(e) => {
             eprintln!("ig2-client: {e}");
             white
@@ -1285,7 +1284,7 @@ struct Kept {
 
 impl ColonyScene {
     pub fn load(r: &mut Renderer, install: &Install, rules: &ig2_rules::Rules, maps: &[GroundMap], s: &ColonySnap) -> Result<Self, String> {
-        let white = r.add_texture(&Image::white());
+        let white = r.white();
         Self::load_with(r, install, rules, maps, s, Kept { textures: HashMap::new(), white, levels: HashMap::new(), finest: HashMap::new(), roads: None })
     }
 

@@ -47,7 +47,8 @@ impl Playback {
     /// `OpenBink(bik, place, force)` + `PlayBink(_, looping)`: `None` when the cut-scenes are off (and not
     /// forced) or the file doesn't open (`ig2_binkres` 0).
     pub fn open(install: &ig2_formats::Install, bik: &str, place: Place, looping: bool, force: bool) -> Option<Self> {
-        if !force && !cutscenes_enabled() {
+        // `"messages/"`: a message without a clip (`clip_names`), nothing to open or report.
+        if (!force && !cutscenes_enabled()) || bik.ends_with('/') {
             return None;
         }
         let path = super::mp4_path(bik);
