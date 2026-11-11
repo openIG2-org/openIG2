@@ -154,27 +154,41 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         categories(ui, v, screen.width() - 2.0 * ds::EDGE, &mut acts)
     });
     let room = nav.response.rect.top() - 16.0 - top;
+    // The list gives way when it and the info would meet (a large UI scale).
+    let lw = LIST_W.min(screen.width() - 2.0 * ds::EDGE - INFO_W - 16.0);
     // The auto switches as one strip right over the tiles; the list takes all the height above it.
     egui::Area::new(egui::Id::new("rmh-auto")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, nav.response.rect.top() - 16.0 - screen.bottom())).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
-        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, &mut acts));
+        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| auto(ui, v, lw, &mut acts));
     });
     egui::Area::new(egui::Id::new("rmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
         // The panel's pads, the title row and its gap, the strip and the gap over it.
-        ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, (room - 32.0 - 34.0 - AUTO_H - 16.0).max(26.0 * 4.0), &mut acts));
+        ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, lw, (room - 32.0 - 34.0 - AUTO_H - 16.0).max(26.0 * 4.0), &mut acts));
     });
     egui::Area::new(egui::Id::new("rmh-info")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
-        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| info(ui, v, room - 32.0, &mut acts));
+        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| {
+            // Taller than its room on the last frame (a large UI scale): it scrolls in all of the room. Only then: a
+            // scroll area keeps the height of its first frame, when the room is still a guess.
+            let tall_id = egui::Id::new("rmh-info-tall");
+            let tall = ui.ctx().data(|d| d.get_temp::<bool>(tall_id)).unwrap_or(false);
+            let h = room - 32.0;
+            let content = if tall {
+                egui::ScrollArea::vertical().id_salt("rmh-info-scroll").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(h).min_scrolled_height(h).show(ui, |ui| info(ui, v, h, &mut acts)).content_size.y
+            } else {
+                ui.scope(|ui| info(ui, v, h, &mut acts)).response.rect.height()
+            };
+            ui.ctx().data_mut(|d| d.insert_temp(tall_id, content > h + 0.5));
+        });
     });
     acts
 }
 
 /// The category's title with its owned / known count, its known techs with their status at the right.
-fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
+fn list(ui: &mut Ui, v: &View, lw: f32, height: f32, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let w = LIST_W - 32.0;
+    let w = lw - 32.0;
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 8.0;
     let area = v.areas.iter().find(|a| a.n == v.area);
@@ -222,9 +236,9 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
 }
 
 /// The auto-research switches: their heading over one row of three plates, lit while on.
-fn auto(ui: &mut Ui, v: &View, acts: &mut Vec<Act>) {
+fn auto(ui: &mut Ui, v: &View, lw: f32, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let w = LIST_W - 32.0;
+    let w = lw - 32.0;
     ui.set_width(w);
     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
     Text::new(&v.labels.auto, Font::LABEL).color(k.ink_muted).show(ui, vec2(w, 18.0));
@@ -378,41 +392,41 @@ fn stat_lines(lines: &[String]) -> (String, Vec<(String, String)>) {
     (body.join(" "), stats)
 }
 
-/// The categories as tiles in their three groups (`.grp`, flex 3 : 2 : 1, two rows), the exit at the right.
+/// The categories as tiles in their three groups (`.grp`, flex 3 : 2 : 1, two rows), the exit at the right. Short of
+/// room (a large UI scale) the groups shrink to 80 % of their content and then scroll; the exit stays on screen.
 fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
-    let k = ds::tokens();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let room = width - ds::EXIT_W - 3.0 * 12.0;
         let h = 8.0 + 16.0 + 6.0 + 2.0 * TILE_H + 6.0 + 10.0;
         let flex: Vec<f32> = GROUPS.iter().map(|ns| ns.len().div_ceil(2) as f32).collect();
-        let least: Vec<f32> = GROUPS.iter().map(|ns| {
+        let mut least: Vec<f32> = GROUPS.iter().map(|ns| {
             let need = needs(ui.ctx(), v, ns);
             need.iter().sum::<f32>() + 6.0 * (need.len() - 1) as f32 + 20.0
         }).collect();
+        let scale = (room / least.iter().sum::<f32>()).clamp(0.8, 1.0);
+        least.iter_mut().for_each(|l| *l *= scale);
         let widths = flex_widths(&flex, &least, room);
-        for (g, ns) in GROUPS.iter().enumerate() {
-            let gw = widths[g];
-            let (r, _) = ui.allocate_exact_size(vec2(gw, h), Sense::hover());
-            let p = ui.painter();
-            p.rect_filled(r, ds::RADIUS_PANEL, k.glass_frame);
-            ds::rim(p, r, ds::RADIUS_PANEL, k.metal_dark);
-            ds::edge_line(p, r, ds::RADIUS_PANEL as f32, true, k.metal_light);
-            let head = Rect::from_min_size(r.min + vec2(10.0, 8.0), vec2(gw - 20.0, 16.0));
-            Text::new(&v.labels.groups[g], Font::LABEL.sized(12.0).tracking(0.16)).color(k.ink_silver).paint(ui, head);
-            let widths = columns(ui.ctx(), v, ns, gw - 20.0);
-            for (i, n) in ns.iter().enumerate() {
-                let Some(a) = v.areas.iter().find(|a| a.n == *n) else { continue };
-                let x: f32 = widths[..i / 2].iter().map(|w| w + 6.0).sum();
-                let at = pos2(head.left() + x, head.bottom() + 6.0 + (i % 2) as f32 * (TILE_H + 6.0));
-                let tw = widths[i / 2];
-                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(tw, TILE_H))));
-                // Every category's button stays on, the chosen one too (`Forgotabla` clicks and turns it again).
-                let resp = tile(&mut c, a, a.n == v.area, vec2(tw, TILE_H));
-                if ds::pressed(&resp) {
-                    acts.push(Act::Area(a.n));
+        let wide = widths.iter().sum::<f32>() + 2.0 * 12.0 > width - ds::EXIT_W - 12.0 + 0.5;
+        let mut groups = |ui: &mut Ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 12.0;
+                for (g, ns) in GROUPS.iter().enumerate() {
+                    group(ui, v, g, ns, vec2(widths[g], h), acts);
                 }
-            }
+            });
+        };
+        if wide {
+            // No drag-to-scroll: a press on a tile would start the area's drag. The wheel and the bar scroll it.
+            ui.allocate_ui_with_layout(vec2(width - ds::EXIT_W - 12.0, h + 12.0), egui::Layout::top_down(egui::Align::Min), |ui| {
+                // The plain wheel over the strip scrolls it sideways.
+                if ui.rect_contains_pointer(ui.max_rect()) {
+                    ui.ctx().input_mut(|i| (i.smooth_scroll_delta.x, i.smooth_scroll_delta.y) = (i.smooth_scroll_delta.x + i.smooth_scroll_delta.y, 0.0));
+                }
+                egui::ScrollArea::horizontal().id_salt("rmh-cats").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).min_scrolled_height(h).auto_shrink([false, true]).show(ui, groups);
+            });
+        } else {
+            groups(ui);
         }
         // The exit: the top bar's starmap pick (`AktKepKell` 2).
         ui.allocate_ui_with_layout(vec2(ds::EXIT_W, h), egui::Layout::bottom_up(egui::Align::Min), |ui| {
@@ -421,6 +435,32 @@ fn categories(ui: &mut Ui, v: &View, width: f32, acts: &mut Vec<Act>) {
             }
         });
     });
+}
+
+/// One group's frame, heading and tiles.
+fn group(ui: &mut Ui, v: &View, g: usize, ns: &[usize], size: egui::Vec2, acts: &mut Vec<Act>) {
+    let k = ds::tokens();
+    let gw = size.x;
+    let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(r, ds::RADIUS_PANEL, k.glass_frame);
+    ds::rim(p, r, ds::RADIUS_PANEL, k.metal_dark);
+    ds::edge_line(p, r, ds::RADIUS_PANEL as f32, true, k.metal_light);
+    let head = Rect::from_min_size(r.min + vec2(10.0, 8.0), vec2(gw - 20.0, 16.0));
+    Text::new(&v.labels.groups[g], Font::LABEL.sized(12.0).tracking(0.16)).color(k.ink_silver).paint(ui, head);
+    let widths = columns(ui.ctx(), v, ns, gw - 20.0);
+    for (i, n) in ns.iter().enumerate() {
+        let Some(a) = v.areas.iter().find(|a| a.n == *n) else { continue };
+        let x: f32 = widths[..i / 2].iter().map(|w| w + 6.0).sum();
+        let at = pos2(head.left() + x, head.bottom() + 6.0 + (i % 2) as f32 * (TILE_H + 6.0));
+        let tw = widths[i / 2];
+        let mut c = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(tw, TILE_H))));
+        // Every category's button stays on, the chosen one too (`Forgotabla` clicks and turns it again).
+        let resp = tile(&mut c, a, a.n == v.area, vec2(tw, TILE_H));
+        if ds::pressed(&resp) {
+            acts.push(Act::Area(a.n));
+        }
+    }
 }
 
 /// A group's column widths (`.cats`: auto columns, two rows): each its widest tile's content, the room left shared
@@ -603,6 +643,55 @@ mod tests {
             assert!((n.top() - a.bottom() - 16.0).abs() < 1.0, "{h}: the strip sits over the tiles");
             assert!(l.height() - 32.0 - 34.0 >= rows * 26.0 - 1.0, "{h}: {} rows", (l.height() - 66.0) / 26.0);
         }
+    }
+
+    /// A large UI scale (1920x1080 at 150 % and 200 %): the categories scroll, the exit and every panel stay on screen,
+    /// the list and the info don't meet.
+    #[test]
+    fn a_large_ui_scale_keeps_the_exit_on_screen() {
+        for size in [vec2(1280.0, 720.0), vec2(960.0, 540.0)] {
+            let (ctx, _) = run_at(&view("Long category name"), &mut State::default(), Vec::new(), size);
+            let r = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+            let (l, a, i, n) = (r("rmh-list"), r("rmh-auto"), r("rmh-info"), r("rmh-areas"));
+            assert!(n.right() <= size.x - ds::EDGE + 0.5 && n.bottom() <= size.y - ds::EDGE + 0.5, "{size:?}: {n:?}");
+            assert!(l.right() < i.left() && a.bottom() < n.top() && i.bottom() < n.top(), "{size:?}: {l:?} {i:?} {n:?}");
+            // The first tile (category 1) and the exit take a press where they stand.
+            let click = |p: egui::Pos2| vec![egui::Event::PointerMoved(p), egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }];
+            let (_, acts) = run_at(&view("Long category name"), &mut State::default(), click(pos2(n.left() + 30.0, n.top() + 8.0 + 16.0 + 6.0 + 20.0)), size);
+            assert_eq!(acts, vec![Act::Area(1)], "{size:?}");
+            let (_, acts) = run_at(&view("Long category name"), &mut State::default(), click(pos2(n.right() - 20.0, n.bottom() - 20.0)), size);
+            assert_eq!(acts, vec![Act::Bar(sm::Act::Screen(2))], "{size:?}");
+        }
+    }
+
+    /// The wheel over the scrolled categories brings the last group into view: its last tile takes a press.
+    #[test]
+    fn the_wheel_reaches_the_last_category() {
+        let size = vec2(1280.0, 720.0);
+        let v = view("Long category name");
+        let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
+        ds::set_motion(false);
+        let mut st = State::default();
+        let mut acts = Vec::new();
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)), events, ..Default::default() };
+            let _ = ctx.run(input, |ctx| acts = show(ctx, &v, &mut st));
+            ctx.memory(|m| m.area_rect(egui::Id::new("rmh-areas"))).unwrap()
+        };
+        for _ in 0..3 {
+            frame(Vec::new());
+        }
+        let n = frame(Vec::new());
+        let over = pos2(n.left() + 100.0, n.center().y);
+        frame(vec![egui::Event::PointerMoved(over), egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta: vec2(0.0, -2000.0), modifiers: Default::default() }]);
+        // egui eases the wheel's scroll over a few frames.
+        for _ in 0..60 {
+            frame(Vec::new());
+        }
+        // Category 11: the last group's second row, at the right end of the scrolled strip.
+        let at = pos2(n.right() - ds::EXIT_W - 12.0 - 40.0, n.top() + 8.0 + 16.0 + 6.0 + TILE_H + 6.0 + 20.0);
+        frame(vec![egui::Event::PointerMoved(at), egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() }, egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() }]);
+        assert_eq!(acts, vec![Act::Area(11)]);
     }
 
     /// Long names are cut inside their boxes: the panels keep their widths.

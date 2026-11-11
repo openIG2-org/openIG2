@@ -134,25 +134,40 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         ds::entrance(ui);
         ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| properties(ui, v, &mut acts));
     });
-    let room = props.response.rect.top() - 16.0 - top;
+    // The parts give way when they and the list would meet (a large UI scale).
+    let parts_w = PARTS_W.min(screen.width() - 2.0 * ds::EDGE - LIST_W - 16.0);
+    // The data panel between the list and the parts, as wide as fits (the board's 780).
+    // Its right edge 16 from the parts (the board: 560..1340); the console centred under it.
+    // Under 360 between them (a large UI scale): in the list's column over the properties, its tables stacked.
+    let between = screen.width() - 2.0 * ds::EDGE - LIST_W - parts_w - 2.0 * 16.0;
+    let stacked = between < 360.0;
+    let mid = between.min(DATA_W);
+    let right = screen.right() - ds::EDGE - parts_w - 16.0;
+    let mut bottom = props.response.rect.top();
+    if stacked {
+        let r = egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::LEFT_BOTTOM, vec2(ds::EDGE, bottom - 16.0 - screen.bottom())).fade_in(false).show(ctx, |ui| {
+            ds::entrance(ui);
+            ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, LIST_W - 32.0, true));
+        });
+        bottom = r.response.rect.top();
+    }
+    let room = bottom - 16.0 - top;
     egui::Area::new(egui::Id::new("dmh-list")).fixed_pos(pos2(ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
         ds::panel(ui, PanelKind::Deep, 0.88, 16.0, |ui| list(ui, v, room - 32.0 - 34.0, &mut acts));
     });
-    // The data panel between the list and the parts, as wide as fits (the board's 780).
-    // Its right edge 16 from the parts (the board: 560..1340); the console centred under it.
-    let mid = (screen.width() - 2.0 * ds::EDGE - LIST_W - PARTS_W - 2.0 * 16.0).clamp(360.0, DATA_W);
-    let right = screen.right() - ds::EDGE - PARTS_W - 16.0;
     // The console under the data panel, kept between the properties and the exit (4:3).
     let cw = ctx.memory(|m| m.area_rect(egui::Id::new("dmh-console"))).map_or(560.0, |r| r.width());
     let centre = (right - mid / 2.0).max(ds::EDGE + LIST_W + 16.0 + cw / 2.0).min(screen.right() - ds::EDGE - 320.0 - 16.0 - cw / 2.0) - screen.center().x;
-    egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::RIGHT_TOP, vec2(right - screen.right(), top)).fade_in(false).show(ctx, |ui| {
-        ds::entrance(ui);
-        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, mid - 32.0));
-    });
+    if !stacked {
+        egui::Area::new(egui::Id::new("dmh-data")).anchor(Align2::RIGHT_TOP, vec2(right - screen.right(), top)).fade_in(false).show(ctx, |ui| {
+            ds::entrance(ui);
+            ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| data(ui, v, mid - 32.0, false));
+        });
+    }
     egui::Area::new(egui::Id::new("dmh-parts")).anchor(Align2::RIGHT_TOP, vec2(-ds::EDGE, top)).fade_in(false).show(ctx, |ui| {
         ds::entrance(ui);
-        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| parts(ui, v, st, &mut acts));
+        ds::panel(ui, PanelKind::Glass, 0.92, 16.0, |ui| parts(ui, v, st, parts_w, &mut acts));
     });
     // Too narrow for it between them (a large UI scale): above the exit instead.
     let fits = cw <= screen.width() - 2.0 * ds::EDGE - LIST_W - 320.0 - 32.0;
@@ -194,7 +209,7 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     Text::new(&v.labels.designs, Font::PANEL_TITLE).show(ui, vec2(w, 26.0));
     // No drag-to-scroll (here and in the popup): a press on a row of a list longer than its panel would start the
     // area's drag, not pick the row. The wheel and the bar scroll it.
-    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
+    egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(height.max(26.0 * 4.0)).min_scrolled_height(height.max(26.0 * 4.0)).auto_shrink([false, true]).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let k = ds::tokens();
         for r in &v.rows {
@@ -219,13 +234,13 @@ fn list(ui: &mut Ui, v: &View, height: f32, acts: &mut Vec<Act>) {
     });
 }
 
-/// The data panel's two tables (`.ig-table`): the hull and the price; the time, the units, the tank capacity.
-fn data(ui: &mut Ui, v: &View, w: f32) {
+/// The data panel's two tables (`.ig-table`): the hull and the price; the time, the units, the tank capacity. Side by
+/// side, or `stacked` one over the other.
+fn data(ui: &mut Ui, v: &View, w: f32, stacked: bool) {
     let k = ds::tokens();
     ui.set_width(w);
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 40.0;
-        let half = (w - 40.0) / 2.0;
+    let half = if stacked { w } else { (w - 40.0) / 2.0 };
+    let left = |ui: &mut Ui| {
         ui.allocate_ui_with_layout(vec2(half, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             for (i, (label, value)) in v.left.iter().enumerate() {
@@ -235,6 +250,8 @@ fn data(ui: &mut Ui, v: &View, w: f32) {
                 Text::new(value, Font::DATA).color(if i == 0 { k.ink } else { k.info }).baseline(base).paint(ui, r.with_min_x(r.left() + 106.0));
             }
         });
+    };
+    let right = |ui: &mut Ui| {
         ui.allocate_ui_with_layout(vec2(half, 0.0), egui::Layout::top_down(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             for (label, value) in &v.right {
@@ -244,13 +261,24 @@ fn data(ui: &mut Ui, v: &View, w: f32) {
                 Text::new(label, Font::LABEL).color(k.ink_muted).baseline(base).paint(ui, r.with_max_x(r.right() - vw - 12.0));
             }
         });
-    });
+    };
+    if stacked {
+        ui.spacing_mut().item_spacing.y = 6.0;
+        left(ui);
+        right(ui);
+    } else {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 40.0;
+            left(ui);
+            right(ui);
+        });
+    }
 }
 
 /// The pods: number, class and tech, the count (its −/+ while editing), the chosen pod's tech list under it.
-fn parts(ui: &mut Ui, v: &View, st: &mut State, acts: &mut Vec<Act>) {
+fn parts(ui: &mut Ui, v: &View, st: &mut State, pw: f32, acts: &mut Vec<Act>) {
     let k = ds::tokens();
-    let w = PARTS_W - 32.0;
+    let w = pw - 32.0;
     ui.set_width(w);
     ui.spacing_mut().item_spacing.y = 10.0;
     let (r, _) = ui.allocate_exact_size(vec2(w, 26.0), Sense::hover());
@@ -441,13 +469,30 @@ mod tests {
     }
 
     fn run(v: &View, st: &mut State, width: f32) -> (egui::Context, Vec<Act>) {
+        run_at(v, st, vec2(width, 1080.0))
+    }
+
+    fn run_at(v: &View, st: &mut State, size: egui::Vec2) -> (egui::Context, Vec<Act>) {
         let ctx = crate::gui::Gui::new(wgpu::TextureFormat::Bgra8UnormSrgb).ctx;
         ds::set_motion(false);
         let mut acts = Vec::new();
         for _ in 0..3 {
-            let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(width, 1080.0))), ..Default::default() }, |ctx| acts = show(ctx, v, st));
+            let _ = ctx.run(egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), size)), ..Default::default() }, |ctx| acts = show(ctx, v, st));
         }
         (ctx, acts)
+    }
+
+    /// A large UI scale (1920x1080 at 150 % and 200 %): the data panel moves over the properties, nothing meets, the
+    /// list keeps at least four rows and scrolls.
+    #[test]
+    fn a_large_ui_scale_keeps_the_panels_apart() {
+        for size in [vec2(1280.0, 720.0), vec2(960.0, 540.0)] {
+            let (ctx, _) = run_at(&rows(9), &mut State::default(), size);
+            let r = |id: &str| ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+            let (l, d, p, pr) = (r("dmh-list"), r("dmh-data"), r("dmh-parts"), r("dmh-props"));
+            assert!(l.bottom() < d.top() && d.bottom() < pr.top() && l.right() < p.left() && d.right() < p.left(), "{size:?}: {l:?} {d:?} {p:?} {pr:?}");
+            assert!(p.right() <= size.x - ds::EDGE + 0.5 && l.height() - 32.0 - 34.0 >= 4.0 * 26.0 - 1.0, "{size:?}: {l:?} {p:?}");
+        }
     }
 
     /// The pod's tech list stands its rows one under the other: each more row makes the parts panel a row taller.

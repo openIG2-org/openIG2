@@ -1612,7 +1612,7 @@ fn research_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loade
         let style = crate::starmap_modern::style(hud, size);
         let k = crate::gui::Gui::scale(o.size.1);
         let mut st = crate::research_modern::State::default();
-        for _ in 0..3 {
+        for _ in 0..5 {
             if let Some(m) = o.mouse {
                 gui.pointer(Some(crate::font::Virtual::new(size).px(m[0], m[1])), k);
             }
