@@ -24,5 +24,6 @@ LABEL org.opencontainers.image.source=https://github.com/openIG2-org/openIG2 \
       org.opencontainers.image.licenses=AGPL-3.0-only
 COPY --from=build /out /usr/share/nginx/html
 COPY deploy/web/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --chmod=755 deploy/web/game-index.sh /docker-entrypoint.d/40-game-index.sh
+# The script is executable in git (100755); a plain COPY keeps that mode, also without BuildKit.
+COPY deploy/web/game-index.sh /docker-entrypoint.d/40-game-index.sh
 EXPOSE 8080
