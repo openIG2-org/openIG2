@@ -95,7 +95,10 @@ jobs:
         with:
           components: clippy
       - name: System libraries
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev
+        # The runner's Azure mirror is sometimes unreachable: fall back to the main Ubuntu archive.
+        run: |
+          install() { sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev; }
+          install || { echo "http://archive.ubuntu.com/ubuntu/" | sudo tee /etc/apt/apt-mirrors.txt; install; }
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: engine
