@@ -16,7 +16,7 @@ struct U { screen: vec2<f32>, time: f32, sharp: u32 };
 
 struct I {
     @location(0) center: vec2<f32>,
-    @location(1) half: vec2<f32>,
+    @location(1) extent: vec2<f32>,
     @location(2) rot: f32,
     @location(3) kind: u32,
     @location(4) param: vec2<f32>,
@@ -30,7 +30,7 @@ struct VO {
     @location(2) param: vec2<f32>,
     @location(3) uv: vec4<f32>,
     @location(4) color: vec4<f32>,
-    @location(5) half: vec2<f32>,
+    @location(5) extent: vec2<f32>,
 };
 
 @vertex
@@ -39,11 +39,11 @@ fn vs(@builtin(vertex_index) vi: u32, i: I) -> VO {
     let q = corners[vi];
     let c = cos(i.rot);
     let s = sin(i.rot);
-    let d = q * i.half;
+    let d = q * i.extent;
     var p = i.center + vec2(d.x * c - d.y * s, d.x * s + d.y * c);
-    // A triangle: its corners are `center`, `half` and `param`; the second half of the quad collapses.
+    // A triangle: its corners are `center`, `extent` and `param`; the second half of the quad collapses.
     if i.kind == 6u {
-        var tri = array<vec2<f32>, 6>(i.center, i.half, i.param, i.center, i.center, i.center);
+        var tri = array<vec2<f32>, 6>(i.center, i.extent, i.param, i.center, i.center, i.center);
         p = tri[vi];
     }
     var o: VO;
@@ -53,7 +53,7 @@ fn vs(@builtin(vertex_index) vi: u32, i: I) -> VO {
     o.param = i.param;
     o.uv = i.uv;
     o.color = i.color;
-    o.half = i.half;
+    o.extent = i.extent;
     return o;
 }
 
@@ -182,7 +182,7 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let lat = asin(clamp(n.y, -1.0, 1.0)) / PI;
             let t = v.uv.xy + vec2(fract(lon), 0.5 - lat) * v.uv.zw;
             let dims = vec2<f32>(textureDimensions(tex));
-            let lod = log2(max(dims.x * v.uv.z / (PI * 2.0 * v.half.x), 1.0));
+            let lod = log2(max(dims.x * v.uv.z / (PI * 2.0 * v.extent.x), 1.0));
             let albedo = dec(textureSampleLevel(tex, smp, t, lod), d).rgb;
             let l = normalize(vec3(-0.55, 0.45, 0.7));
             let diffuse = 0.12 + 0.88 * max(dot(n, l), 0.0);
