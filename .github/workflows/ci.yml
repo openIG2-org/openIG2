@@ -6,11 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
   workflow_call:
-    inputs:
-      skip_linux:
-        description: Leave out the Linux job (and the Linux archive), when its runner can't install packages
-        type: boolean
-        default: false
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -92,7 +87,6 @@ jobs:
     name: Linux build, tests, clippy
     # The oldest supported glibc (2.35): what the release archive is built on.
     runs-on: ubuntu-22.04
-    if: ${{ !inputs.skip_linux }}
     steps:
       - uses: actions/checkout@v7
         with:
