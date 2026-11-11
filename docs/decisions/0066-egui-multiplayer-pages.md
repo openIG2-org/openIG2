@@ -45,7 +45,7 @@ and a designed Options page into the client; the multiplayer pages are the secon
 
 ## Consequences
 - The pages scale and stay sharp like the Options page; at 4:3 they fit the screen's 720 points, wider windows give
-  them their 760.
+  them their 760; at any UI scale each column scrolls when the page is too short, never running under the footer.
 - New remake strings in `tr.rs`; the words the old page drew only (the "<-"/"->" rows, "Private game: yes/no",
   "Browse internet games") are gone.
 - A page's look has no exe capture: screenshots go with the commit (`--snapshot --screen main --script`, offline: the

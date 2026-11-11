@@ -48,6 +48,11 @@ impl Stage {
         Self { r, m: (r.width() * 0.05).clamp(16.0, 96.0), right: 584f32.min(r.width() * 0.34) }
     }
 
+    /// `v` points down from the top on the 1080-point board, closer on a shorter page (a larger UI scale).
+    fn y(&self, v: f32) -> f32 {
+        self.r.top() + v * (self.r.height() / crate::gui::POINTS_HIGH).clamp(0.6, 1.0)
+    }
+
     /// The left column (the list, the seats) from `top` down to 120 points above the bottom.
     fn left(&self, top: f32) -> Rect {
         Rect::from_min_max(Pos2::new(self.r.left() + self.m, top), Pos2::new(self.r.right() - self.m - 40.0 - self.right, self.r.bottom() - 120.0))
@@ -90,22 +95,52 @@ fn field(ui: &mut egui::Ui, f: &Field, lang: ig2_formats::text::Lang, focused: b
 fn place<R>(ctx: &egui::Context, id: &str, rect: Rect, kind: ds::PanelKind, alpha: f32, margin: [f32; 2], opacity: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
         ui.multiply_opacity(opacity);
-        let at = ui.painter().add(egui::Shape::Noop);
-        let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(margin[0] as i8, margin[1] as i8)).show(ui, |ui| {
-            let inner = rect.size() - Vec2::new(2.0 * margin[0], 2.0 * margin[1]);
-            ui.set_width(inner.x);
-            if rect.height() > 0.0 {
-                ui.set_min_height(inner.y);
-                ui.set_max_height(inner.y);
-            }
-            ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
-            add(ui)
-        });
-        ds::behind(ui, at, |p| ds::paint_panel(p, r.response.rect, kind, alpha));
-        r.inner
+        panel(ui, rect.size(), true, kind, alpha, margin, add)
     })
     .inner
 }
+
+/// A panel in `ui`: `size` wide, at least `size.y` high (exactly with `fixed`; 0: as its content), `margin` inside.
+fn panel<R>(ui: &mut egui::Ui, size: Vec2, fixed: bool, kind: ds::PanelKind, alpha: f32, margin: [f32; 2], add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let at = ui.painter().add(egui::Shape::Noop);
+    let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(margin[0] as i8, margin[1] as i8)).show(ui, |ui| {
+        let inner = size - Vec2::new(2.0 * margin[0], 2.0 * margin[1]);
+        ui.set_width(inner.x);
+        if size.y > 0.0 {
+            ui.set_min_height(inner.y);
+            if fixed {
+                ui.set_max_height(inner.y);
+            }
+        }
+        ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
+        add(ui)
+    });
+    ds::behind(ui, at, |p| ds::paint_panel(p, r.response.rect, kind, alpha));
+    r.inner
+}
+
+/// A column of panels at `rect`, scrolling when they are taller than it (a short page: a larger UI scale). `add`
+/// gets the column's height left under what it has added so far through its second argument.
+fn column<R>(ctx: &egui::Context, id: &str, rect: Rect, opacity: f32, add: impl FnOnce(&mut egui::Ui, &dyn Fn(&egui::Ui) -> f32) -> R) -> R {
+    egui::Area::new(egui::Id::new(id)).fixed_pos(rect.min).fade_in(false).show(ctx, |ui| {
+        ui.multiply_opacity(opacity);
+        // The area's own room is smaller than the column: the column's rect, given.
+        ui.allocate_ui_with_layout(rect.size(), egui::Layout::top_down(egui::Align::Min), |ui| {
+            let scroll = egui::ScrollArea::vertical().id_salt(id).max_height(rect.height()).auto_shrink([false, true]);
+            scroll.scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).show(ui, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(0.0, 0.0);
+                let top = ui.cursor().top();
+                add(ui, &|ui: &egui::Ui| rect.height() - (ui.cursor().top() - top))
+            })
+            .inner
+        })
+        .inner
+    })
+    .inner
+}
+
+/// The gap between a column's panels.
+const PANEL_GAP: f32 = 24.0;
 
 /// Free content at `rect` (no panel).
 fn bare<R>(ctx: &egui::Context, id: &str, rect: Rect, opacity: f32, layout: egui::Layout, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -123,7 +158,7 @@ fn bare<R>(ctx: &egui::Context, id: &str, rect: Rect, opacity: f32, layout: egui
 /// The page title (34 / 40, 600, 0.3 em, silver) and what it shows under it in the info colour.
 fn heading(ctx: &egui::Context, st: Stage, opacity: f32, text: &str, sub: &str) {
     let k = ds::tokens();
-    let rect = Rect::from_min_size(Pos2::new(st.r.left() + st.m + 16.0, st.r.top() + 109.0), Vec2::new(st.r.width() - 2.0 * st.m - 32.0, 68.0));
+    let rect = Rect::from_min_size(Pos2::new(st.r.left() + st.m + 16.0, st.y(109.0)), Vec2::new(st.r.width() - 2.0 * st.m - 32.0, 68.0));
     bare(ctx, "mp-title", rect, opacity, egui::Layout::top_down(egui::Align::Min), |ui| {
         let f = Font { size: 34.0, line: 40.0, ..Font::PAGE_TITLE };
         Text::new(text, f).color(k.ink_silver).show(ui, Vec2::new(rect.width(), 40.0));
@@ -142,7 +177,9 @@ const PICK_FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, t
 
 /// The game table's cells (`.row`: 1fr 200 140 260, 16 apart, 16 in).
 fn cells(r: Rect) -> Vec<Rect> {
-    ds::columns(r.shrink2(Vec2::new(16.0, 0.0)), &[0.0, 200.0, 140.0, 260.0], 16.0)
+    let r = r.shrink2(Vec2::new(16.0, 0.0));
+    let k = ((r.width() - 48.0) * 0.6 / 600.0).clamp(0.0, 1.0);
+    ds::columns(r, &[0.0, 200.0 * k, 140.0 * k, 260.0 * k], 16.0)
 }
 
 /// The footer's plates at the bottom right (`bottom` points up from the screen's bottom), right to left; the status
@@ -316,7 +353,7 @@ impl MpScreen {
         let op = self.open / 100.0;
         heading(ctx, st, op, &s(texts.get(15, 1, if self.inet { 30 } else { 29 })), &format!("{} {}", w(words::PLAYING_AS), self.name));
         // The game lists.
-        place(ctx, "mp-list", st.left(st.r.top() + 216.0), ds::PanelKind::Deep, 0.86, [24.0, 24.0], op, |ui| {
+        place(ctx, "mp-list", st.left(st.y(216.0)), ds::PanelKind::Deep, 0.86, [24.0, 24.0], op, |ui| {
             // The list the page was opened for (Local network or Internet) and the saved games.
             let tab = self.saves.is_some() as usize;
             ui.horizontal(|ui| {
@@ -339,44 +376,45 @@ impl MpScreen {
             self.rows_list(ui, texts, acts);
         });
         // Join directly, the relay server.
-        let right = st.right_col(st.r.top() + 216.0);
-        let join = Rect::from_min_size(right.min, Vec2::new(right.width(), 0.0));
-        let h = place(ctx, "mp-join", join, ds::PanelKind::Glass, 0.88, [24.0, 22.0], op, |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            let width = ui.available_width();
-            title(ui, &w(words::JOIN_DIRECTLY));
-            ui.add_space(8.0);
-            label(ui, w(words::ADDRESS).trim_end_matches(':'));
-            if field(ui, &self.address, lang, self.focus == Focus::Address, false, "192.168.0.10  /  IG2-…", width, 44.0).clicked() {
-                acts.push(Act::Spot(spot::ADDRESS, false));
-            }
-            ui.add_space(8.0);
-            label(ui, &w(words::PASSWORD));
-            if field(ui, &self.password, lang, self.focus == Focus::Password, true, "", width, 44.0).clicked() {
-                acts.push(Act::Spot(spot::PASSWORD, false));
-            }
-            ui.add_space(8.0);
-            let saves = self.saves.is_some();
-            let join_on = !saves && self.connecting.is_none() && (self.selected.is_some() || !self.address.text.is_empty());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                if ui.add_enabled(join_on, ds::Plate::new(&s(texts.get(16, 3, 3))).width(220.0)).clicked() {
-                    acts.push(Act::Spot(spot::JOIN, false));
+        let right = st.right_col(st.y(216.0));
+        column(ctx, "mp-right", right, op, |ui, _| {
+            let wide = Vec2::new(ui.available_width(), 0.0);
+            panel(ui, wide, false, ds::PanelKind::Glass, 0.88, [24.0, 22.0], |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let width = ui.available_width();
+                title(ui, &w(words::JOIN_DIRECTLY));
+                ui.add_space(8.0);
+                label(ui, w(words::ADDRESS).trim_end_matches(':'));
+                if field(ui, &self.address, lang, self.focus == Focus::Address, false, "192.168.0.10  /  IG2-…", width, 44.0).clicked() {
+                    acts.push(Act::Spot(spot::ADDRESS, false));
                 }
+                ui.add_space(8.0);
+                label(ui, &w(words::PASSWORD));
+                if field(ui, &self.password, lang, self.focus == Focus::Password, true, "", width, 44.0).clicked() {
+                    acts.push(Act::Spot(spot::PASSWORD, false));
+                }
+                ui.add_space(8.0);
+                let saves = self.saves.is_some();
+                let join_on = !saves && self.connecting.is_none() && (self.selected.is_some() || !self.address.text.is_empty());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    if ui.add_enabled(join_on, ds::Plate::new(&s(texts.get(16, 3, 3))).width(220.0)).clicked() {
+                        acts.push(Act::Spot(spot::JOIN, false));
+                    }
+                });
             });
-            ui.min_rect().height()
-        });
-        let relay = Rect::from_min_size(Pos2::new(right.left(), right.top() + h + 48.0 + 24.0), Vec2::new(right.width(), 0.0));
-        place(ctx, "mp-relay", relay, ds::PanelKind::Glass, 0.88, [24.0, 22.0], op, |ui| {
-            ui.spacing_mut().item_spacing.y = 8.0;
-            let width = ui.available_width();
-            title(ui, &w(words::RELAY_TITLE));
-            ui.add_space(8.0);
-            label(ui, &w(words::RELAY_ADDRESS));
-            if field(ui, &self.relay, lang, self.focus == Focus::Relay, false, "relay.example.org:port", width, 44.0).clicked() {
-                acts.push(Act::Spot(spot::RELAY, false));
-            }
-            ui.add_space(10.0);
-            hint(ui, &w(words::RELAY_HINT), k.ink_muted, 4);
+            ui.add_space(PANEL_GAP);
+            panel(ui, wide, false, ds::PanelKind::Glass, 0.88, [24.0, 22.0], |ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                let width = ui.available_width();
+                title(ui, &w(words::RELAY_TITLE));
+                ui.add_space(8.0);
+                label(ui, &w(words::RELAY_ADDRESS));
+                if field(ui, &self.relay, lang, self.focus == Focus::Relay, false, "relay.example.org:port", width, 44.0).clicked() {
+                    acts.push(Act::Spot(spot::RELAY, false));
+                }
+                ui.add_space(10.0);
+                hint(ui, &w(words::RELAY_HINT), k.ink_muted, 4);
+            });
         });
         // Back, Host; the status: a refusal, a connect error, the host lost.
         let line = if self.lost && self.line.is_empty() { texts.get(14, 5, 3) } else { crate::tr::bytes(lang, &self.line) };
@@ -503,7 +541,7 @@ impl MpScreen {
         let stage = Stage::new(ctx);
         let op = self.open / 100.0;
         // The title row: the room's name, its tags; the ready count at the right.
-        let top = Rect::from_min_size(Pos2::new(stage.r.left() + stage.m + 16.0, stage.r.top() + 109.0), Vec2::new(stage.r.width() - 2.0 * stage.m - 32.0, 44.0));
+        let top = Rect::from_min_size(Pos2::new(stage.r.left() + stage.m + 16.0, stage.y(109.0)), Vec2::new(stage.r.width() - 2.0 * stage.m - 32.0, 44.0));
         bare(ctx, "mp-title", top, op, egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 20.0;
             let humans = st.slots.iter().filter(|s| matches!(s.kind, SlotKind::Human(_))).count();
@@ -528,171 +566,170 @@ impl MpScreen {
             });
         });
         // The seats.
-        let left = stage.left(stage.r.top() + 196.0);
-        let seats = Rect::from_min_size(left.min, Vec2::new(left.width(), 0.0));
-        let h = place(ctx, "mp-seats", seats, ds::PanelKind::Deep, 0.86, [24.0, 18.0], op, |ui| {
-            ui.spacing_mut().item_spacing.y = 6.0;
-            // Ours (ADR 0085 §4): the custom game's empires in the seats' place while they are open.
-            let empires = st.galaxy.filter(|o| o.custom.is_some() && ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(EMPIRES))).unwrap_or(false));
-            if let Some(o) = empires {
-                title(ui, crate::tr::text(lang, "Empires"));
-                ui.add_space(6.0);
-                self.custom_table(ui, texts, palette, o, st, host, acts);
-            } else {
-                title(ui, &w(words::PLAYERS));
-                ui.add_space(6.0);
-                for (i, sl) in st.slots.iter().enumerate().take(8) {
-                    self.slot_row(ui, texts, palette, i, sl, st, me, acts);
+        let left = stage.left(stage.y(196.0));
+        column(ctx, "mp-left", left, op, |ui, rest| {
+            let wide = ui.available_width();
+            panel(ui, Vec2::new(wide, 0.0), false, ds::PanelKind::Deep, 0.86, [24.0, 18.0], |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                // Ours (ADR 0085 §4): the custom game's empires in the seats' place while they are open.
+                let empires = st.galaxy.filter(|o| o.custom.is_some() && ui.ctx().data(|d| d.get_temp::<bool>(egui::Id::new(EMPIRES))).unwrap_or(false));
+                if let Some(o) = empires {
+                    title(ui, crate::tr::text(lang, "Empires"));
+                    ui.add_space(6.0);
+                    self.custom_table(ui, texts, palette, o, st, host, acts);
+                } else {
+                    title(ui, &w(words::PLAYERS));
+                    ui.add_space(6.0);
+                    for (i, sl) in st.slots.iter().enumerate().take(8) {
+                        self.slot_row(ui, texts, palette, i, sl, st, me, acts);
+                    }
                 }
-            }
-            ui.min_rect().height()
-        });
-        // The galaxy's settings: four a row, the setting's name over its stepper (the host's).
-        // Down to the chat's bottom line; a taller seats' panel (the empires' table) leaves it short: it scrolls then.
-        let galaxy_top = left.top() + h + 36.0 + 24.0;
-        let galaxy = Rect::from_min_size(Pos2::new(left.left(), galaxy_top), Vec2::new(left.width(), (left.bottom() - galaxy_top).max(160.0)));
-        place(ctx, "mp-galaxy", galaxy, ds::PanelKind::Glass, 0.88, [24.0, 20.0], op, |ui| {
-            let max_h = galaxy.height() - 40.0;
-            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
-                match st.galaxy {
-                    Some(o) => {
-                        let planets = s(texts.get(15, 2, 8));
-                        let at = PLANETS.iter().position(|&p| p == o.planets).unwrap_or(1);
-                        // A custom game's planet count (ADR 0085 §4) in place of the room's steps.
-                        let planets_v = match o.custom {
-                            Some(c) => (format!("{}", c.planets), c.planets > CUSTOM_PLANETS.0, c.planets < CUSTOM_PLANETS.1),
-                            None => (s(texts.get(14, 2, at as u16 + 1)), at > 0, at < 3),
-                        };
-                        let rows: [(String, String, bool, bool); super::OPTIONS] = [
-                            (planets, planets_v.0, planets_v.1, planets_v.2),
-                            (s(texts.get(14, 1, 1)), format!("{}", o.ais), o.ais > 0, o.ais < MAX_AIS),
-                            (w(words::SHAPE), format!("{}", o.shape), o.shape > 1, o.shape < 2),
-                            (w(words::BATTLES), w(words::BATTLE[o.battle_status.min(3) as usize]), o.battle_status > 0, o.battle_status < 3),
-                            (w(words::SPEED), w(words::SPEED_BY[o.host_time as usize]), o.host_time, !o.host_time),
-                            (w(words::FORMATION), w(words::FORMATION_BY[o.formation as usize]), o.formation, !o.formation),
-                            (w(words::SPECTATORS), w(words::SPECTATORS_BY[o.spectators as usize]), o.spectators, !o.spectators),
-                            (w(words::AI), w(words::AI_BY[o.enhanced_ai as usize]), o.enhanced_ai, !o.enhanced_ai),
-                        ];
-                        let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
-                        for (r, four) in rows.chunks(4).enumerate() {
-                            if r > 0 {
-                                ui.add_space(SETTING_ROWS);
-                            }
-                            ui.horizontal_top(|ui| {
-                                ui.spacing_mut().item_spacing.x = 24.0;
-                                for (c, (name, value, down, up)) in four.iter().enumerate() {
-                                    ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
-                                        ui.set_width(cell);
-                                        ui.spacing_mut().item_spacing.y = SETTING_GAP;
-                                        label(ui, name.trim_end_matches(':'));
-                                        let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
-                                        let moved = (step < 0 && *down) || (step > 0 && *up);
-                                        if let (Some(cg), 0, 0, true) = (o.custom, r, c, moved) {
-                                            let planets = cg.planets.saturating_add_signed(10 * step.signum() as i8);
-                                            acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { planets, ..cg }.clamped()), ..o }));
-                                        } else if moved {
-                                            acts.push(Act::Spot(spot::OPTION + 2 * (4 * r + c) as u32 + (step > 0) as u32, false));
-                                        }
-                                    });
+            });
+            // The galaxy's settings: four a row, the setting's name over its stepper (the host's).
+            // Down to the column's bottom; a taller seats' panel (the empires' table) leaves it short: the column scrolls then.
+            ui.add_space(PANEL_GAP);
+            let h = rest(ui);
+            panel(ui, Vec2::new(wide, h.max(160.0)), false, ds::PanelKind::Glass, 0.88, [24.0, 20.0], |ui| {
+                {
+                    match st.galaxy {
+                        Some(o) => {
+                            let planets = s(texts.get(15, 2, 8));
+                            let at = PLANETS.iter().position(|&p| p == o.planets).unwrap_or(1);
+                            // A custom game's planet count (ADR 0085 §4) in place of the room's steps.
+                            let planets_v = match o.custom {
+                                Some(c) => (format!("{}", c.planets), c.planets > CUSTOM_PLANETS.0, c.planets < CUSTOM_PLANETS.1),
+                                None => (s(texts.get(14, 2, at as u16 + 1)), at > 0, at < 3),
+                            };
+                            let rows: [(String, String, bool, bool); super::OPTIONS] = [
+                                (planets, planets_v.0, planets_v.1, planets_v.2),
+                                (s(texts.get(14, 1, 1)), format!("{}", o.ais), o.ais > 0, o.ais < MAX_AIS),
+                                (w(words::SHAPE), format!("{}", o.shape), o.shape > 1, o.shape < 2),
+                                (w(words::BATTLES), w(words::BATTLE[o.battle_status.min(3) as usize]), o.battle_status > 0, o.battle_status < 3),
+                                (w(words::SPEED), w(words::SPEED_BY[o.host_time as usize]), o.host_time, !o.host_time),
+                                (w(words::FORMATION), w(words::FORMATION_BY[o.formation as usize]), o.formation, !o.formation),
+                                (w(words::SPECTATORS), w(words::SPECTATORS_BY[o.spectators as usize]), o.spectators, !o.spectators),
+                                (w(words::AI), w(words::AI_BY[o.enhanced_ai as usize]), o.enhanced_ai, !o.enhanced_ai),
+                            ];
+                            let cell = (ui.available_width() - 3.0 * 24.0) / 4.0;
+                            for (r, four) in rows.chunks(4).enumerate() {
+                                if r > 0 {
+                                    ui.add_space(SETTING_ROWS);
                                 }
-                            });
+                                ui.horizontal_top(|ui| {
+                                    ui.spacing_mut().item_spacing.x = 24.0;
+                                    for (c, (name, value, down, up)) in four.iter().enumerate() {
+                                        ui.allocate_ui_with_layout(Vec2::new(cell, SETTING_H), egui::Layout::top_down(egui::Align::Min), |ui| {
+                                            ui.set_width(cell);
+                                            ui.spacing_mut().item_spacing.y = SETTING_GAP;
+                                            label(ui, name.trim_end_matches(':'));
+                                            let step = ui.add_enabled_ui(host, |ui| ds::stepper(ui, value, cell - 64.0).1).inner;
+                                            let moved = (step < 0 && *down) || (step > 0 && *up);
+                                            if let (Some(cg), 0, 0, true) = (o.custom, r, c, moved) {
+                                                let planets = cg.planets.saturating_add_signed(10 * step.signum() as i8);
+                                                acts.push(Act::Options(GalaxyOptions { custom: Some(RoomCustom { planets, ..cg }.clamped()), ..o }));
+                                            } else if moved {
+                                                acts.push(Act::Spot(spot::OPTION + 2 * (4 * r + c) as u32 + (step > 0) as u32, false));
+                                            }
+                                        });
+                                    }
+                                });
+                            }
+                            self.custom_rows(ui, texts, o, host, acts);
                         }
-                        self.custom_rows(ui, texts, o, host, acts);
+                        None => {
+                            title(ui, &w(words::SAVED));
+                            ui.add_space(8.0);
+                            hint(ui, &w(words::NEED_SAVED), k.ink_muted, 2);
+                        }
                     }
-                    None => {
-                        title(ui, &w(words::SAVED));
-                        ui.add_space(8.0);
-                        hint(ui, &w(words::NEED_SAVED), k.ink_muted, 2);
+                    // Ours (ADR 0068 §6): everyone in the room has the host's mods (a mismatch is refused).
+                    let mods = crate::mods_page::loaded();
+                    if !mods.is_empty() {
+                        ui.add_space(16.0);
+                        hint(ui, &format!("{} {}", crate::tr::text(lang, "Mods in this game:"), mods.join(", ")), k.ink_muted, 2);
                     }
-                }
-                // Ours (ADR 0068 §6): everyone in the room has the host's mods (a mismatch is refused).
-                let mods = crate::mods_page::loaded();
-                if !mods.is_empty() {
-                    ui.add_space(16.0);
-                    hint(ui, &format!("{} {}", crate::tr::text(lang, "Mods in this game:"), mods.join(", ")), k.ink_muted, 2);
                 }
             });
         });
         // The host's connection, the chat.
-        let right = stage.right_col(stage.r.top() + 196.0);
-        let mut chat_top = right.top();
-        if let Some(Role::Host { listener, .. }) = &self.role {
-            let h = place(ctx, "mp-conn", Rect::from_min_size(right.min, Vec2::new(right.width(), 0.0)), ds::PanelKind::Glass, 0.88, [24.0, 18.0], op, |ui| {
-                ui.spacing_mut().item_spacing.y = 14.0;
-                title(ui, &w(words::CONNECTION));
-                match self.join_code() {
-                    Some(c) => {
-                        label(ui, crate::tr::text(lang, "Join code"));
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 12.0;
-                            let copy_w = 200.0;
-                            let lw = ui.available_width() - copy_w - 12.0;
-                            let (r, _) = ui.allocate_exact_size(Vec2::new(lw, 40.0), egui::Sense::hover());
-                            ds::lcd_window(ui.painter(), r);
-                            Text::new(&c.encode(), Font { size: 28.0, line: 32.0, ..Font::READOUT }).color(k.lcd_ink).center().shrink(18.0).paint(ui, r.shrink2(Vec2::new(8.0, 0.0)));
-                            if ui.add(ds::Plate::new(&w(words::COPY)).width(copy_w).font(ds::Plate::FONT.sized(16.0).tracking(0.1))).clicked() {
-                                acts.push(Act::Spot(spot::CODE, false));
-                            }
-                        });
-                        hint(ui, &w(words::COPY_HINT), k.ink_muted, 2);
+        let right = stage.right_col(stage.y(196.0));
+        column(ctx, "mp-right", right, op, |ui, rest| {
+            let wide = ui.available_width();
+            if let Some(Role::Host { listener, .. }) = &self.role {
+                panel(ui, Vec2::new(wide, 0.0), false, ds::PanelKind::Glass, 0.88, [24.0, 18.0], |ui| {
+                    ui.spacing_mut().item_spacing.y = 14.0;
+                    title(ui, &w(words::CONNECTION));
+                    match self.join_code() {
+                        Some(c) => {
+                            label(ui, crate::tr::text(lang, "Join code"));
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 12.0;
+                                let copy_w = 200.0;
+                                let lw = ui.available_width() - copy_w - 12.0;
+                                let (r, _) = ui.allocate_exact_size(Vec2::new(lw, 40.0), egui::Sense::hover());
+                                ds::lcd_window(ui.painter(), r);
+                                Text::new(&c.encode(), Font { size: 28.0, line: 32.0, ..Font::READOUT }).color(k.lcd_ink).center().shrink(18.0).paint(ui, r.shrink2(Vec2::new(8.0, 0.0)));
+                                if ui.add(ds::Plate::new(&w(words::COPY)).width(copy_w).font(ds::Plate::FONT.sized(16.0).tracking(0.1))).clicked() {
+                                    acts.push(Act::Spot(spot::CODE, false));
+                                }
+                            });
+                            hint(ui, &w(words::COPY_HINT), k.ink_muted, 2);
+                        }
+                        None => hint(ui, &w(words::NO_CODE), k.ink_muted, 2),
                     }
-                    None => hint(ui, &w(words::NO_CODE), k.ink_muted, 2),
-                }
-                ui.painter().hline(ui.available_rect_before_wrap().x_range(), ui.cursor().top(), egui::Stroke::new(1.0f32, k.rim));
-                ui.add_space(1.0);
-                // A switch's row (`.opt`): the label, the toggle, the line under it.
-                let (off_l, on_l) = (s(texts.get(13, 3, 2)), s(texts.get(13, 3, 1)));
-                let opt = |ui: &mut egui::Ui, name: &str, sub: Option<(String, Color32)>, on: bool, live: bool| -> bool {
-                    let mut v = on;
-                    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::hover());
-                    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
-                    let changed = child.add_enabled_ui(live, |ui| ds::toggle(ui, &mut v, &off_l, &on_l).changed()).inner;
-                    let f = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false };
-                    Text::new(name, f).color(if live { k.ink } else { k.ink_muted }).paint(ui, row.with_max_x(row.right() - child.min_rect().width() - 16.0));
-                    if let Some((t, c)) = sub {
-                        ui.add_space(-8.0);
-                        hint(ui, &t, c, 2);
-                    }
-                    changed
-                };
-                let (map, map_on) = match listener.port_map() {
-                    PortMap::Off => (None, false),
-                    PortMap::Asking => (Some((w(words::MAP_ASKING), k.ink_muted)), true),
-                    PortMap::Mapped(a) => (Some((crate::tr::text(lang, "Port mapping: on, reachable at {}").replace("{}", &a.to_string()), k.own)), true),
-                    PortMap::Failed(e) => (Some((crate::tr::text(lang, "Port mapping failed: {}").replace("{}", &e), k.enemy)), false),
-                };
-                if opt(ui, &w(words::MAP_LABEL), map, map_on, true) {
-                    acts.push(Act::Spot(spot::PORT_MAP, false));
-                }
-                if opt(ui, &w(words::PRIVATE_LABEL), Some((w(words::PRIVATE_HINT), k.ink_muted)), st.private, true) {
-                    acts.push(Act::Spot(spot::PRIVATE, false));
-                }
-                let relay = match listener.rendezvous() {
-                    Rendezvous::Off => None,
-                    Rendezvous::Asking => Some("Relay server: opening the room..."),
-                    Rendezvous::Registered(_) => Some("Relay server: room open, seen at {}"),
-                    Rendezvous::Refused(ig2_net::rendezvous::Refusal::Full) => Some("Relay server: full, try later"),
-                    Rendezvous::Refused(_) => Some("Relay server: refused the room"),
-                    Rendezvous::NoAnswer => Some("Relay server: no answer"),
-                };
-                if let Some(r) = relay {
-                    let seen = match listener.rendezvous() {
-                        Rendezvous::Registered(a) => a.to_string(),
-                        _ => String::new(),
+                    ui.painter().hline(ui.available_rect_before_wrap().x_range(), ui.cursor().top(), egui::Stroke::new(1.0f32, k.rim));
+                    ui.add_space(1.0);
+                    // A switch's row (`.opt`): the label, the toggle, the line under it.
+                    let (off_l, on_l) = (s(texts.get(13, 3, 2)), s(texts.get(13, 3, 1)));
+                    let opt = |ui: &mut egui::Ui, name: &str, sub: Option<(String, Color32)>, on: bool, live: bool| -> bool {
+                        let mut v = on;
+                        let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), egui::Sense::hover());
+                        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(row).layout(egui::Layout::right_to_left(egui::Align::Center)));
+                        let changed = child.add_enabled_ui(live, |ui| ds::toggle(ui, &mut v, &off_l, &on_l).changed()).inner;
+                        let f = Font { size: 17.0, line: 20.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false };
+                        Text::new(name, f).color(if live { k.ink } else { k.ink_muted }).paint(ui, row.with_max_x(row.right() - child.min_rect().width() - 16.0));
+                        if let Some((t, c)) = sub {
+                            ui.add_space(-8.0);
+                            hint(ui, &t, c, 2);
+                        }
+                        changed
                     };
-                    // A private room is never listed: its switch is off.
-                    if opt(ui, &w(words::PUBLIC_LABEL), Some((crate::tr::text(lang, r).replace("{}", &seen), k.ink_muted)), self.public && !st.private, !st.private) {
-                        acts.push(Act::Spot(spot::PUBLIC, false));
+                    let (map, map_on) = match listener.port_map() {
+                        PortMap::Off => (None, false),
+                        PortMap::Asking => (Some((w(words::MAP_ASKING), k.ink_muted)), true),
+                        PortMap::Mapped(a) => (Some((crate::tr::text(lang, "Port mapping: on, reachable at {}").replace("{}", &a.to_string()), k.own)), true),
+                        PortMap::Failed(e) => (Some((crate::tr::text(lang, "Port mapping failed: {}").replace("{}", &e), k.enemy)), false),
+                    };
+                    if opt(ui, &w(words::MAP_LABEL), map, map_on, true) {
+                        acts.push(Act::Spot(spot::PORT_MAP, false));
                     }
-                }
-                ui.min_rect().height()
-            });
-            chat_top += h + 36.0 + 24.0;
-        }
-        let chat = Rect::from_min_max(Pos2::new(right.left(), chat_top), right.max);
-        if chat.height() > 120.0 {
-            self.chat_panel(ctx, chat, lang, op);
-        }
+                    if opt(ui, &w(words::PRIVATE_LABEL), Some((w(words::PRIVATE_HINT), k.ink_muted)), st.private, true) {
+                        acts.push(Act::Spot(spot::PRIVATE, false));
+                    }
+                    let relay = match listener.rendezvous() {
+                        Rendezvous::Off => None,
+                        Rendezvous::Asking => Some("Relay server: opening the room..."),
+                        Rendezvous::Registered(_) => Some("Relay server: room open, seen at {}"),
+                        Rendezvous::Refused(ig2_net::rendezvous::Refusal::Full) => Some("Relay server: full, try later"),
+                        Rendezvous::Refused(_) => Some("Relay server: refused the room"),
+                        Rendezvous::NoAnswer => Some("Relay server: no answer"),
+                    };
+                    if let Some(r) = relay {
+                        let seen = match listener.rendezvous() {
+                            Rendezvous::Registered(a) => a.to_string(),
+                            _ => String::new(),
+                        };
+                        // A private room is never listed: its switch is off.
+                        if opt(ui, &w(words::PUBLIC_LABEL), Some((crate::tr::text(lang, r).replace("{}", &seen), k.ink_muted)), self.public && !st.private, !st.private) {
+                            acts.push(Act::Spot(spot::PUBLIC, false));
+                        }
+                    }
+                });
+                ui.add_space(PANEL_GAP);
+            }
+            let h = rest(ui).max(180.0);
+            self.chat_panel(ui, Vec2::new(wide, h), lang);
+        });
         // Leave, Ready or Start; the status: who isn't ready, two empires needed, a start error.
         let label = if host {
             if self.force { w(words::START_ANYWAY) } else { s(texts.get(14, 1, 12)) }
@@ -881,7 +918,7 @@ impl MpScreen {
             _ => w(words::OPEN_SEAT),
         };
         let now = if st.galaxy.is_some() { now } else { 0 };
-        let tags_w = 300.0;
+        let tags_w = (rect.width() * 0.32).min(300.0);
         let who = Rect::from_min_max(Pos2::new(pick.right() + 14.0, rect.top()), Pos2::new(rect.right() - 12.0 - tags_w, rect.bottom()));
         match sl.kind {
             SlotKind::Human(m) => {
@@ -944,10 +981,10 @@ impl MpScreen {
     }
 
     /// The chat panel: the lines (the newest at the bottom) and the line being typed.
-    fn chat_panel(&self, ctx: &egui::Context, rect: Rect, lang: ig2_formats::text::Lang, op: f32) {
+    fn chat_panel(&self, ui: &mut egui::Ui, size: Vec2, lang: ig2_formats::text::Lang) {
         let w = |b: &[u8]| words::text(lang, b);
         let k = ds::tokens();
-        place(ctx, "mp-chat", rect, ds::PanelKind::Deep, 0.86, [24.0, 20.0], op, |ui| {
+        panel(ui, size, true, ds::PanelKind::Deep, 0.86, [24.0, 20.0], |ui| {
             title(ui, &w(words::CHAT));
             ui.add_space(10.0);
             let lines = (ui.available_height() - 42.0 - 10.0).max(22.0);

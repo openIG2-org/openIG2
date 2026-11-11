@@ -27,6 +27,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Mods in the room: a refused player is told which mods are missing or differ, and "Download and join" installs them and joins again.
 - Games stay in step and running: battle ends, videos, Options and Help no longer stall anyone, you can't give orders to other players' fleets and planets, and a misbehaving player is dropped without stalling the game.
 - Discord Rich Presence shows what you are doing, and a host's open room has a Join button for friends.
+- The multiplayer pages fit at any UI scale: the panels no longer run over the Back, Host game and room footer buttons, and a column taller than the window scrolls.
 
 ### Screens and controls
 - Modern interface (Options, Interface; on by default; one switch for every screen): the starmap, colony, production, research, ship design, information, messages, diplomacy, spy and trade screens, the fleet and transfer panels and the space battle are redrawn with the same functions and keys; Classic keeps the original's screens.
