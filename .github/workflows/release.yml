@@ -102,8 +102,10 @@ jobs:
           make_latest: true
           body_path: notes.md
           fail_on_unmatched_files: true
-          # Every archive CI built (without `skip_linux`, each CI job fails when it uploads none).
-          files: dist/openig2-${{ steps.v.outputs.version }}-*
+          files: |
+            dist/openig2-${{ steps.v.outputs.version }}-windows-x64.zip
+            dist/openig2-${{ steps.v.outputs.version }}-linux-x64.tar.gz
+            dist/openig2-${{ steps.v.outputs.version }}-macos-arm64.tar.gz
 
   web-latest:
     name: Browser image -> latest
