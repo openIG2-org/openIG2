@@ -111,6 +111,8 @@ const PANEL_W: f32 = 600.0;
 /// The panels' insides, the card's label column.
 const PAD: egui::Vec2 = egui::Vec2::new(28.0, 20.0);
 const LABEL_W: f32 = 136.0;
+/// A skill's row: its + button (42 points across) clear of the next one's.
+const SKILL_H: f32 = 46.0;
 
 /// A point of the original's 640 × 480 screen in this page's points.
 fn at(ctx: &egui::Context, p: [f32; 2]) -> egui::Pos2 {
@@ -136,10 +138,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         let fig = at(ctx, p.figure);
         let scale = at(ctx, [100.0, 0.0]).x - at(ctx, [0.0, 0.0]).x;
         let body = Rect::from_min_max(pos2(fig.x - scale * 0.45, fig.y - scale * 0.7), pos2(fig.x + scale * 0.45, plate.y + scale * 0.12));
-        let name = Rect::from_center_size(plate, vec2(scale * 0.8, 24.0));
+        // The name keeps its size on the plate (225 points per 100 of the original at 1080 lines, 100% UI scale).
+        let fit = (scale / 225.0).min(1.0);
+        let name = Rect::from_center_size(plate, vec2(scale * 0.8, 24.0 * fit));
         ds::place(ctx, ("ksh-ped", p.i), body.union(name), |ui| {
             let resp = ui.interact(body.union(name), ui.id().with("ped"), Sense::click());
-            Text::new(&p.name, Font::LABEL.sized(15.0)).center().shrink(10.0).color(k.ink.gamma_multiply(p.alpha)).paint(ui, name);
+            Text::new(&p.name, Font::LABEL.sized(15.0 * fit)).center().shrink(10.0 * fit).color(k.ink.gamma_multiply(p.alpha)).paint(ui, name);
             if p.agent {
                 let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                 if ds::either(&resp) {
@@ -149,7 +153,8 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         });
     }
     if v.arrows {
-        for (left, x) in [(false, 247.0), (true, w - 247.0)] {
+        // Just inside the original's 4:3 picture, clear of the statues at any UI scale.
+        for (left, x) in [(false, at(ctx, [0.0, 0.0]).x + 7.0), (true, at(ctx, [640.0, 0.0]).x - 7.0)] {
             let r = Rect::from_center_size(pos2(x, 317.0 * g), vec2(40.0, 40.0));
             ds::place(ctx, if left { "ksh-next" } else { "ksh-prev" }, r, |ui| {
                 let draw = move |p: &egui::Painter, r: Rect, c: Color32| {
@@ -193,46 +198,53 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
 fn agent_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let k = ds::tokens();
     let inner = ds::board_panel(ui, size, PanelKind::Deep, PAD);
-    if let Some(a) = &v.agent {
-        let mut rows = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Min)));
-        rows.spacing_mut().item_spacing.y = 6.0;
-        for (i, (l, val)) in a.rows.iter().enumerate() {
-            // The name in the body face, on the table's baseline.
-            let r = ds::kv(&mut rows, l, if i == 0 { "" } else { val }, ds::Tone::Info, LABEL_W).rect;
-            if i == 0 {
-                Text::new(val, Font::BODY.sized(19.0)).shrink(12.0).baseline(ds::fit::baseline(r, Font::DATA)).color(k.ink).paint(ui, r.with_min_x(r.left() + LABEL_W));
-            }
-        }
-        let mut y = inner.top() + a.rows.len() as f32 * 26.0;
-        y += 10.0;
-        ui.painter().hline(inner.x_range(), y, egui::Stroke::new(1.0f32, k.rim));
-        y += 10.0;
-        for (i, (l, val)) in a.skills.iter().enumerate() {
-            let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), 40.0));
-            let base = ds::fit::baseline(r, Font::DATA.sized(17.0));
-            let name = r.with_max_x(r.right() - 120.0);
-            Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, name);
-            ds::tip(ui.interact(name, ui.id().with(("ksh-skill", i)), Sense::hover()), ds::tip_text(&v.tips, 0x22 + i as u32));
-            Text::new(val, Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(r.right() - 120.0, r.top()), pos2(r.right() - 50.0, r.bottom())));
-            let b = Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(38.0, 38.0));
-            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(b));
-            c.add_enabled_ui(a.plus, |ui| {
-                if ds::either(&ds::tip(ds::round_button(ui, ds::Glyph::Text("+"), true, false), ds::tip_text(&v.tips, 0x19 + i as u32))) {
-                    acts.push(Act::Press(0x19 + i as u32));
-                }
-            });
-            y += 40.0;
-        }
-        if let Some(p) = &a.points {
-            y += 6.0;
-            let r = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), 30.0));
-            let base = ds::fit::baseline(r, Font::LABEL);
-            Text::new(&v.labels.points, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + LABEL_W - 8.0));
-            let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r.with_min_x(r.left() + LABEL_W)));
-            ds::lcd(&mut c, p, 20.0, 2);
-        }
-    }
     let foot = Rect::from_min_max(pos2(inner.left(), inner.bottom() - 24.0), inner.max);
+    if let Some(a) = &v.agent {
+        // The rows, skills and points scroll above the count when the panel is short (a large UI scale).
+        let body = Rect::from_min_max(inner.min, pos2(inner.right(), foot.top() - 20.0));
+        let high = a.rows.len() as f32 * 26.0 + 20.0 + a.skills.len() as f32 * SKILL_H + if a.points.is_some() { 36.0 } else { 0.0 };
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
+        egui::ScrollArea::vertical().id_salt("ksh-agent").auto_shrink([false; 2]).show(&mut child, |ui| {
+            let (all, _) = ui.allocate_exact_size(vec2(ui.available_width(), high), Sense::hover());
+            let mut rows = ui.new_child(egui::UiBuilder::new().max_rect(all).layout(egui::Layout::top_down(egui::Align::Min)));
+            rows.spacing_mut().item_spacing.y = 6.0;
+            for (i, (l, val)) in a.rows.iter().enumerate() {
+                // The name in the body face, on the table's baseline.
+                let r = ds::kv(&mut rows, l, if i == 0 { "" } else { val }, ds::Tone::Info, LABEL_W).rect;
+                if i == 0 {
+                    Text::new(val, Font::BODY.sized(19.0)).shrink(12.0).baseline(ds::fit::baseline(r, Font::DATA)).color(k.ink).paint(ui, r.with_min_x(r.left() + LABEL_W));
+                }
+            }
+            let mut y = all.top() + a.rows.len() as f32 * 26.0;
+            y += 10.0;
+            ui.painter().hline(all.x_range(), y, egui::Stroke::new(1.0f32, k.rim));
+            y += 10.0;
+            for (i, (l, val)) in a.skills.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(all.left(), y), vec2(all.width(), SKILL_H));
+                let base = ds::fit::baseline(r, Font::DATA.sized(17.0));
+                let name = r.with_max_x(r.right() - 120.0);
+                Text::new(l, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, name);
+                ds::tip(ui.interact(name, ui.id().with(("ksh-skill", i)), Sense::hover()), ds::tip_text(&v.tips, 0x22 + i as u32));
+                Text::new(val, Font::DATA.sized(17.0)).right().baseline(base).color(k.info).paint(ui, Rect::from_min_max(pos2(r.right() - 120.0, r.top()), pos2(r.right() - 50.0, r.bottom())));
+                let b = Rect::from_center_size(pos2(r.right() - 20.0, r.center().y), vec2(38.0, 38.0));
+                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(b));
+                c.add_enabled_ui(a.plus, |ui| {
+                    if ds::either(&ds::tip(ds::round_button(ui, ds::Glyph::Text("+"), true, false), ds::tip_text(&v.tips, 0x19 + i as u32))) {
+                        acts.push(Act::Press(0x19 + i as u32));
+                    }
+                });
+                y += SKILL_H;
+            }
+            if let Some(p) = &a.points {
+                y += 6.0;
+                let r = Rect::from_min_size(pos2(all.left(), y), vec2(all.width(), 30.0));
+                let base = ds::fit::baseline(r, Font::LABEL);
+                Text::new(&v.labels.points, Font::LABEL).shrink(10.0).baseline(base).color(k.ink_muted).paint(ui, r.with_max_x(r.left() + LABEL_W - 8.0));
+                let mut c = ui.new_child(egui::UiBuilder::new().max_rect(r.with_min_x(r.left() + LABEL_W)));
+                ds::lcd(&mut c, p, 20.0, 2);
+            }
+        });
+    }
     ui.painter().hline(inner.x_range(), foot.top() - 12.0, egui::Stroke::new(1.0f32, k.rim));
     Text::new(&v.count, Font::LABEL.sized(14.0)).shrink(10.0).color(k.ink_silver).paint(ui, foot);
 }

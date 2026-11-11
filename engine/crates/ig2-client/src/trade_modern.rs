@@ -105,6 +105,8 @@ const PAD: egui::Vec2 = egui::Vec2::new(20.0, 18.0);
 const OFFER_COLS: [f32; 3] = [0.0, 96.0, 48.0];
 const OFFER_RIGHT: [bool; 3] = [false, true, true];
 const CARD_PAD: egui::Vec2 = egui::Vec2::new(24.0, 16.0);
+/// The deliveries' panel at its shortest: the head and one row.
+const DELIVERIES_MIN: f32 = 2.0 * PAD.y + 32.0 + 26.0;
 
 pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let mut acts = sm::board_bar(ctx, &v.bar, &mut st.bar, Act::Bar);
@@ -116,7 +118,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let g = ds::squeeze(h);
     let top = 72.0 * g;
     let list_w = LIST.x.min(w * 0.29);
-    let list_h = LIST.y * g;
+    // The order bar, the message line and the deliveries (at least a row of them) rise together on a short page (a
+    // large UI scale); the lists end above them.
+    let order_h = 150.0 * g.max(0.8);
+    let natural = 664.0 * g + order_h + 12.0 * g + 34.0 + 20.0 * g;
+    let order_top = 664.0 * g - (natural + DELIVERIES_MIN - ds::board_bottom(ctx)).max(0.0);
+    let list_h = (LIST.y * g).min(order_top - 16.0 * g - top);
     for k in 0..2 {
         let x = if k == 0 { ds::BOARD_EDGE } else { w - ds::BOARD_EDGE - list_w };
         let r = Rect::from_min_size(pos2(x, top), vec2(list_w, list_h));
@@ -128,10 +135,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     let well = Rect::from_center_size(pos2(cx / ppp, cy / ppp), WELL * g);
     ds::place(ctx, "tmh-well", well, |ui| ds::turntable_grid(ui.painter(), well));
     if !v.card.is_empty() {
-        let r = Rect::from_min_size(pos2(well.center().x - 300.0, well.bottom() + 28.0 * g), vec2(600.0, 78.0 + if v.weapons.is_empty() { 0.0 } else { 26.0 }));
+        // Between the lists and above the order bar on a narrow or short page.
+        let size = vec2(600.0f32.min(w - 2.0 * (ds::BOARD_EDGE + list_w + 16.0)), 78.0 + if v.weapons.is_empty() { 0.0 } else { 26.0 });
+        let r = Rect::from_min_size(pos2(well.center().x - size.x / 2.0, (well.bottom() + 28.0 * g).min(order_top - 12.0 * g - size.y)), size);
         ds::place(ctx, "tmh-card", r, |ui| card_panel(ui, v, r.size()));
     }
-    let order = Rect::from_min_size(pos2(ds::BOARD_EDGE, 664.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 150.0 * g.max(0.8)));
+    let order = Rect::from_min_size(pos2(ds::BOARD_EDGE, order_top), vec2(w - 2.0 * ds::BOARD_EDGE, order_h));
     ds::place(ctx, "tmh-order", order, |ui| order_panel(ui, v, order.size(), &mut acts));
     let line = Rect::from_min_size(pos2(ds::BOARD_EDGE, order.bottom() + 12.0 * g), vec2(w - 2.0 * ds::BOARD_EDGE, 34.0));
     if !v.line.is_empty() {
@@ -204,12 +213,14 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     let has = v.offer.is_some();
     let cy = inner.center().y + 10.0;
     let label = |ui: &Ui, x: f32, w: f32, t: &str| Text::new(t, Font::LABEL).shrink(10.0).color(k.ink_muted).paint(ui, Rect::from_min_size(pos2(x, cy - 44.0), vec2(w, 18.0)));
+    // A narrow bar (a large UI scale) narrows everything but the quantity's 252 points (the rest needs 1008 at f 1).
+    let f = ((inner.width() - 252.0) / 1008.0).min(1.0);
     // The item.
     let x0 = inner.left();
-    label(ui, x0, 300.0, &v.labels.item);
-    Text::new(&o.name, Font::HEADING.sized(22.0)).shrink(14.0).color(k.ink).paint(ui, Rect::from_min_size(pos2(x0, cy - 18.0), vec2(300.0, 32.0)));
+    label(ui, x0, 300.0 * f, &v.labels.item);
+    Text::new(&o.name, Font::HEADING.sized(22.0)).shrink(12.0).color(k.ink).paint(ui, Rect::from_min_size(pos2(x0, cy - 18.0), vec2(300.0 * f, 32.0)));
     // The quantity: − [n / left] +.
-    let x1 = x0 + 332.0;
+    let x1 = x0 + 332.0 * f;
     label(ui, x1, 220.0, &v.labels.amount);
     let minus = Rect::from_center_size(pos2(x1 + 18.0, cy), vec2(38.0, 38.0));
     let lcd = Rect::from_min_size(pos2(minus.right() + 10.0, cy - 16.0), vec2(72.0, 32.0));
@@ -230,7 +241,7 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
     Text::new(&if has { format!("{}/{}", o.qty, o.left) } else { String::new() }, Font::READOUT.sized(20.0)).center().shrink(13.0).color(k.lcd_ink).paint(ui, lcd);
     // The destination: a dropdown of the ports, its days under it.
     let x2 = x1 + 252.0;
-    let dw = (inner.right() - 280.0 - 260.0 - 32.0 - x2).clamp(220.0, 460.0);
+    let dw = (inner.right() - (280.0 + 260.0 + 32.0) * f - x2).clamp(220.0 * f, 460.0);
     label(ui, x2, dw, &v.labels.dest);
     let dd = Rect::from_min_size(pos2(x2, cy - 20.0), vec2(dw, 40.0));
     let shown = if o.dest < 0 { "—" } else { &o.dest_name };
@@ -247,14 +258,14 @@ fn order_panel(ui: &mut Ui, v: &View, size: egui::Vec2, acts: &mut Vec<Act>) {
         Text::new(&format!("{} {}", v.labels.eta, o.eta), Font::LABEL.sized(13.0)).shrink(10.0).color(k.info).paint(ui, Rect::from_min_size(pos2(x2, dd.bottom() + 4.0), vec2(dw, 16.0)));
     }
     // The total and the order.
-    let x3 = dd.right() + 32.0;
-    label(ui, x3, 200.0, &v.labels.total);
-    let tot = Rect::from_min_size(pos2(x3, cy - 16.0), vec2(120.0, 32.0));
+    let x3 = dd.right() + 32.0 * f;
+    let buy = Rect::from_min_size(pos2(inner.right() - 280.0 * f, cy - 22.0), vec2(280.0 * f, 44.0));
+    label(ui, x3, (buy.left() - x3 - 8.0).min(200.0), &v.labels.total);
+    let tot = Rect::from_min_size(pos2(x3, cy - 16.0), vec2(120.0 * f, 32.0));
     ds::lcd_window(ui.painter(), tot);
-    Text::new(&if has { format!("${}", o.total) } else { String::new() }, Font::READOUT.sized(20.0)).center().shrink(13.0).color(k.lcd_ink).paint(ui, tot);
-    let buy = Rect::from_min_size(pos2(inner.right() - 280.0, cy - 22.0), vec2(280.0, 44.0));
+    Text::new(&if has { format!("${}", o.total) } else { String::new() }, Font::READOUT.sized(20.0)).center().shrink(11.0).color(k.lcd_ink).paint(ui, tot);
     let mut c = ui.new_child(egui::UiBuilder::new().max_rect(buy));
-    if ds::tip(c.add_enabled(o.ok, ds::Plate::new(&v.labels.buy).width(280.0).height(44.0).primary(true)), ds::tip_text(&v.tips, 0x1c)).clicked() {
+    if ds::tip(c.add_enabled(o.ok, ds::Plate::new(&v.labels.buy).width(buy.width()).height(44.0).primary(true)), ds::tip_text(&v.tips, 0x1c)).clicked() {
         acts.push(Act::Buy);
     }
 }
@@ -364,11 +375,15 @@ mod tests {
     }
 
     fn run(v: &View, clicks: &[egui::Pos2]) -> (Vec<Rect>, Vec<Act>) {
+        run_at(v, clicks, vec2(1920.0, 1080.0))
+    }
+
+    fn run_at(v: &View, clicks: &[egui::Pos2], screen: egui::Vec2) -> (Vec<Rect>, Vec<Act>) {
         let gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb);
         let mut st = State::default();
         let (mut acts, mut rects) = (Vec::new(), Vec::new());
         for f in 0..(6 + 3 * clicks.len()) {
-            let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1920.0, 1080.0))), ..Default::default() };
+            let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, screen)), ..Default::default() };
             let button = |p, pressed| egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: Default::default() };
             if f >= 2 && let Some(&p) = clicks.get((f - 2) / 3) {
                 input.events = match (f - 2) % 3 {
@@ -378,7 +393,7 @@ mod tests {
                 };
             }
             let _ = gui.ctx.run(input, |ctx| acts.extend(show(ctx, v, &mut st)));
-            rects = ["tmh-list0", "tmh-list1", "tmh-order", "tmh-ships", "tmh-exit", "tmh-well"].map(|id| gui.ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap()).to_vec();
+            rects = ["tmh-list0", "tmh-list1", "tmh-order", "tmh-ships", "tmh-exit", "tmh-well", "tmh-card", "tmh-line"].map(|id| gui.ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap()).to_vec();
         }
         (rects, acts)
     }
@@ -406,5 +421,30 @@ mod tests {
         assert!(a.contains(&Act::Buy), "{a:?}");
         let (_, a) = run(&view("Tra"), &[short[4].center()]);
         assert!(a.contains(&Act::Bar(sm::Act::Screen(2))), "{a:?}");
+    }
+
+    /// At 150% and 200% UI scale (the 1920 × 1080 window's points) no panel covers another or the Exit plate, the
+    /// deliveries keep a row, and the order's total stays clear of the Buy plate.
+    #[test]
+    fn large_ui_scale_fits() {
+        for screen in [vec2(1280.0, 720.0), vec2(960.0, 540.0)] {
+            let (r, a) = run_at(&view("Tra"), &[], screen);
+            assert!(a.is_empty());
+            let [l0, l1, order, ships, exit, _, card, line] = r[..] else { unreachable!() };
+            for (i, x) in [l0, l1, order, ships, card, line].iter().enumerate() {
+                for y in [l0, l1, order, ships, card, line, exit].iter().skip(i + 1) {
+                    assert!(!x.shrink(0.5).intersects(*y), "{screen:?}: {x:?} {y:?}");
+                }
+            }
+            assert!(ships.height() >= DELIVERIES_MIN - 0.5, "{screen:?}: {ships:?}");
+            // The order bar's pieces at `f` (order_panel).
+            let inner = order.shrink2(vec2(28.0, 20.0));
+            let f = ((inner.width() - 252.0) / 1008.0).min(1.0);
+            let tot_right = inner.left() + 332.0 * f + 252.0 + 220.0 * f + 32.0 * f + 120.0 * f;
+            assert!(tot_right + 8.0 * f <= inner.right() - 280.0 * f, "{screen:?}");
+            // The Buy plate still answers a press.
+            let (_, a) = run_at(&view("Tra"), &[pos2(inner.right() - 20.0, inner.center().y + 10.0)], screen);
+            assert!(a.contains(&Act::Buy), "{screen:?}: {a:?}");
+        }
     }
 }

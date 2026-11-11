@@ -147,7 +147,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
         }
         st.root = root;
     }
-    let contacts = Rect::from_min_max(pos2(ds::BOARD_EDGE, top + 40.0), pos2(ds::BOARD_EDGE + CARD_W, MENUS_TOP * g - 16.0));
+    // A narrow or short page (a large UI scale): the left column keeps clear of the leader's picture, the root menu
+    // rises off the foot and the contacts end above it.
+    let left_w = w * 0.3;
+    let root_h = root.and_then(|r| v.menus.get(r)).map_or(0.0, |m| m.len() as f32 * ROW_H + 20.0);
+    let menus_top = (MENUS_TOP * g).min(ds::board_bottom(ctx) - root_h);
+    let contacts = Rect::from_min_max(pos2(ds::BOARD_EDGE, top + 40.0), pos2(ds::BOARD_EDGE + CARD_W.min(left_w), menus_top - 16.0));
     ds::place(ctx, "dmh-contacts", contacts, |ui| contacts_panel(ui, v, st, contacts.size(), &mut acts));
     if let Some(info) = &v.info {
         let r = Rect::from_min_size(pos2(w - ds::BOARD_EDGE - INFO_W.min(w * 0.25), top + 28.0), vec2(INFO_W.min(w * 0.25), 156.0));
@@ -156,14 +161,14 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
     // The cascade: the root, then each opened sub-menu beside the one before, its top level with the opening row.
     if let Some(root) = root {
         let mut x = ds::BOARD_EDGE;
-        let mut y = MENUS_TOP * g;
+        let mut y = menus_top;
         let mut id = root;
         for level in 0..3 {
             let rows = v.menus.get(id).map_or(&[][..], |m| &m[..]);
             if rows.is_empty() {
                 break;
             }
-            let width = if level == 0 { ROOT_W } else { SUB_W };
+            let width = if level == 0 { ROOT_W.min(left_w) } else { SUB_W };
             let r = Rect::from_min_size(pos2(x, y), vec2(width, rows.len() as f32 * ROW_H + 20.0));
             let picked = st.path.get(level).map(|&(_, row)| row);
             if let Some((row, off)) = ds::place(ctx, format!("dmh-menu{level}"), r, |ui| menu_panel(ui, rows, picked, r.size())).inner {
@@ -187,7 +192,12 @@ pub fn show(ctx: &egui::Context, v: &View, st: &mut State) -> Vec<Act> {
             id = sub;
         }
     }
-    let text = Rect::from_min_max(pos2(TEXT.left().max(w / 2.0 - 320.0), TEXT.top() * g), pos2(TEXT.right().min(w / 2.0 + 480.0), h - 60.0 * g));
+    let mut text = Rect::from_min_max(pos2(TEXT.left().max(w / 2.0 - 320.0), TEXT.top() * g), pos2(TEXT.right().min(w / 2.0 + 480.0).min(w - ds::BOARD_EDGE), h - 60.0 * g));
+    // A narrow page (a large UI scale) brings the Exit plate under the panel: the panel rises by the overlap.
+    let lift = text.bottom() + 16.0 - (ds::board_bottom(ctx) - ds::FOOT_H);
+    if text.right() + 16.0 > w - ds::BOARD_EDGE - ds::EXIT_W && lift > 0.0 {
+        text = text.translate(vec2(0.0, -lift));
+    }
     let plain: Vec<usize> = v.shown.iter().copied().filter(|m| !CASCADES.contains(m)).collect();
     ds::place(ctx, "dmh-text", text, |ui| text_panel(ui, v, st, &plain, text.size(), &mut acts));
     if ds::exit_plate(ctx, "dmh-exit", &v.labels.exit, true) {
