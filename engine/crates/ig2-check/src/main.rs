@@ -92,6 +92,15 @@ fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Gro
         let checked = utf8(bytes).and_then(|t| ig2_formats::visuals::Visuals::parse(&t, &from));
         g.record(from.clone(), checked.map(|_| format!("{from} reads")));
     }
+    // Each effects file on its own, and its pictures in the install (ADR 0088 §10).
+    for (name, bytes) in inst.effect_files().unwrap_or_default() {
+        let from = format!("mod {name}: {}", ig2_formats::effects::EFFECTS_FILE);
+        let checked = utf8(bytes).and_then(|t| ig2_formats::effects::Effects::parse(&t, &from)).and_then(|fx| {
+            let missing: Vec<&str> = fx.pictures.iter().map(|(_, p)| p.file.as_str()).filter(|f| inst.read(f).is_err()).collect();
+            if missing.is_empty() { Ok(()) } else { Err(format!("{from}: no such picture: {}", missing.join(", "))) }
+        });
+        g.record(from.clone(), checked.map(|_| format!("{from} reads")));
+    }
     g
 }
 

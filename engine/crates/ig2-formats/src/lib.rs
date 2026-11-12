@@ -26,6 +26,7 @@ pub mod textpatch;
 pub mod tutorial;
 pub mod userfs;
 pub mod vfs;
+pub mod effects;
 pub mod visuals;
 pub mod xv;
 pub mod zipfs;

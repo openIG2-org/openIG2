@@ -131,6 +131,8 @@ fn check_file(rel: &str, bytes: &[u8]) -> Result<(), String> {
                 ig2_sim::story_mods::parse(t, "package").map(drop)
             } else if top && rel == ig2_formats::visuals::VISUALS_FILE {
                 ig2_formats::visuals::Visuals::parse(t, rel).map(drop)
+            } else if top && rel == ig2_formats::effects::EFFECTS_FILE {
+                ig2_formats::effects::Effects::parse(t, rel).map(drop)
             } else if let Some(lang) = top.then(|| ig2_formats::textpatch::file_lang(rel)).flatten() {
                 ig2_formats::textpatch::TextPatch::default().add(t, rel, lang).map(drop)
             } else {

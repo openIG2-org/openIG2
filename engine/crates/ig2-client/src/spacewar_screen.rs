@@ -442,6 +442,8 @@ pub struct FxGfx {
     flare: Option<crate::render::TexId>,
     /// The enhanced effects' soft dot and ring ([`crate::battle_fx::pictures`]).
     extra: [crate::render::TexId; 2],
+    /// The mods' effect pictures ([`crate::battle_fx::mod_textures`]).
+    mods: Vec<(crate::render::TexId, bool)>,
 }
 
 impl FxGfx {
@@ -450,7 +452,8 @@ impl FxGfx {
         let tex = |r: &mut crate::render::Renderer, n: &str| r.file_texture(install, &format!("dataraw/textures/spacewar/{n}_bmp.pvr")).map_err(|e| eprintln!("ig2-client: {e}")).ok();
         let fighter = Mesh::load(r, install, "vector/spacewar/", "vad10.xvb", "textures/spacewar/");
         let extra = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
-        Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare"), extra }
+        let mods = crate::battle_fx::mod_textures(r, install, extra[0]);
+        Self { debris, rings: HashMap::new(), ring_light: None, fighter, villam: tex(r, "villam"), flare: tex(r, "flare"), extra, mods }
     }
 }
 
@@ -1201,6 +1204,10 @@ impl<'a> Scene<'a> {
         put(&mut v, g.extra[1], false);
         x.quads(Sprite::Glow, axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 1.0, 1.0], &mut v);
         put(&mut v, g.flare.unwrap_or(self.assets.white), false);
+        for (i, &(tex, darken)) in g.mods.iter().enumerate() {
+            x.quads(Sprite::Picture(i as u8, darken), axes, world, 1.0 / SCENE_SCALE, [0.0, 0.0, 1.0, 1.0], &mut v);
+            put(&mut v, tex, darken);
+        }
     }
 
     /// The lightning (`villamfrissit`, `villam::Update`, `kiralyvonalhuzo`; spec §6.8.4): each bolt's Hermite curve as

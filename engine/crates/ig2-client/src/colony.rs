@@ -1176,7 +1176,7 @@ pub struct ColonyScene {
     /// The ruins made since the war's effects last took them (the enhanced smoke columns, ADR 0057).
     new_ruins: Vec<V3>,
     /// The enhanced effects' soft dot and ring ([`crate::battle_fx::pictures`]), made on first use.
-    extra_tex: Option<[TexId; 2]>,
+    extra_tex: Option<([TexId; 2], crate::battle_fx::ModTextures)>,
     emitters: crate::colony_smoke::Emitters,
     /// Snow or rain ([`crate::colony_weather`]), moved once a drawn frame.
     weather: Option<crate::colony_weather::Weather>,
@@ -2407,15 +2407,22 @@ impl View {
         // added, and a soft halo round each laser beam. Nothing with Classic.
         if let (true, Some(x)) = (curr.visible, self.overlay.fx.extra.as_ref()) {
             use crate::battle_fx::Sprite;
-            let [dot, ring] = *scene.extra_tex.get_or_insert_with(|| crate::battle_fx::pictures().map(|i| r.add_texture(&i)));
+            let ([dot, ring], mods) = scene
+                .extra_tex
+                .get_or_insert_with(|| {
+                    let t = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
+                    (t, crate::battle_fx::mod_textures(r, install, t[0]))
+                })
+                .clone();
             let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
             let flare = scene.colony_texture(r, install, "flare.bmp");
             let axes = [basis.rows[0], basis.rows[1]];
-            for (sprite, tex) in [(Sprite::Smoke, rcloud), (Sprite::Spark, dot), (Sprite::Ring, ring), (Sprite::Glow, flare)] {
+            let pictures = mods.iter().enumerate().map(|(i, &(tex, darken))| (Sprite::Picture(i as u8, darken), tex));
+            for (sprite, tex) in [(Sprite::Smoke, rcloud), (Sprite::Spark, dot), (Sprite::Ring, ring), (Sprite::Glow, flare)].into_iter().chain(pictures) {
                 let base = dynamic.len() as u32;
                 x.quads(sprite, axes, |p| p, 1.0, [0.0, 0.0, 1.0, 1.0], &mut dynamic);
                 if dynamic.len() as u32 > base {
-                    let blob = sprite == Sprite::Smoke;
+                    let blob = matches!(sprite, Sprite::Smoke | Sprite::Picture(_, true));
                     let shadow = if blob { Shadow::Blob } else { Shadow::None };
                     draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow, video: false, additive: !blob, depth_write: false });
                 }

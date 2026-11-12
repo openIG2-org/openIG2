@@ -2,6 +2,11 @@
 //! and the ground war, started where and when the classic ones start. Flashes, sparks, embers, shock rings, smoke
 //! and smoke columns; the glows use the install's `flare.bmp`, the smoke its smoke pictures, the sparks and rings
 //! two pictures drawn here. Classic (the default) never builds a [`Layers`], so its effects and captures stay the exe's.
+//! A mod's `effects.toml` (ADR 0088 §10) replaces a moment's recipe with its emitters and may bring its own pictures.
+
+use std::sync::{Arc, RwLock};
+
+use ig2_formats::effects::{Blend, Effects, Emitter, EFFECTS_FILE};
 
 use crate::render3d::MeshVertex;
 
@@ -21,13 +26,112 @@ pub fn enhanced() -> bool {
 /// At most this many particles per battle; the oldest go first.
 const CAP: usize = 4096;
 
-/// What a particle looks like: the glow (`flare.bmp`), the soft dot, the ring (added) or smoke (darkening).
+/// The moments of [`ig2_formats::effects::MOMENTS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Moment {
+    Blast,
+    Hit,
+    Shield,
+    Smoke,
+    Engine,
+    Shot,
+}
+
+/// The enabled mods' effects, resolved: each set moment's emitters with their sprites, and the mods' pictures (game
+/// path, darkening) in [`Sprite::Picture`] order.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Recipes {
+    moments: [Option<Vec<(Emitter, Sprite)>>; 6],
+    pub pictures: Vec<(String, bool)>,
+}
+
+impl Recipes {
+    pub fn new(fx: &Effects) -> Self {
+        use ig2_formats::effects::Sprite as S;
+        // shortcut: at most 256 pictures (a u8 in the sprite), more than any effect set needs.
+        let pictures: Vec<(String, bool)> = fx.pictures.iter().take(256).map(|(_, p)| (p.file.clone(), p.blend == Blend::Darken)).collect();
+        let sprite = |s: &S| match s {
+            S::Glow => Sprite::Glow,
+            S::Spark => Sprite::Spark,
+            S::Ring => Sprite::Ring,
+            S::Smoke => Sprite::Smoke,
+            S::Picture(n) => match fx.pictures.iter().take(256).position(|(p, _)| p == n) {
+                Some(i) => Sprite::Picture(i as u8, pictures[i].1),
+                None => Sprite::Glow,
+            },
+        };
+        let moments = fx.moments.clone().map(|m| {
+            m.map(|list| {
+                list.into_iter()
+                    .map(|e| {
+                        let s = sprite(&e.sprite);
+                        (e, s)
+                    })
+                    .collect()
+            })
+        });
+        Self { moments, pictures }
+    }
+}
+
+static RECIPES: RwLock<Option<Arc<Recipes>>> = RwLock::new(None);
+
+/// Read the enabled mods' `effects.toml` files (lowest priority first; a file that doesn't read is named and skipped).
+pub fn load_mods(install: &ig2_formats::Install) {
+    let mut all = Effects::default();
+    for (m, bytes) in install.effect_files().unwrap_or_default() {
+        match Effects::parse(&String::from_utf8_lossy(&bytes), &format!("mod {m}: {EFFECTS_FILE}")) {
+            Ok(fx) => all.merge(&fx),
+            Err(e) => eprintln!("ig2-client: {e} (skipped)"),
+        }
+    }
+    *RECIPES.write().unwrap() = all.any().then(|| Arc::new(Recipes::new(&all)));
+}
+
+/// The mods' effects, if any mod sets one (they switch the enhanced layers on).
+pub fn recipes() -> Option<Arc<Recipes>> {
+    RECIPES.read().unwrap().clone()
+}
+
+/// The mods' effect pictures as textures, with their darkening.
+pub type ModTextures = Vec<(crate::render::TexId, bool)>;
+
+/// The mods' pictures as textures in [`Sprite::Picture`] order (with their darkening); one that doesn't load is
+/// named and drawn with `fallback`.
+pub fn mod_textures(r: &mut crate::render::Renderer, install: &ig2_formats::Install, fallback: crate::render::TexId) -> ModTextures {
+    let Some(rec) = recipes() else { return Vec::new() };
+    rec.pictures
+        .iter()
+        .map(|(file, darken)| {
+            let img = install.read(file).map_err(|e| e.to_string()).and_then(|b| crate::upscale::decode_png(&b));
+            let tex = match img {
+                Ok(h) => r.add_texture(&crate::assets::Image { width: h.width, height: h.height, rgba: h.rgba, mips: Vec::new(), hires: None }),
+                Err(e) => {
+                    eprintln!("ig2-client: {EFFECTS_FILE}: {file}: {e}");
+                    fallback
+                }
+            };
+            (tex, *darken)
+        })
+        .collect()
+}
+
+/// What a particle looks like: the glow (`flare.bmp`), the soft dot, the ring (added), smoke (darkening) or a mod's
+/// picture (its index in [`Recipes::pictures`], darkening or added).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sprite {
     Glow,
     Spark,
     Ring,
     Smoke,
+    Picture(u8, bool),
+}
+
+impl Sprite {
+    /// Drawn like smoke (smoke, a darkening picture): fades in and out, grows fast then slow, never dimmed.
+    fn smoky(self) -> bool {
+        matches!(self, Sprite::Smoke | Sprite::Picture(_, true))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,10 +155,7 @@ impl Bit {
     /// The half size now: rings and smoke grow fast then slow (ease-out), the rest go linearly.
     pub fn size(&self) -> f32 {
         let t = self.t();
-        let k = match self.sprite {
-            Sprite::Ring | Sprite::Smoke => 1.0 - (1.0 - t) * (1.0 - t),
-            _ => t,
-        };
+        let k = if self.sprite == Sprite::Ring || self.sprite.smoky() { 1.0 - (1.0 - t) * (1.0 - t) } else { t };
         self.size[0] + (self.size[1] - self.size[0]) * k
     }
 
@@ -62,7 +163,7 @@ impl Bit {
     pub fn colour(&self) -> [f32; 3] {
         let t = self.t();
         let a = match self.sprite {
-            Sprite::Smoke => (t * 5.0).min(1.0) * (1.0 - t),
+            s if s.smoky() => (t * 5.0).min(1.0) * (1.0 - t),
             Sprite::Ring => (1.0 - t) * (1.0 - t),
             _ => 1.0 - t,
         };
@@ -90,12 +191,58 @@ pub struct Layers {
     /// What the light (all but smoke) is scaled by: 1 in space, less on the ground war's bright terrain.
     gain: f32,
     seed: u32,
+    /// The mods' effects when the layers were made (none: the recipes below).
+    recipes: Option<Arc<Recipes>>,
 }
 
 impl Layers {
     /// `down`: the unit vector gravity pulls along (zero in space); `hz`: the ticks a second [`Layers::step`] runs at.
     pub fn new(down: V3, hz: f32) -> Self {
-        Self { bits: Vec::new(), columns: Vec::new(), down, pace: hz / 20.0, gain: 1.0, seed: 0x9e37_79b9 }
+        Self { bits: Vec::new(), columns: Vec::new(), down, pace: hz / 20.0, gain: 1.0, seed: 0x9e37_79b9, recipes: recipes() }
+    }
+
+    /// The same layers with these mods' effects.
+    #[cfg(test)]
+    pub fn with_recipes(self, recipes: Option<Arc<Recipes>>) -> Self {
+        Self { recipes, ..self }
+    }
+
+    /// Whether a mod sets this moment.
+    pub fn wants(&self, m: Moment) -> bool {
+        self.recipes.as_ref().is_some_and(|r| r.moments[m as usize].is_some())
+    }
+
+    /// A mod's emitters for `m` at `at`, radius `r`, their colours times `tint`; false when no mod sets `m`. Per
+    /// particle: a direction, then the speed and the life (each drawn only when it is a range).
+    fn emit(&mut self, m: Moment, at: V3, r: f32, tint: [f32; 3]) -> bool {
+        let Some(rec) = self.recipes.clone() else { return false };
+        let Some(list) = &rec.moments[m as usize] else { return false };
+        let up = self.down.map(|x| -x);
+        let range = |l: &mut Self, v: [f32; 2]| if v[0] == v[1] { v[0] } else { l.between(v[0], v[1]) };
+        for (e, sprite) in list {
+            let [lo, hi] = e.count;
+            let n = if lo == hi { lo } else { (self.between(lo as f32, hi as f32 + 1.0) as u16).min(hi) };
+            for _ in 0..n {
+                let d = self.dir();
+                let (s, life) = (range(self, e.speed), range(self, e.life));
+                // Seconds and radii to the recipes' 20 Hz ticks and battle units.
+                let pos = std::array::from_fn(|k| at[k] + d[k] * e.offset * r);
+                let vel = std::array::from_fn(|k| (d[k] * s + up[k] * e.rise) * r / 20.0);
+                let rgb = std::array::from_fn(|k| e.color[k] * tint[k]);
+                self.add(*sprite, pos, vel, e.drag.powf(1.0 / 20.0), e.fall * r / 400.0, life * 20.0, e.size.map(|x| x * r), rgb);
+            }
+        }
+        true
+    }
+
+    /// A ship's thruster of size `r` this tick (nothing unless a mod sets `engine`).
+    pub fn engine(&mut self, at: V3, r: f32) {
+        self.emit(Moment::Engine, at, r, [1.0; 3]);
+    }
+
+    /// A projectile in flight of size `r` and colour `rgb` this tick (nothing unless a mod sets `shot`).
+    pub fn shot(&mut self, at: V3, r: f32, rgb: [f32; 3]) {
+        self.emit(Moment::Shot, at, r, rgb);
     }
 
     /// The same layers with their light scaled by `gain`.
@@ -138,7 +285,7 @@ impl Layers {
         // Per-tick motion given at 20 Hz: a faster clock moves less a tick.
         let (vel, fall) = (vel.map(|v| v / self.pace), fall / (self.pace * self.pace));
         let drag = drag.powf(1.0 / self.pace);
-        let rgb = if sprite == Sprite::Smoke { rgb } else { rgb.map(|c| c * self.gain) };
+        let rgb = if sprite.smoky() { rgb } else { rgb.map(|c| c * self.gain) };
         self.bits.push(Bit { sprite, pos, vel, drag, fall, age: 0, life, size, rgb });
     }
 
@@ -153,6 +300,9 @@ impl Layers {
 
     /// A blast of radius `r` at `at`: the flash, the fireball, the shock ring, sparks, embers and smoke.
     pub fn blast(&mut self, at: V3, r: f32) {
+        if self.emit(Moment::Blast, at, r, [1.0; 3]) {
+            return;
+        }
         self.add(Sprite::Glow, at, [0.0; 3], 1.0, 0.0, 7.0, [r * 1.4, r * 2.2], [1.0, 0.9, 0.7]);
         self.add(Sprite::Glow, at, [0.0; 3], 1.0, 0.0, 16.0, [r * 0.7, r * 1.5], [0.9, 0.45, 0.12]);
         self.add(Sprite::Ring, at, [0.0; 3], 1.0, 0.0, 14.0, [r * 0.3, r * 3.2], [0.8, 0.65, 0.45]);
@@ -176,12 +326,18 @@ impl Layers {
 
     /// A hit of size `r`: a short flash and a spray of sparks.
     pub fn hit(&mut self, at: V3, r: f32) {
+        if self.emit(Moment::Hit, at, r, [1.0; 3]) {
+            return;
+        }
         self.add(Sprite::Glow, at, [0.0; 3], 1.0, 0.0, 5.0, [r, r * 0.5], [1.0, 0.85, 0.6]);
         self.sparks(at, r, 8, (0.2, 0.5), (5.0, 11.0), [1.0, 0.85, 0.55]);
     }
 
     /// A hit on a shield of size `r`: a blue-white flash and a quick ring.
     pub fn shield(&mut self, at: V3, r: f32) {
+        if self.emit(Moment::Shield, at, r, [1.0; 3]) {
+            return;
+        }
         self.add(Sprite::Glow, at, [0.0; 3], 1.0, 0.0, 8.0, [r * 1.6, r * 2.4], [0.35, 0.6, 1.0]);
         self.add(Sprite::Ring, at, [0.0; 3], 1.0, 0.0, 10.0, [r * 0.4, r * 2.6], [0.3, 0.55, 1.0]);
         self.sparks(at, r, 6, (0.15, 0.35), (4.0, 9.0), [0.55, 0.8, 1.0]);
@@ -201,7 +357,7 @@ impl Layers {
         for i in 0..self.columns.len() {
             let c = self.columns[i];
             self.columns[i].left -= 1;
-            if c.left % every != 0 {
+            if c.left % every != 0 || self.emit(Moment::Smoke, c.at, c.r, [1.0; 3]) {
                 continue;
             }
             let d = self.dir();
@@ -318,6 +474,46 @@ mod tests {
         // The same draws, five times the ticks (each rounded on its own clock).
         assert!((longest(&fast) as i32 - 5 * longest(&slow) as i32).abs() <= 3);
         assert!(slow.bits[0].colour()[0] > 0.99 && slow.bits[0].size() == 1.0);
+    }
+
+    #[test]
+    fn a_mods_emitters_replace_only_their_moment() {
+        let file = "[pictures]
+fire = { file = \"fx/fire.png\", blend = \"darken\" }
+[[blast]]
+sprite = \"fire\"
+count = 3
+life = 1
+size = [0.5, 2]
+speed = 2
+drag = 0.5
+[[blast]]
+sprite = \"ring\"
+color = \"#ff0000\"
+[[shot]]
+sprite = \"spark\"
+color = \"#808080\"
+";
+        let rec = Arc::new(Recipes::new(&Effects::parse(file, "t").unwrap()));
+        assert_eq!(rec.pictures, vec![("fx/fire.png".to_owned(), true)]);
+        let mut l = Layers::new([0.0; 3], 20.0).with_recipes(Some(rec));
+        l.blast([0.0; 3], 10.0);
+        assert_eq!(l.bits.len(), 4);
+        let fire = l.bits[0];
+        // One second at 20 Hz; half size 5 → 20; 2 radii a second = 1 battle unit a tick, half kept after a second.
+        assert_eq!((fire.sprite, fire.life, fire.size), (Sprite::Picture(0, true), 20, [5.0, 20.0]));
+        let speed = |b: &Bit| (b.vel[0] * b.vel[0] + b.vel[1] * b.vel[1] + b.vel[2] * b.vel[2]).sqrt();
+        assert!((speed(&fire) - 1.0).abs() < 1e-5 && (fire.drag.powi(20) - 0.5).abs() < 1e-5);
+        assert_eq!((l.bits[3].sprite, l.bits[3].rgb), (Sprite::Ring, [1.0, 0.0, 0.0]));
+        // A darkening picture fades in like smoke; the hit keeps the engine's recipe; the shot takes the shot's colour.
+        assert!(fire.colour()[0] == 0.0);
+        l.hit([0.0; 3], 1.0);
+        assert_eq!(l.bits.len(), 4 + 1 + 8);
+        l.shot([0.0; 3], 1.0, [1.0, 0.5, 0.0]);
+        assert_eq!(l.bits.last().unwrap().rgb, [128.0 / 255.0, 64.0 / 255.0, 0.0]);
+        l.engine([0.0; 3], 1.0);
+        assert_eq!(l.bits.len(), 4 + 1 + 8 + 1);
+        assert!(l.wants(Moment::Shot) && !l.wants(Moment::Engine));
     }
 
     #[test]

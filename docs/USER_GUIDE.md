@@ -580,6 +580,33 @@ highest mod that sets it. A misspelt name or a value out of range is shown under
 `openIG2-check`; the file is then skipped. A ready example:
 https://github.com/openIG2-org/mods/tree/main/mods-src/remaster-look
 
+### Effect files
+A mod's `effects.toml` (at the mod's top) describes the Enhanced battle effects as particles: at each moment, what
+flies out, how many, how big, in what colour and for how long, with the game's pictures or the mod's own PNGs
+(ADR 0088 §10). A mod with this file switches Battle effects to Enhanced while it is enabled. It changes only what
+you see.
+
+```toml
+[pictures]
+fire = { file = "effects/fire.png", blend = "add" }   # a PNG in the mod; "add" (light) or "darken" (smoke)
+
+[[blast]]                # a ship, gun or fighter group blown up; one [[blast]] per kind of particle
+sprite = "fire"          # glow, spark, ring, smoke or a name from [pictures]
+count = [10, 16]         # how many: a number or [least, most]
+life = [0.4, 1.0]        # seconds
+size = [0.3, 1.5]        # size at the start and at the end, in the blast's radius
+color = "#ffcc66"
+speed = [0.5, 3.0]       # radii a second, outwards in a random direction
+drag = 0.05              # the share of the speed left after a second
+offset = 0.2             # how far out it starts, in radii
+```
+
+The moments are `blast`, `hit` (a shot hitting a ship), `shield` (a hit on a shield), `smoke` (each puff of the smoke
+rising from a wreck), `engine` (each thruster, all the time) and `shot` (each shot in flight; the colour is
+multiplied by the shot's own). On the ground `fall` and `rise` (radii a second) pull particles down or lift them.
+A moment the file leaves out keeps the game's own effect. Mistakes are shown under the mod on the Mods page and by
+`openIG2-check`.
+
 `per_pixel` lights every 3D model per pixel instead of per corner (ships, planets, the models on the research,
 design, spy, diplomacy, trade and info screens, the colony's panel models): the same lights and colours, without
 the facets.

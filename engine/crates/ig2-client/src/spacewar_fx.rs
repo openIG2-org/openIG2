@@ -486,6 +486,19 @@ impl Fx {
         }
         if let Some(x) = self.extra.as_mut() {
             enhance(x, b, events);
+            // A mod's shot trails (ADR 0088 §10): each projectile in flight, its size and colour.
+            if x.wants(crate::battle_fx::Moment::Shot) {
+                for (fi, pool) in b.pools.iter().enumerate() {
+                    let Some(form) = self.tables.forms.get(fi) else { continue };
+                    for s in pool.shots.iter().filter(|s| s.shooter.is_some()) {
+                        let (word, size) = shot_look(s, weapons, &self.tables.forms, form.size, b.tick);
+                        if size > 0.0 {
+                            let c = crate::starmap::particle_color(word);
+                            x.shot([s.pos.x, s.pos.y, s.pos.z], size, [c[0], c[1], c[2]]);
+                        }
+                    }
+                }
+            }
         }
         // The projectiles in flight.
         for (fi, pool) in b.pools.iter().enumerate() {
@@ -595,6 +608,9 @@ impl Fx {
                 _ => Vec::new(),
             };
             for q in pts {
+                if let Some(x) = self.extra.as_mut() {
+                    x.engine(q, sc * 300.0);
+                }
                 self.trail_puff(sc * 4.0, q, d);
             }
         }

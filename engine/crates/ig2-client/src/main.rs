@@ -776,6 +776,9 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
     for (m, _) in install.visual_files().unwrap_or_default() {
         eprintln!("ig2-client: mod {m}: {}", ig2_formats::visuals::VISUALS_FILE);
     }
+    for (m, _) in install.effect_files().unwrap_or_default() {
+        eprintln!("ig2-client: mod {m}: {}", ig2_formats::effects::EFFECTS_FILE);
+    }
     visuals::load(&install);
     tr::set_game(install.lang());
     Ok(install)

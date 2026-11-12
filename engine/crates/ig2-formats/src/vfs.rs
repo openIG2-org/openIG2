@@ -83,6 +83,8 @@ pub struct Install {
     stories: Vec<(usize, PathBuf)>,
     /// Each mod's `visuals.toml` (ADR 0088), lowest priority first: (index in `mods`, file).
     visuals: Vec<(usize, PathBuf)>,
+    /// Each mod's `effects.toml` (ADR 0088 §10), lowest priority first.
+    effects: Vec<(usize, PathBuf)>,
     /// The text files the texts' language's patches change: game path → the patched decoded bytes.
     patched: HashMap<String, Vec<u8>>,
 }
@@ -594,7 +596,7 @@ impl Install {
                 root.display()
             )));
         }
-        let (mut modded, mut patches, mut texts, mut stories, mut visuals) = (HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        let (mut modded, mut patches, mut texts, mut stories, mut visuals, mut effects) = (HashMap::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
         for (i, m) in mods.iter().enumerate().rev() {
             let mut found = scan(&*files, &m.dir)?;
             // The description and its picture aren't game files (ADR 0068 §3).
@@ -607,6 +609,7 @@ impl Install {
             patches.extend(found.remove(RULES_PATCH).map(|p| (i, p)));
             stories.extend(found.remove(STORY_FILE).map(|p| (i, p)));
             visuals.extend(found.remove(crate::visuals::VISUALS_FILE).map(|p| (i, p)));
+            effects.extend(found.remove(crate::effects::EFFECTS_FILE).map(|p| (i, p)));
             texts.extend(Lang::ALL.into_iter().filter_map(|l| found.remove(&textpatch::file_name(l)).map(|p| (i, l, p))));
             // The rule tables are read from the exe (ADR 0004); a mod never replaces it, `rules.toml` patches them.
             for (k, p) in found.into_iter().filter(|(k, _)| !k.ends_with(".exe")) {
@@ -615,7 +618,7 @@ impl Install {
                 index.insert(k, p);
             }
         }
-        let mut install = Self { files, base, root, lang, index, mods, modded, patches, texts, stories, visuals, patched: HashMap::new() };
+        let mut install = Self { files, base, root, lang, index, mods, modded, patches, texts, stories, visuals, effects, patched: HashMap::new() };
         install.patched = install.patch_texts()?;
         Ok(install)
     }
@@ -665,6 +668,11 @@ impl Install {
     /// The enabled mods' `visuals.toml` files, lowest priority first (ADR 0088): (mod, bytes).
     pub fn visual_files(&self) -> Result<Vec<(&str, Vec<u8>)>> {
         self.mod_files(&self.visuals)
+    }
+
+    /// The enabled mods' `effects.toml` files, lowest priority first (ADR 0088 §10): (mod, bytes).
+    pub fn effect_files(&self) -> Result<Vec<(&str, Vec<u8>)>> {
+        self.mod_files(&self.effects)
     }
 
     fn mod_files(&self, files: &[(usize, PathBuf)]) -> Result<Vec<(&str, Vec<u8>)>> {

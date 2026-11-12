@@ -133,6 +133,10 @@ fn check(install: &Install, rules: &Result<ig2_rules::Rules, String>, m: &Mod) -
         let checked = text(b).and_then(|t| ig2_formats::visuals::Visuals::parse(&t, ig2_formats::visuals::VISUALS_FILE));
         problems.extend(checked.err());
     }
+    for (_, b) in solo.effect_files().unwrap_or_default() {
+        let checked = text(b).and_then(|t| ig2_formats::effects::Effects::parse(&t, ig2_formats::effects::EFFECTS_FILE));
+        problems.extend(checked.err());
+    }
     (problems, files)
 }
 

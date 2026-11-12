@@ -24,6 +24,7 @@ pub fn of(install: &Install) -> Visuals {
 
 /// Take the install's mods' look and switch it on over the settings in effect.
 pub fn load(install: &Install) {
+    crate::battle_fx::load_mods(install);
     *MODS.write().unwrap() = Some(of(install));
     apply(crate::render3d::lighting(), crate::battle_fx::enhanced(), crate::render::smooth_glows());
 }
@@ -36,7 +37,8 @@ fn mods() -> Visuals {
 pub fn apply(l: Lighting, battle: bool, smooth_glows: bool) {
     let m = mods();
     crate::render3d::set_lighting(Lighting { msaa: l.msaa || m.anti_aliasing, per_pixel: l.per_pixel || m.per_pixel, soft_shadows: l.soft_shadows || m.soft_shadows, bloom: l.bloom || m.bloom });
-    crate::battle_fx::set_enhanced(battle || m.battle);
+    // A mod's effects.toml (ADR 0088 §10) needs the enhanced layers.
+    crate::battle_fx::set_enhanced(battle || m.battle || crate::battle_fx::recipes().is_some());
     crate::render::set_smooth_glows(smooth_glows || m.smooth_glows);
 }
 

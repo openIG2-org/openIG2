@@ -4,7 +4,8 @@ Date: 2026-11-10. Status: accepted. Builds on ADR 0044 and 0068 (mods), ADR 0054
 (modern lighting), ADR 0057 (battle effects), ADR 0064 (smooth glows) and ADR 0086 (the mod repository). Implemented
 by `ig2-formats::visuals` (the file), `ig2-formats::vfs` (found in a mod), `ig2-client::visuals` (laid over the
 settings), `ig2-client::starmap` (the planets' halo), `ig2-client::hdr` (the floating-point scene) and `ig2-client::lighting`
-with `ig2-client::render3d` (the engine's light per pixel).
+with `ig2-client::render3d` (the engine's light per pixel), `ig2-formats::effects` with `ig2-client::battle_fx` (effects
+as data).
 
 ## Context
 The game is to get a remastered look: better lights and effects, a richer starmap, sharper textures, smooth
@@ -103,6 +104,48 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    - The player's own "Per-pixel lighting" option (ADR 0055) switches the same thing on. Normal maps are not part
      of this (row 567 may bring them).
    - Still open in row 564: shadows between the battle's ships and light from blasts and shots on the hulls.
+10. **Effects as data** (`effects.toml`, row 566; `ig2-formats::effects`, `ig2-client::battle_fx`). A mod's
+    `effects.toml` (at its top, beside `visuals.toml`) describes ADR 0057's particle layers as emitters:
+
+    ```toml
+    [pictures]                                  # the mod's own pictures: a PNG in the mod, added or darkening
+    fire = { file = "effects/fire.png", blend = "add" }
+
+    [[blast]]                # one emitter; a moment may list several
+    sprite = "fire"          # glow (flare.bmp), spark (the soft dot), ring, smoke, or a [pictures] name
+    count = [10, 16]         # particles per start: a number or [least, most], 0..256
+    life = [0.4, 1.0]        # seconds, 0.05..30
+    size = [0.3, 1.5]        # half size at birth and at death, in the moment's radius, 0..20
+    color = "#ffcc66"        # 1 if left out
+    speed = [0.5, 3.0]       # radii a second in a random direction, 0..50
+    drag = 0.05              # the share of the speed kept after a second, 0..1 (1)
+    fall = 0                 # radii a second², down; rise = radii a second, up (the ground war only)
+    offset = 0.2             # born this far out along its direction, in radii, 0..10
+    ```
+
+    - **The moments** are where and when ADR 0057's layers start (re/screens/spacewar.md §6, re/screens/colony.md
+      §5), each with its radius `r`: `blast` (a ship dying, `urhajomeghalas` at 16 (`r` = scale × 1000) and 30/40
+      (× 500); a planet gun, 40; a fighter group, 8; the ground war's `Flash`, its size × 2), `hit` (a non-beam hit
+      on an unshielded ship, scale × 300; the ground war's `HitFlash`, size × 1.5), `shield` (a hit on a ship whose
+      shields hold, scale × 300; the planet's shield, 30), `smoke` (each puff of a smoke column, every third 20 Hz
+      tick, `r` the column's), `engine` (each thruster of `Hajtomu`, every battle tick, scale × 300) and `shot`
+      (each projectile in flight, every battle tick, `r` its drawn size, the colour times the shot's own).
+    - A moment a file sets replaces the engine's recipe for it; the others keep it. `engine` and `shot` have no
+      recipe of the engine's (the beam halos stay). With several mods a moment comes from the highest-priority file
+      that sets it, a picture name likewise.
+    - Per particle: a random direction, then the speed and the life (each drawn only when a range), from the
+      layers' own stream. Added pictures fade out linearly; darkening ones (and `smoke`) fade in over the first
+      fifth, grow fast then slow and darken what lies below, and like the smoke they ignore the ground war's
+      dimming. Colours are the gamma-space values the classic particles add (§8).
+    - A mod with an `effects.toml` switches the Enhanced battle effects on (§3). The 4096-particle cap holds.
+    - **On the graphics card**: the particles are camera-facing quads in the battle's 3D pass (ADR 0057 §4), the
+      pictures textures; their step (move, drag, age) stays on the CPU, once a battle tick, where the cap keeps it
+      cheap and the layers deterministic.
+    - Errors as §3: an unknown moment or key, a value out of range or a sprite naming no picture skips the file;
+      `openIG2-check` also names a picture missing from the mod. A picture that doesn't decode is drawn as the soft
+      dot and named in the log.
+    - Row 568 builds on this: the frame-by-frame animations become emitters at their own moments (new table names),
+      and pictures may gain cells for animated sheets.
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.
