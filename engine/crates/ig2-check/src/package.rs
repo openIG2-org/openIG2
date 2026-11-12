@@ -199,14 +199,24 @@ fn index_entry(id: &str, version: &str, info: &ModInfo, size: u64, sha256: &str)
             d[k] = value(v.as_str());
         }
     }
-    d["requires"] = value(info.requires.as_ref().map_or("*".to_owned(), |r| r.to_string()));
-    let mut deps = InlineTable::new();
-    for (dep, r) in &info.depends {
-        deps.insert(dep, r.to_string().into());
+    // The index's check wants these the same as in mod.toml, where a missing key is not an empty one.
+    if let Some(r) = &info.requires {
+        d["requires"] = value(r.to_string());
     }
-    d["depends"] = value(deps);
-    d["conflicts"] = value(info.conflicts.iter().map(String::as_str).collect::<Array>());
+    if !info.depends.is_empty() {
+        let mut deps = InlineTable::new();
+        for (dep, r) in &info.depends {
+            deps.insert(dep, r.to_string().into());
+        }
+        d["depends"] = value(deps);
+    }
+    if !info.conflicts.is_empty() {
+        d["conflicts"] = value(info.conflicts.iter().map(String::as_str).collect::<Array>());
+    }
     d["license"] = value(info.license.as_deref().unwrap_or_default());
+    if info.kind == ig2_formats::vfs::ModKind::Visual {
+        d["kind"] = value("visual");
+    }
     d["size"] = value(size as i64);
     d["sha256"] = value(sha256);
     d["download"] = value("");
@@ -277,6 +287,16 @@ mod tests {
         assert_eq!(entry["sha256"].as_str(), Some(want.as_str()));
         assert_eq!(entry["download"].as_str(), Some(""));
         std::fs::remove_dir_all(dir.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_entry_leaves_out_what_mod_toml_leaves_out() {
+        let info = ModInfo::parse("id = \"look\"\nversion = \"0.1.0\"\nlicense = \"CC0-1.0\"\nkind = \"visual\"\n").unwrap();
+        let entry: toml_edit::DocumentMut = index_entry("look", "0.1.0", &info, 1, "00").parse().unwrap();
+        assert_eq!(entry["kind"].as_str(), Some("visual"));
+        assert!(["requires", "depends", "conflicts"].iter().all(|k| !entry.contains_key(k)), "{entry}");
+        let full = ModInfo::parse(INFO).unwrap();
+        assert!(!index_entry("zorg-race", "1.2.0", &full, 1, "00").contains("kind"));
     }
 
     #[test]

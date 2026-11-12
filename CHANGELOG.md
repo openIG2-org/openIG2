@@ -49,6 +49,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Mods can change rule values, texts, textures and sounds, and add techs, buildings, ship hulls, weapons, parts, tanks, races, planet types and their own stories; computer empires, saves and multiplayer games use them.
 - Visual mods (`visuals.toml`) can switch on smoother edges, per-pixel lighting on every 3D model, soft shadows, scene glow and planet halos; they change only the look, so they work in multiplayer with players who don't have them.
 - For mod makers: a "Your first mod" guide, mod metadata (version, dependencies, conflicts), and `openIG2-check` to check and package a mod.
+- For mod makers: the index entry `openIG2-check --package` writes now passes the mod index's check as it is (a look-only mod's `kind`, no empty `depends` or `conflicts`).
 
 ### Install, updates and platforms
 - The game finds GOG and Steam installs by itself, checks them, and accepts a game folder dropped onto its window when it finds none.
