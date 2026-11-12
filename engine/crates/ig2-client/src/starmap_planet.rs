@@ -103,6 +103,18 @@ impl Planets {
         }
     }
 
+    /// A mod's night side (ADR 0088 §12), added right after [`Planets::add_planet`]: the planet's mesh again in black,
+    /// each vertex's alpha `strength · (1 − smoothstep(−0.05, 0.45, n·s))` with `s` the side the scene root's light falls
+    /// on. That light runs along `(10, 10, −10)` against the lighting normal, the file normal with z negated, which is
+    /// the outward normal reversed (the meshes store theirs mirrored in x and y): the lit side faces `(−1, −1, 1)`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_night_side(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, size: u8, spin: f32, at: [f32; 3], eye: &Eye, strength: f32) {
+        if let Some(m) = &self.meshes[(surface.max(1) as usize - 1) % 8] {
+            let s = normalise([-LIGHT[0], -LIGHT[1], -LIGHT[2]]);
+            m.add_faded(scene, draws, scale(size) / 8.0, (0.0, 0.0, spin), at, eye, None, &|_, _| ([0.0; 3], 0.0), true, &|n| strength * night(n[0] * s[0] + n[1] * s[1] + n[2] * s[2]));
+        }
+    }
+
     /// The planet's clouds (`HideClouds` shows them on the long info's planet only): `felhoo_0.xvb` at
     /// `(scale + 0.0001)/8`, turned by `RotateObj(−PlanetRotate · spin · 2, 5, 0)`; the second cloud mesh is added at
     /// scale 0 and never shows. Drawn with the remaster's `CLOUD` material: the mesh's texture `ethcldbp.bmp` is only
@@ -112,6 +124,15 @@ impl Planets {
         if let Some(m) = &self.cloud {
             let rot = (turn, 5.0, 0.0);
             m.add(scene, draws, (scale(size) + 0.0001) / 8.0, rot, at, eye, Some(self.noise), &engine_light(rot, false));
+        }
+    }
+
+    /// A mod's cloud shadows (ADR 0088 §12), added before [`Planets::add_clouds`]: the same clouds in black at
+    /// `strength`, on the planet's own sphere and turned 0.1 further, so each cloud's shadow falls beside it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_cloud_shadows(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, size: u8, turn: f32, at: [f32; 3], eye: &Eye, strength: f32) {
+        if let Some(m) = &self.cloud {
+            m.add_with(scene, draws, scale(size) / 8.0, (turn + 0.1, 5.0, 0.0), at, eye, Some(self.noise), &|_, _| ([0.0; 3], 0.0), strength);
         }
     }
 }
@@ -152,6 +173,13 @@ fn engine_lights(r: crate::scene::M3) -> crate::lighting::Lights {
 /// The vertex byte for the lighting normal `n` (the file normal, z negated).
 fn engine_grey(lights: &crate::lighting::Lights, n: [f32; 3]) -> u32 {
     lights.shade(n)[0] as u32
+}
+
+/// How dark the night side is where the outward normal makes `cos` with the lit side: all of it below −0.05, none
+/// above 0.45, smooth between (the engine's sunlight ends below cos 0.29, below 0.41 at some of the meshes' corners).
+fn night(cos: f32) -> f32 {
+    let t = ((cos + 0.05) / 0.5).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
 }
 
 /// `Init3dStarmap`: `bolygomeret/200000 + 0.002`.
@@ -205,7 +233,12 @@ impl Mesh {
     /// write, re/screens/render.md §2.3); 0 leaves only the depth.
     #[allow(clippy::too_many_arguments)]
     fn add_with(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: Lit, alpha: f32) {
-        let glass = alpha < 1.0;
+        self.add_faded(scene, draws, scale, rot, at, eye, cloud, lit, alpha < 1.0, &|_| alpha);
+    }
+
+    /// [`Mesh::add_with`] with each vertex's alpha from `fade` (its direction out of the centre, in the world).
+    #[allow(clippy::too_many_arguments)]
+    fn add_faded(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, scale: f32, rot: (f32, f32, f32), at: [f32; 3], eye: &Eye, cloud: Option<TexId>, lit: Lit, glass: bool, fade: &dyn Fn([f32; 3]) -> f32) {
         let xf = Placement::add_to_scene(self.origin, scale).world(rot, at);
         let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
         for part in &self.parts {
@@ -222,7 +255,7 @@ impl Mesh {
                     let n = normalise(std::array::from_fn(|j| pos[k][j] - at[j]));
                     let (normal, lit) = lit(n, &tri[k]);
                     let uv = [tri[k].uv[0] * part.uv_mul[0], tri[k].uv[1] * part.uv_mul[1]];
-                    scene.dynamic.push(MeshVertex { pos: pos[k], normal, uv, color: [lit, lit, lit, alpha] });
+                    scene.dynamic.push(MeshVertex { pos: pos[k], normal, uv, color: [lit, lit, lit, fade(n)] });
                 }
             }
             let range = start..scene.dynamic.len() as u32;
@@ -312,6 +345,32 @@ mod tests {
         let (outer, inner) = (radius(1.04), radius(1.02));
         assert!(outer.0 > 1036.9 && outer.1 < 1094.1, "{outer:?}");
         assert!(inner.1 < outer.0, "{inner:?} {outer:?}");
+    }
+
+    /// A mod's night side darkens the side the engine leaves to the ambient light: over a planet mesh as placed (turned
+    /// too), the vertex the engine lights brightest faces the lit side, the darkest the other way.
+    #[test]
+    fn the_night_side_is_the_engines_unlit_side() {
+        let Some(inst) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let inst = inst.expect("valid install");
+        let m = Model::load(&inst, "vector/starmap/", "b03.xvb", "textures/starmap/").unwrap();
+        let s = normalise([-LIGHT[0], -LIGHT[1], -LIGHT[2]]);
+        for rot in [(0.0, 0.0, 0.0), (0.0, 0.0, 1.3)] {
+            let xf = Placement::add_to_scene(m.origin, 0.01).world(rot, [0.0; 3]);
+            let lit = engine_light(rot, false);
+            let all: Vec<(f32, f32)> = m.parts.iter().flat_map(|p| &p.verts).map(|v| {
+                let n = normalise(xf.point(v.pos));
+                (lit(n, v).1, n[0] * s[0] + n[1] * s[1] + n[2] * s[2])
+            }).collect();
+            let hi = all.iter().max_by(|a, b| a.0.total_cmp(&b.0)).unwrap();
+            assert!(hi.1 > 0.95 && night(hi.1) == 0.0, "{rot:?}: brightest {hi:?}");
+            // The shade table runs out at |n − L|² = 1.414 (cos 0.29): the ambient alone from there; the night side
+            // starts inside that band and is whole where only the ambient is left.
+            let ambient = 0x40 as f32 / 255.0;
+            let worst = all.iter().filter(|v| v.0 <= ambient).map(|v| v.1).fold(-1.0f32, f32::max);
+            assert!(worst < 0.45, "{rot:?}: unlit at cos {worst}");
+            assert!(all.iter().filter(|v| v.1 < -0.05).all(|v| v.0 <= ambient && night(v.1) == 1.0), "{rot:?}: lit at night");
+        }
     }
 
     fn normalise_len(v: [f32; 3]) -> f32 {

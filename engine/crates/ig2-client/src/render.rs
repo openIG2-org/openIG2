@@ -257,6 +257,25 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let g = clamp((1.0 - length(q)) / (1.0 - v.param.x), 0.0, 1.0);
             return vec4(v.color.rgb, v.color.a * g * g);
         }
+        // A star's rays (ADR 0088 §12): a short cross about 1.5 pixels wide and fainter diagonals, fading out fast to
+        // the quad's edge and left out over the star's own sprite (the inner 60 %), so its colour still shows; faint, at 70 %.
+        case 20u: {
+            let r = length(q);
+            let a = abs(q);
+            let w = 0.75 / max(min(v.extent.x, v.extent.y), 1.0);
+            let fade = clamp(1.0 - r, 0.0, 1.0);
+            let cross = (exp(-(a.y / w) * (a.y / w)) + exp(-(a.x / w) * (a.x / w))) * fade * fade * fade;
+            let d = vec2(a.x + a.y, abs(a.x - a.y)) * 0.70710678;
+            let diag = exp(-(d.y / w) * (d.y / w)) * pow(clamp(1.0 - d.x * 1.6, 0.0, 1.0), 3.0) * 0.25;
+            let outside = smoothstep(0.4, 0.65, r);
+            return vec4(v.color.rgb, v.color.a * min(cross + diag, 1.0) * outside * 0.7);
+        }
+        // An engine trail (ADR 0088 §12): bright and wide at the head (+x), thin and gone at the tail.
+        case 22u: {
+            let t = q.x * 0.5 + 0.5;
+            let g = clamp(1.0 - abs(q.y) / (0.25 + 0.75 * t), 0.0, 1.0);
+            return vec4(v.color.rgb, v.color.a * t * g);
+        }
         // Soft round glow (procedural stars).
         default: {
             let r = length(q);
@@ -331,6 +350,10 @@ pub mod kind {
     pub const SOFT: u32 = 8;
     /// A mod's planet halo (ADR 0088): `param.x` = the planet's radius in the quad's.
     pub const HALO: u32 = 9;
+    /// A mod's star glow with rays (ADR 0088 §12).
+    pub const RAYS: u32 = 20;
+    /// A mod's engine trail (ADR 0088 §12), its head at +x.
+    pub const TRAIL: u32 = 22;
 }
 
 /// One quad, in physical pixels (origin top left).

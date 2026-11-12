@@ -56,3 +56,26 @@ pub fn atmosphere() -> Option<(f32, [f32; 3])> {
     let c = m.atmosphere_color.unwrap_or([0x7f, 0xb2, 0xff]);
     Some((m.atmosphere_size.unwrap_or(1.3), c.map(|x| x as f32 / 255.0 * strength)))
 }
+
+/// The richer starmap's switches (ADR 0088 §12); all 1 or 0 without a mod: the classic starmap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Starmap {
+    pub star_layers: usize,
+    pub cloud_layers: usize,
+    pub star_rays: f32,
+    pub night_side: f32,
+    pub cloud_shadows: f32,
+    pub engine_trails: f32,
+}
+
+pub fn starmap() -> Starmap {
+    let m = mods();
+    Starmap {
+        star_layers: m.star_layers.unwrap_or(1) as usize,
+        cloud_layers: m.cloud_layers.unwrap_or(1) as usize,
+        star_rays: m.star_rays.unwrap_or(0.0),
+        night_side: m.night_side.unwrap_or(0.0),
+        cloud_shadows: m.cloud_shadows.unwrap_or(0.0),
+        engine_trails: m.engine_trails.unwrap_or(0.0),
+    }
+}

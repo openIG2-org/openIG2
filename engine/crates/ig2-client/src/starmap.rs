@@ -58,6 +58,8 @@ pub struct Assets {
     planets: [Option<TexId>; SURFACES],
     /// `textures/starmap/n1..n8`: the system stars.
     stars: [Option<TexId>; 8],
+    /// Their hues, for a mod's star rays.
+    star_tint: [[f32; 3]; 8],
     /// `felho3`, `felho2`: the galaxy clouds.
     clouds: [Option<TexId>; 2],
     /// `radar.bmp`: the radar ranges' dots; the discs' colours, `rrange.bmp` (planets) and `rrange2.bmp` (fleets).
@@ -98,6 +100,18 @@ impl Assets {
                 sum.map(|c| c / n / 255.0)
             })
         };
+        // A mod's star rays take their star's hue (ADR 0088 §12): the sprite's colour weighted by its brightness,
+        // its brightest channel at 1.
+        let star_tint = std::array::from_fn(|i| {
+            img(&format!("dataraw/textures/starmap/n{}_bmp.pvr", i + 1)).map_or([1.0; 3], |i| {
+                let sum = i.rgba.chunks_exact(4).fold([0.0f32; 3], |a, p| {
+                    let w = (p[0] as f32 + p[1] as f32 + p[2] as f32) * p[3] as f32;
+                    [a[0] + p[0] as f32 * w, a[1] + p[1] as f32 * w, a[2] + p[2] as f32 * w]
+                });
+                let top = sum[0].max(sum[1]).max(sum[2]);
+                if top > 0.0 { sum.map(|c| c / top) } else { [1.0; 3] }
+            })
+        });
         let radar_fill = [mean("dataraw/textures/starmap/rrange_bmp.pvr", [1.0, 0.0, 0.0]), mean("dataraw/textures/starmap/rrange2_bmp.pvr", [0.27, 0.0, 1.0])];
         let mut sheet = |path: &str, cell: [f32; 2]| {
             img(path).map(|i| Sheet { size: [i.width as f32, i.height as f32], tex: r.add_texture(&i), cell })
@@ -109,7 +123,7 @@ impl Assets {
             eprintln!("ig2-client: no palette from ig2.exe ({e}); drawing everything grey");
             vec![[0.6; 3]; DD_COLORS]
         });
-        Self { white, select, planets, stars, clouds, radar_dot, radar_fill, sky, planet_meshes, fleets, small_fleets, palette }
+        Self { white, select, planets, stars, star_tint, clouds, radar_dot, radar_fill, sky, planet_meshes, fleets, small_fleets, palette }
     }
 
     /// ADR 0036: the colour-blind option changed.
@@ -627,6 +641,10 @@ pub struct View {
     background: Vec<Particle>,
     /// The background as generated, before any drift.
     generated: Vec<Particle>,
+    /// Where a mod's cloud layers start in it (blocks of `Clouds1` and `Clouds2`; the end without such a mod).
+    cloud_blocks: usize,
+    /// What a mod's `visuals.toml` adds to the starmap (ADR 0088 §12), as the view was made.
+    look: crate::visuals::Starmap,
     /// `GomolygasCounter`: UI ticks the starmap has run (the clouds' drift clock).
     clouds: i32,
     /// `HANYFELHOPARTICLE = OptionsFogResolution · 50`: how many clouds of each set are drawn and drift.
@@ -707,15 +725,15 @@ fn fog_particles() -> usize {
 
 /// `GalaxisGomolygas` (ELF 0x6d8ac0, exe 0x5999c0) at drift clock `clock`: every fifth UI tick the first `n` clouds
 /// of both sets move and grow a little, in f64 written back to f32.
-fn drift(bg: &mut [Particle], clock: i32, n: usize) {
+/// `clouds`: a block of `Clouds1` then `Clouds2` (the original's at [`CLOUDS1`], a mod's layers after the rest).
+fn drift(clouds: &mut [Particle], clock: i32, n: usize) {
     if clock % 5 != 0 {
         return;
     }
     let t = clock as f64;
     let step = |v: &mut f32, w: f64, k: f64| *v = (w / k + *v as f64) as f32;
-    for i in 0..n.min(CLOUDS) {
+    for (i, p) in clouds.iter_mut().enumerate().take(n.min(CLOUDS)) {
         let k = i as f64;
-        let p = &mut bg[CLOUDS1 + i];
         step(&mut p.h, (t / (k + 319.0) + k).cos(), 40.0);
         step(&mut p.p[0], (t / (k + 210.0) + k).sin(), 40.0);
         step(&mut p.p[1], (t / (k + 250.0) + k).sin(), 40.0);
@@ -723,7 +741,7 @@ fn drift(bg: &mut [Particle], clock: i32, n: usize) {
     }
     for i in 0..n.min(CLOUDS) {
         let k = i as f64;
-        let p = &mut bg[CLOUDS2 + i];
+        let p = &mut clouds[CLOUDS + i];
         step(&mut p.h, (t / (k + 279.0) + k).sin(), 9.0);
         step(&mut p.p[0], (t / (k + 210.0) + k).cos(), 9.0);
         step(&mut p.p[1], (t / (k + 150.0) + k).sin(), 9.0);
@@ -740,8 +758,16 @@ struct Particle {
     color: u32,
     /// 0 = point star, 1 = `felho3`, 2 = `felho2`.
     set: u8,
-    /// The index in its set (the clouds past `HANYFELHOPARTICLE` aren't drawn).
+    /// The index in its set (the clouds past `HANYFELHOPARTICLE` aren't drawn; the fog clumps from [`CLOUDS`] on); a far
+    /// star's twinkle index.
     n: u16,
+}
+
+impl Particle {
+    /// One of `Clouds1` or `Clouds2` (they drift; a mod's cloud layers share their light).
+    fn drifting_cloud(&self) -> bool {
+        self.set != 0 && (self.n as usize) < CLOUDS
+    }
 }
 
 /// MSVC's `rand()` from `srand(seed)` (the exe's libc).
@@ -799,7 +825,12 @@ fn add_color(clouds: &mut [Particle], at: [f32; 3], power: f32, rgb: [i32; 3]) {
 
 /// `GenerateStarParticles` (ELF 0x6d8e90): the far stars, the clouds and the fog clumps from `srand(1)`.
 fn background() -> Vec<Particle> {
-    let mut r = MsvcRand(1);
+    background_from(1)
+}
+
+/// The generator from `srand(seed)`.
+fn background_from(seed: u32) -> Vec<Particle> {
+    let mut r = MsvcRand(seed);
     let grey = |v: i32| (v as u32) * 0x010101;
     let mut stars = vec![Particle { h: 0.0, p: [0.0; 2], size: 0.0, color: 0, set: 0, n: 0 }; FAR_STARS];
     for s in stars.iter_mut().take(1750) {
@@ -831,6 +862,9 @@ fn background() -> Vec<Particle> {
         }
         let d = (r.random(500) + 900) as f32;
         *s = Particle { h: v[0] * d, p: [v[1] * d, v[2] * d], color: grey(r.random(100)), ..*s };
+    }
+    for (i, s) in stars.iter_mut().enumerate() {
+        s.n = i as u16;
     }
     let mut out = stars;
     // `Clouds1` (felho3, sizes 5..10) and `Clouds2` (felho2, 12..31).
@@ -872,7 +906,7 @@ fn background() -> Vec<Particle> {
             let b = (bb + r.random(50)) as u32;
             let g = (bg + r.random(50)) as u32;
             let rr = (br + r.random(50)) as u32;
-            let n = (out.len() - FOG) as u16;
+            let n = (CLOUDS + out.len() - FOG) as u16;
             out.push(Particle { h, p: [x, y], size, color: 0xc800_0000 | b << 16 | g << 8 | rr, set: 2, n });
         }
     }
@@ -883,6 +917,28 @@ fn background() -> Vec<Particle> {
         p.color = 0;
     }
     out
+}
+
+/// A mod's further layers (ADR 0088 §12, spec §6.6): the generator from `srand(2)`, `srand(3)`, …: `stars − 1` sets
+/// of far stars, the shell of layer `k` pushed out `1 + 0.4k` times, then `clouds − 1` blocks of `Clouds1` and
+/// `Clouds2` (from where the second part starts).
+fn layers(stars: usize, clouds: usize) -> (Vec<Particle>, usize) {
+    let seeds: Vec<Vec<Particle>> = (1..stars.max(clouds)).map(|k| background_from(1 + k as u32)).collect();
+    let mut out = Vec::new();
+    for (k, bg) in seeds.iter().enumerate().take(stars.saturating_sub(1)) {
+        let k = k + 1;
+        let depth = 1.0 + 0.4 * k as f32;
+        out.extend(bg[..FAR_STARS].iter().enumerate().map(|(i, p)| {
+            let d = if i >= 2000 { depth } else { 1.0 };
+            // Twinkling out of step with the layer below.
+            Particle { h: p.h * d, p: p.p.map(|x| x * d), n: ((i + 613 * k) % FAR_STARS) as u16, ..*p }
+        }));
+    }
+    let at = out.len();
+    for bg in seeds.iter().take(clouds.saturating_sub(1)) {
+        out.extend_from_slice(&bg[CLOUDS1..FOG]);
+    }
+    (out, at)
 }
 
 /// Where a planet is drawn: its star's position plus its orbit (`rotate_stars` ELF 0x6e1a00, spec §3.3).
@@ -896,14 +952,21 @@ pub fn orbit_position(p: &PlanetView, clock: f32) -> [f32; 2] {
 impl View {
     pub fn new(s: &Snapshot, saved: &SavedView, size: (u32, u32), scale: f32) -> Self {
         let camera = Camera::from_save(saved, s, [size.0 as f32, size.1 as f32]);
-        let generated = background();
-        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, backdrop: Vec::new(), background: generated.clone(), generated, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None, battle_fade: None }
+        let look = crate::visuals::starmap();
+        let mut generated = background();
+        let (extra, at) = layers(look.star_layers, look.cloud_layers);
+        let cloud_blocks = generated.len() + at;
+        generated.extend(extra);
+        Self { camera, scale, hover: None, selected: None, reveal: false, star_scale: None, backdrop: Vec::new(), background: generated.clone(), generated, cloud_blocks, look, clouds: 0, fog: fog_particles(), twinkle: Twinkle::new(), futofeny: None, acttime: None, battle_fade: None }
     }
 
     /// One UI tick of the starmap (`FRISSIT_Starmap2` → `GalaxisGomolygas`).
     pub fn ui_tick(&mut self) {
         self.clouds += 1;
-        drift(&mut self.background, self.clouds, self.fog);
+        drift(&mut self.background[CLOUDS1..FOG], self.clouds, self.fog);
+        for block in self.background[self.cloud_blocks..].chunks_exact_mut(2 * CLOUDS) {
+            drift(block, self.clouds, self.fog);
+        }
     }
 
     /// The clouds as after `clock` UI ticks on the starmap (the exe's `GomolygasCounter`, `--clouds`).
@@ -1007,6 +1070,11 @@ impl View {
             }
             let col = particle_color(0xff_ffff).map(|x| x * e);
             f.push(tex, Blend::GammaAdditive, Instance::new(kind, c, [half; 2], [col[0], col[1], col[2], 1.0]));
+            // A mod's rays round the star's own glow, 1.6 times its size, in the sprite's hue (ADR 0088 §12).
+            if self.look.star_rays > 0.0 {
+                let t = a.star_tint[(p.surface.max(1) as usize - 1) % 8].map(|x| x * self.look.star_rays * e);
+                f.push(a.white, Blend::GammaAdditive, Instance::new(kind::RAYS, c, [1.6 * half; 2], [t[0], t[1], t[2], 1.0]));
+            }
         }
 
         // Planets on their orbits as meshes, spinning (`ShowStarmap`: `RotateObj(0, 0, PlanetRotate · spin · 6)`,
@@ -1040,7 +1108,13 @@ impl View {
                 // transparency `1 − e`: byte `float2int(255 − 255·(1 − e))` [obs: shield capture t3400, e 0.65: 166].
                 let opacity = self.battle_fade.map_or(1.0, |e| crate::lighting::float2int(255.0 - 255.0 * (1.0 - e)).clamp(0, 255) as f32 / 255.0);
                 a.planet_meshes.add_planet(scene, late, p.surface, p.look.size, planet_rotate * spin * 6.0, [0.0, at[0], at[1]], &eye, opacity);
+                if self.look.night_side > 0.0 {
+                    a.planet_meshes.add_night_side(scene, late, p.surface, p.look.size, planet_rotate * spin * 6.0, [0.0, at[0], at[1]], &eye, self.look.night_side * opacity);
+                }
                 if clouds == Some(p.index) {
+                    if self.look.cloud_shadows > 0.0 {
+                        a.planet_meshes.add_cloud_shadows(scene, late, p.look.size, -planet_rotate * spin * 2.0, [0.0, at[0], at[1]], &eye, self.look.cloud_shadows);
+                    }
                     a.planet_meshes.add_clouds(scene, late, p.look.size, -planet_rotate * spin * 2.0, [0.0, at[0], at[1]], &eye);
                 }
                 continue;
@@ -1176,6 +1250,19 @@ impl View {
             let sheet = if small { a.small_fleets } else { a.fleets };
             let cols = if small { 16 } else { 17 };
             let dim = if fl.visible { 1.0 } else { 0.5 };
+            // A mod's engine trail under a moving fleet (ADR 0088 §12): from the sprite away from where its order
+            // sends it, five sprite heights long, the owner's colour half mixed with white.
+            if let (true, Some(to)) = (self.look.engine_trails > 0.0 && fl.order > 0, fl.target.and_then(|t| cam.to_screen(t))) {
+                let (dx, dy) = (to[0] - c[0], to[1] - c[1]);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len > half[1] {
+                    let (ux, uy) = (dx / len, dy / len);
+                    let l = 2.5 * half[1];
+                    let col = a.empire(fl.owner, 1.0).map(|x| (0.5 * x + 0.5) * self.look.engine_trails * dim);
+                    let mid = [c[0] - ux * l, c[1] - uy * l];
+                    f.push(a.white, Blend::GammaAdditive, Instance { rot: uy.atan2(ux), ..Instance::new(kind::TRAIL, mid, [l, 0.4 * half[1]], [col[0], col[1], col[2], 1.0]) });
+                }
+            }
             match sheet {
                 Some(s) => {
                     let special = fl.flags & 0x4000 != 0 && !small;
@@ -1228,10 +1315,12 @@ impl View {
     /// The generated galaxy: point stars, clouds and fog clumps, additive (spec §6).
     fn background(&self, f: &mut Frame, a: &Assets, m: &[[f32; 3]; 3], futofeny: f32) {
         let cam = &self.camera;
-        for (i, p) in self.background.iter().enumerate() {
+        // A mod's cloud layers share the original clouds' light (ADR 0088 §12).
+        let cloud_share = 1.0 / self.look.cloud_layers.max(1) as f32;
+        for p in &self.background {
             // Black particles add nothing (`Particle` skips textured ones with colour 0); `Init3dStarmap` hands the
             // cloud sets `HANYFELHOPARTICLE` as their counts.
-            if p.color == 0 || ((CLOUDS1..FOG).contains(&i) && p.n as usize >= self.fog) {
+            if p.color == 0 || (p.drifting_cloud() && p.n as usize >= self.fog) {
                 continue;
             }
             let e = cam.eye(m, p.h, p.p);
@@ -1239,7 +1328,12 @@ impl View {
                 continue;
             }
             let Some((c, px)) = cam.project_eye(e) else { continue };
-            let mut color = particle_color(if i < FAR_STARS { self.twinkle.color(i, futofeny) } else { p.color });
+            let mut color = particle_color(if p.set == 0 { self.twinkle.color(p.n as usize, futofeny) } else { p.color });
+            if p.drifting_cloud() {
+                for c in &mut color[..3] {
+                    *c *= cloud_share;
+                }
+            }
             // The battle screen's `starmaphalvanyit(e)` (ELF 0x6a6b30): every FStars set but the far stars (0) and the
             // ring (3) drawn at its colour's RGB × e (gone at 0, the battle's zoom).
             if let (Some(e), true) = (self.battle_fade, p.set != 0) {
@@ -1607,6 +1701,20 @@ mod tests {
         assert!(b[2000..2500].iter().all(|p| (899.0..1400.0).contains(&r(p))));
     }
 
+    #[test]
+    fn a_mods_layers_come_from_further_seeds() {
+        assert!(layers(1, 1).0.is_empty());
+        let (l, at) = layers(3, 2);
+        assert_eq!((l.len(), at), (2 * FAR_STARS + 2 * CLOUDS, 2 * FAR_STARS));
+        let (two, three) = (background_from(2), background_from(3));
+        // The galaxy's stars where the generator puts them, the shell further out: 1.4 and 1.8 times.
+        assert_eq!((l[5].p, l[FAR_STARS + 5].p), (two[5].p, three[5].p));
+        assert_eq!((l[2100].p[0], l[FAR_STARS + 2100].p[0]), (two[2100].p[0] * 1.4, three[2100].p[0] * 1.8));
+        assert!(l[at..].iter().all(Particle::drifting_cloud) && l[..at].iter().all(|p| p.set == 0));
+        assert_eq!(l[at].color, two[CLOUDS1].color);
+        assert!(background()[FOG..].iter().all(|p| !p.drifting_cloud()));
+    }
+
     /// The exe's live particle records (`run_screen.py --particles`, `_local/traces/starmap-particles.json`): the
     /// clouds after its drift clock and the fog clumps' colours, bit for bit.
     #[test]
@@ -1621,7 +1729,7 @@ mod tests {
         let fog = d["hany"].as_i64().unwrap() as usize;
         let mut bg = background();
         for t in 1..=clock {
-            drift(&mut bg, t, fog);
+            drift(&mut bg[CLOUDS1..FOG], t, fog);
         }
         let hex = |s: &str| (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect::<Vec<u8>>();
         let f = |r: &[u8], o: usize| f32::from_le_bytes(r[o..o + 4].try_into().unwrap());

@@ -90,4 +90,4 @@ code. Status is shown where the file states one.
 - [0085](0085-custom-game.md): Custom game, a generated galaxy with every start setting (accepted)
 - [0086](0086-mod-repository-and-modding-roadmap.md): a mod repository, modding tutorials and what to open to mods next (accepted)
 - [0087](0087-update-notice-and-updater.md): the update notice and the updater from GitHub releases (accepted)
-- [0088](0088-remaster-as-mods.md): the remaster ships as mods; a mod's `visuals.toml` switches looks on, including per-pixel lighting on every 3D screen; a mod's `effects.toml` describes the battle's particle effects (accepted)
+- [0088](0088-remaster-as-mods.md): the remaster ships as mods; a mod's `visuals.toml` switches looks on, including per-pixel lighting on every 3D screen; a mod's `effects.toml` describes the battle's particle effects; its `[starmap]` keys make a richer starmap (accepted)

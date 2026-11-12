@@ -342,7 +342,8 @@ fn fs_cloud(i: VO) -> @location(0) vec4<f32> {
     }
     f = f * em0.x * em0.y * em1.x * em1.y;
     let cloud = ss(0.0, 0.4, vec2(f)).x;
-    return vec4(vec3(min(cloud * 2.0, 1.0)) * i.color.rgb, cloud);
+    // `color.a` is 1 but for a mod's cloud shadow (ADR 0088 §12: black, at the shadow's strength).
+    return vec4(vec3(min(cloud * 2.0, 1.0)) * i.color.rgb, cloud * i.color.a);
 }
 "#;
 

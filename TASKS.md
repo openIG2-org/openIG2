@@ -83,7 +83,8 @@ The plan and its rules: ADR 0088. Each part is engine work that does nothing unt
 - [x] **HDR, tone mapping, bloom over the whole scene** (563): a mod's `visuals.toml` `hdr`, `bloom_threshold`, `bloom_strength`; the starmap, the battle and the colony's 3D view.
 - [x] **Per-pixel lighting on every 3D screen** (564, part 1): a mod's `visuals.toml` `[lighting] per_pixel` (or the Per-pixel lighting option) lights every model the engine lit per corner per pixel with the engine's own shade table (ADR 0088 §9).
 - [x] **Shadows between the battle's ships, light from blasts and shots on the hulls** (564, parts 2 and 3).
-- [ ] **A richer starmap** (565).
+- [x] **A richer starmap** (565): a mod's `visuals.toml` `[starmap]` keys `star_layers`, `cloud_layers`, `star_rays`, `night_side`, `cloud_shadows`, `engine_trails` (ADR 0088 §12).
+- [ ] **Switch the richer starmap on in the `remaster-look` mod** (565): its update waits for a game release that reads the new keys.
 - [x] **Effects as data, drawn on the graphics card** (566): a mod's `effects.toml` (ADR 0088 §10): emitters per moment (blast, hit, shield, smoke, engine, shot), the mod's own pictures.
 - [x] **Texture pack tool** (567): `openIG2 --make-pack` makes a sharper texture pack from your own install (a learned upscaler on the graphics card for scene textures, an edge-keeping one for interface art); normal maps when a renderer reads them.
 - [ ] **Sprite animations as smooth effects** (568).

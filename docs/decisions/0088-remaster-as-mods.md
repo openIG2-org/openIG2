@@ -42,6 +42,12 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    atmosphere = 0.6             # the planets' halo: strength 0..1
    atmosphere_size = 1.35       # its radius in planet radii, 1..3
    atmosphere_color = "#7fb2ff"
+   star_layers = 2              # §12: more far stars from the original's generator, 1..4
+   cloud_layers = 2             # §12: more galaxy clouds sharing their light, 1..4
+   star_rays = 0.5              # §12: the systems' stars glow with rays, 0..1
+   night_side = 0.6             # §12: the planets' unlit side darkened, 0..1
+   cloud_shadows = 0.5          # §12: the clouds' shadows on the long info's planet, 0..1
+   engine_trails = 0.6          # §12: a trail behind moving fleets, 0..1
    ```
 
    - A switch set `true` is on while the mod is enabled, whatever the player's own setting; a switch left out (or
@@ -172,6 +178,28 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
      source's colour times `min(size/16, 2)`. A receiver adds `texel · Σ colour · max(n·l, 0) · (1 − (r/R)²)²`
      (`l` towards the light, `r` the distance, `R` the radius) on top of its light, in the same gamma-space
      values as the rest of the pass.
+12. **A richer starmap** (`[starmap]` `star_layers`, `cloud_layers`, `star_rays`, `night_side`, `cloud_shadows`,
+    `engine_trails`, row 565; `ig2-client::starmap`, `starmap_planet`; re/screens/starmap.md §6.6). Each adds to the
+    original's drawing and leaves its places, colours and sizes alone; left out (1 layer, strength 0) it adds
+    nothing.
+    - **Layers.** Layer `k` (2..4) is the original's generator (`GenerateStarParticles`) run from `srand(k)`: its far
+      stars (the shell pushed out `1 + 0.4·(k − 1)` times, for depth) twinkling out of step, and its two cloud sets,
+      drifting as the original's. The fog clumps are not repeated. The clouds of all layers share the original
+      clouds' light (each × 1/`cloud_layers`), so the sky gets finer, not brighter.
+    - **Star rays.** Round each system star's own glow, faint additive procedural rays 1.6 times its size: a
+      short cross about 1.5 pixels wide and fainter diagonals, left out over the sprite itself so its colour still
+      tells the star type, in the sprite's hue (its texels' colour weighted by brightness, brightest channel 1) ×
+      0.7 × `star_rays`.
+    - **Night side.** The planet's mesh drawn again in black after it, each corner's alpha `night_side·(1 −
+      smoothstep(−0.05, 0.45, n·s))` with `n` its outward direction and `s` the side the scene root's light falls on
+      (`(−1, −1, 1)` in the world): the engine's lit side keeps its colours, the side it leaves to the ambient light
+      goes dark. The shade table ends at cos 0.29 (0.41 at some corners), so the ramp starts inside that band.
+    - **Cloud shadows.** On the long info's planet, before its clouds: the same cloud material in black at
+      `cloud_shadows`, on the planet's sphere and turned 0.1 further, so each cloud's shadow shows beside it.
+    - **Engine trails.** Under a fleet whose order moves it, from the sprite away from its target, five sprite
+      heights long and 0.4 wide, bright at the ship and fading out, the owner's colour half mixed with white ×
+      `engine_trails`.
+    - All of it procedural: no texel or square point shows at any size (the remastered look's rule).
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.

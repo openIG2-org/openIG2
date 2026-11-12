@@ -574,6 +574,12 @@ smooth_glows = true
 atmosphere = 0.6             # a halo round the planets: strength 0..1
 atmosphere_size = 1.35       # its radius in planet radii, 1..3
 atmosphere_color = "#7fb2ff"
+star_layers = 2              # more far stars and finer galaxy clouds, 1..4
+cloud_layers = 2
+star_rays = 0.5              # the systems' stars glow with rays, 0..1
+night_side = 0.6             # the planets' dark side, 0..1
+cloud_shadows = 0.5          # the clouds' shadows on the planet of the long info, 0..1
+engine_trails = 0.6          # a trail behind moving fleets, 0..1
 ```
 
 Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting

@@ -331,6 +331,28 @@ the colony's convention). It makes most of the exe's broad haze. Open: the sub-m
 property bits are unexplained; the light levels above fit the captures best (a sun of 0.25 or the ambients summed fit
 worse).
 
+### 6.6 A mod's richer starmap (remake, ADR 0088 §12)
+Not in the original: a mod's `visuals.toml` `[starmap]` keys add to the drawing above, each off by default
+(`ig2-client::starmap`, `starmap_planet`, `visuals::starmap`).
+- `star_layers`, `cloud_layers` (1..4): layer `k` ≥ 2 is §6.1's generator from `srand(k)`: its 2,500 far stars
+  (indices 2000..2499, the shell, × `1 + 0.4·(k − 1)`), twinkling with §6.4's tables at index `(i + 613·(k − 1)) mod
+  2500`, and its `Clouds1` and `Clouds2` drifting by §6.2 with the same `HANYFELHOPARTICLE`; every drifting cloud's
+  colour × 1/`cloud_layers`. `KodPamacsok` stays single.
+- `star_rays`: additive procedural rays (a cross and diagonals, quad kind 20, none inside 60 % of the quad, × 0.7)
+  at 1.6 × §3.2's half size, in `n{k}`'s brightness-weighted hue (brightest channel 1) × the strength ×
+  `starmaperosseg`.
+- `night_side`: §3.3's planet mesh drawn again in black right after the planet, alpha per corner `strength·(1 −
+  smoothstep(−0.05, 0.45, n·s))`, `n` the corner's outward direction, `s = −L̂` = (−1, −1, 1)/√3: the lighting normal
+  is the outward one reversed, so `fenyekszamolasa` lights most where the outward normal faces `−L`; its shade runs out
+  below cos 0.29 (0.41 at some of `b{k}3`'s corners, test `the_night_side_is_the_engines_unlit_side`). × the planets'
+  battle opacity.
+- `cloud_shadows`: before §3.3's clouds, the `CLOUD` material on `felhoo_0.xvb` at the planet's scale, turned by
+  `RotateObj(−PlanetRotate·spin·2 + 0.1, 5, 0)`, vertex colour black, alpha × the strength.
+- `engine_trails`: under each fleet with an order whose target is more than half a sprite height away on screen, an
+  additive quad (kind 22) from the sprite's centre 5 sprite half-heights away from the target, 0.4 high, alpha
+  `t·(1 − |y|/(0.25 + 0.75t))` (t 1 at the ship), colour `(DDColor[owner + 15] + 1)/2` × the strength (× 0.5 for a
+  fleet the human doesn't see).
+
 ## 7. Colours
 `DDColor` (exe 0x8F8710, ELF 0x1166cd0): 43 × `0x00BBGGRR` (red in the low byte: GL vertex colours). Empire `e`'s
 colour is `DDColor[e + 15]` (names, minimap, fleets' name text); unowned planets on the minimap use `DDColor[12]`.
