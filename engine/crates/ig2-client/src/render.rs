@@ -465,6 +465,8 @@ pub struct Frame {
     /// Parts of `scene` (its vertices) drawn after the quads pushed before [`Frame::mark_late`], over them: the
     /// starmap's planets over its background particles.
     pub late: Vec<crate::render3d::MeshDraw>,
+    /// The space battle's shadows and blast light on `scene` and `late` (ADR 0088 §11), when a mod asks for them.
+    pub battle: Option<crate::render3d::BattleLight>,
     /// A picture over the whole target under everything else, the scene too (`Copy3hatterkep`: the game behind an
     /// overlay screen, re/screens/overlay-background.md): its texture and its gamma-space grey.
     pub backdrop: Option<(TexId, f32)>,
@@ -956,8 +958,8 @@ impl Renderer {
         macro_rules! meshes {
             ($first:expr, $clear:expr, $scene:expr, $draws:expr) => {
                 match (&float, hdr.as_mut()) {
-                    (Some((f, ..)), Some(h)) => h.pipe3d.encode(&self.device, &self.queue, &mut enc, (f, f), size, ($first, $clear), $scene, $draws, (&self.textures_rep, &self.textures_raw_rep)),
-                    _ => self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, ($first, $clear), $scene, $draws, (&self.textures_rep, &self.textures_raw_rep)),
+                    (Some((f, ..)), Some(h)) => h.pipe3d.encode(&self.device, &self.queue, &mut enc, (f, f), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep)),
+                    _ => self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep)),
                 }
             };
         }

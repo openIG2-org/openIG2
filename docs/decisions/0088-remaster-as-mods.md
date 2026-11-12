@@ -31,6 +31,8 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    hdr = true               # §8: the scene in a floating-point picture, its glow, the tone curve
    bloom_threshold = 0.8    # where the glow and the tone curve start, 0..1
    bloom_strength = 0.6     # how much of the glow is added, 0..2
+   battle_shadows = true    # §11: the battle's ships shadow one another and the planet
+   blast_light = true       # §11: blasts and shots light the hulls
 
    [effects]
    battle = true            # ADR 0057
@@ -103,7 +105,7 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
      set of a frame, stays lit per vertex. Wire lines, the cloud material and the video discs are as before.
    - The player's own "Per-pixel lighting" option (ADR 0055) switches the same thing on. Normal maps are not part
      of this (row 567 may bring them).
-   - Still open in row 564: shadows between the battle's ships and light from blasts and shots on the hulls.
+   - Shadows between the battle's ships and light from blasts and shots on the hulls: §11.
 10. **Effects as data** (`effects.toml`, row 566; `ig2-formats::effects`, `ig2-client::battle_fx`). A mod's
     `effects.toml` (at its top, beside `visuals.toml`) describes ADR 0057's particle layers as emitters:
 
@@ -146,6 +148,30 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
       dot and named in the log.
     - Row 568 builds on this: the frame-by-frame animations become emitters at their own moments (new table names),
       and pictures may gain cells for animated sheets.
+11. **Shadows and blast light in the space battle** (`battle_shadows`, `blast_light`, row 564 parts 2 and 3;
+   `render3d::BattleLight`, `spacewar_screen::battle_light`). The original has neither: its ships and planet take
+   the scene's ambient 0x40 and the parallel light 0x80 from (−1, −1, 1) (re/screens/spacewar.md §1.0) and nothing
+   else. Both switches are off by default and come only from a mod; without them the battle's draws, pipelines
+   and pixels are the classic ones.
+   - **What casts and what receives.** The shown ships cast and receive; the planet receives only (it never stands
+     between the light and a ship in the battle's layout, and as a caster its own night side would darken twice).
+     Shots, blasts, smoke, rings, the grid and the wire lines neither cast nor receive.
+   - **Shadows** (`battle_shadows`). A depth map (2048², 32-bit) seen along the parallel light, orthographic,
+     fitted each frame round the shown ships' boxes. A receiver's point, moved 1.5 map texels along its normal,
+     is tested against the map with a 4 × 4 grid of filtered comparisons (soft edges, about six texels wide). A
+     shadowed point loses the parallel light's share of its light and keeps the ambient one: the light `a + s·d`
+     (`a` ambient, `s` the parallel light, `d = max(n·L, 0)`) becomes `a + s·d·v`, `v` the lit fraction 0..1; a
+     point lit per vertex is scaled by the same ratio `(a + s·d·v)/(a + s·d)`, with `n` its interpolated normal
+     (per-pixel lighting) or else its face's normal turned towards the eye. Faces away from the light (`d = 0`)
+     don't change, so nothing is darkened twice.
+   - **Blast light** (`blast_light`). Up to 16 point lights a frame: the live particles of effect sets 0 and 1
+     (`animated.bmp`, `anim2.bmp`: the explosions' fire; not the smoke, stars or trails) and the flying
+     projectiles, each in its own sprite colour (`particle_color`) weighted by its size. Sources closer than a
+     light's radius to a brighter one are merged into it (colour weights summed, the position weighted); the 16
+     strongest are kept. A light's radius is 4× its source's size (at least 12 battle units), its colour the
+     source's colour times `min(size/16, 2)`. A receiver adds `texel · Σ colour · max(n·l, 0) · (1 − (r/R)²)²`
+     (`l` towards the light, `r` the distance, `R` the radius) on top of its light, in the same gamma-space
+     values as the rest of the pass.
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.

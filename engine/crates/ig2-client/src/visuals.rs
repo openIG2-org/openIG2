@@ -29,7 +29,7 @@ pub fn load(install: &Install) {
     apply(crate::render3d::lighting(), crate::battle_fx::enhanced(), crate::render::smooth_glows());
 }
 
-fn mods() -> Visuals {
+pub(crate) fn mods() -> Visuals {
     MODS.read().unwrap().unwrap_or_default()
 }
 

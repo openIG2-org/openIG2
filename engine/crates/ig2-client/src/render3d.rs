@@ -32,10 +32,18 @@ struct S {
     // The frame's height in pixels (`sg3d_window.y`), `sg3d_time.y` (`(acttime % 1000)/1000`), 1 with "Soft
     // shadows" (ADR 0055).
     c: vec4<f32>,
+    // The battle's lights (ADR 0088 §11): world → its depth map; x 1 with shadows, y the blasts, z a map texel's
+    // world size; the eye; per blast its point and radius, then its colour.
+    lvp: mat4x4<f32>,
+    bp: vec4<f32>,
+    beye: vec4<f32>,
+    blasts: array<vec4<f32>, 32>,
 };
 @group(2) @binding(0) var<uniform> sh: S;
 @group(2) @binding(1) var shadow_tex: texture_2d<f32>;
 @group(2) @binding(2) var shadow_smp: sampler;
+@group(2) @binding(3) var hull_map: texture_depth_2d;
+@group(2) @binding(4) var hull_cmp: sampler_comparison;
 
 struct VO {
     @builtin(position) pos: vec4<f32>,
@@ -47,6 +55,7 @@ struct VO {
     @location(5) suv: vec2<f32>,
     // A vertex lit per fragment by a light set: the set (−1: none) and its lighting normal's length.
     @location(6) lset: vec2<f32>,
+    @location(7) w: vec3<f32>,
 };
 
 // `Kockarecshadow` (ELF 0x5fcae0): a receiver vertex's shadow texcoords `(rows·p·shadowzoom + shadowkp)/256`; the
@@ -72,7 +81,14 @@ fn vs(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec
     let l = max(length(n), 1.0);
     let k = round(log2(l / 16.0) * 0.5);
     o.lset = select(vec2(-1.0, 1.0), vec2(k, l / (16.0 * exp2(2.0 * k))), l > 6.0);
+    o.w = p;
     return o;
+}
+
+// The battle's depth map (ADR 0088 §11): the hulls seen along the parallel light.
+@vertex
+fn vs_hull(@location(0) p: vec3<f32>) -> @builtin(position) vec4<f32> {
+    return sh.lvp * vec4(p, 1.0);
 }
 
 // The light-space pass (`rendershadowmap` ELF 0x604f50 → `Kockashadow` 0x5fc430): casters' triangles at
@@ -229,6 +245,63 @@ fn fs_glass_gr(i: VO) -> @location(0) vec4<f32> {
     return vec4(c.rgb, c.a * i.color.a);
 }
 
+// The lit fraction of a battle receiver's point `p` (ADR 0088 §11): a 4 × 4 grid of filtered comparisons two texels
+// apart; 1 off the map or without shadows. A point past the map's far end (the planet below the ships) is behind
+// every caster: compared at the far end.
+fn hull_vis(p: vec3<f32>) -> f32 {
+    let q = sh.lvp * vec4(p, 1.0);
+    let uv = vec2(q.x * 0.5 + 0.5, 0.5 - q.y * 0.5);
+    if (sh.bp.x < 0.5 || any(uv < vec2(0.0)) || any(uv > vec2(1.0))) {
+        return 1.0;
+    }
+    let z = min(q.z, 1.0);
+    let k = 2.0 / 2048.0;
+    var s = 0.0;
+    for (var y = 0; y < 4; y++) {
+        for (var x = 0; x < 4; x++) {
+            s += textureSampleCompareLevel(hull_map, hull_cmp, uv + (vec2(f32(x), f32(y)) - vec2(1.5)) * k, z);
+        }
+    }
+    return s / 16.0;
+}
+
+// A battle receiver (ADR 0088 §11): the classic colour with the parallel light's share taken by the shadow,
+// `(a + s·d·v)/(a + s·d)`, plus the blasts' light on the texel. The normal: a hull's own (per-pixel lighting), else
+// its face's turned towards the eye.
+fn battle_shade(i: VO) -> vec4<f32> {
+    let c = shade_cap(i, 1.0, true, 1.0, false);
+    let t = textureSample(tex, smp, i.uv);
+    var f = normalize(cross(dpdx(i.w), dpdy(i.w)));
+    f = select(f, -f, dot(f, sh.beye.xyz - i.w) < 0.0);
+    let n = select(f, normalize(i.n), dot(i.n, i.n) > 2.25 && i.lset.x < -0.5);
+    let d = max(dot(n, u.light.xyz), 0.0);
+    let a = u.ambient.g;
+    let s = u.sun.g * d;
+    let v = hull_vis(i.w + n * sh.bp.z * 1.5);
+    var blast = vec3(0.0);
+    for (var k = 0; k < i32(sh.bp.y); k++) {
+        let b = sh.blasts[2 * k];
+        let e = b.xyz - i.w;
+        let r = max(length(e), 1e-4);
+        let fall = clamp(1.0 - r * r / (b.w * b.w), 0.0, 1.0);
+        blast += sh.blasts[2 * k + 1].rgb * max(dot(n, e / r), 0.0) * fall * fall;
+    }
+    return vec4(c.rgb * (a + s * v) / max(a + s, 1e-4) + t.rgb * blast, c.a);
+}
+
+@fragment
+fn fs_opaque_gb(i: VO) -> @location(0) vec4<f32> {
+    let c = battle_shade(i);
+    if (c.a < 0.5) { discard; }
+    return vec4(c.rgb, 1.0);
+}
+
+@fragment
+fn fs_glass_gb(i: VO) -> @location(0) vec4<f32> {
+    let c = battle_shade(i);
+    return vec4(c.rgb, c.a * i.color.a);
+}
+
 // The remaster's `VIDEO` material (`ig2_fragment_video.shader`, textures named `xx_bmf`: the head videos played onto
 // a disc by `PlayAnimVector`): four taps half a 256-texel step apart diagonally, scan lines `|fract(y·256/H + 4t) −
 // 0.5|·1.5 + 0.5` over GL's bottom-up window rows, times the vertex colour; no fog.
@@ -322,12 +395,64 @@ pub enum Shadow {
     /// Drawn into the shadow map only: `Kockashadow` (ELF 0x5fc430) draws a building under construction whole while
     /// the scene cuts it (re/screens/colony.md §3.4).
     CastOnly,
+    /// A battle ship's part under [`BattleLight`] (ADR 0088 §11): drawn into its depth map, lit by it and the blasts.
+    /// [`Shadow::Receive`] there: lit by both, not drawn into the map (the planet).
+    Hull,
 }
 
 /// The light-space rows of `rendershadowmap`'s camera (`CameraRotate(0, light)`: `a`, `−b` of its basis).
 #[derive(Debug, Clone, Copy)]
 pub struct ShadowMap {
     pub rows: [[f32; 3]; 2],
+}
+
+/// The most blasts a frame lights the battle with.
+pub const BLASTS: usize = 16;
+
+/// A point light of the battle (ADR 0088 §11): world point, radius, gamma-space colour.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Blast {
+    pub pos: [f32; 3],
+    pub radius: f32,
+    pub color: [f32; 3],
+}
+
+/// The space battle's shadows and blast light (ADR 0088 §11), when a mod switches them on.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BattleLight {
+    /// World → the depth map's clip (orthographic along the parallel light, rows) and a map texel's world size.
+    pub shadow: Option<([[f32; 4]; 4], f32)>,
+    /// The eye in the world.
+    pub eye: [f32; 3],
+    /// At most [`BLASTS`].
+    pub blasts: Vec<Blast>,
+}
+
+impl BattleLight {
+    /// The uniform's tail after the colony map's 12 floats: the matrix (column-major), the switches, the eye, the
+    /// blasts.
+    fn words(&self) -> [f32; 152] {
+        let mut w = [0.0; 152];
+        if let Some((m, texel)) = self.shadow {
+            for c in 0..4 {
+                for r in 0..4 {
+                    w[c * 4 + r] = m[r][c];
+                }
+            }
+            w[16] = 1.0;
+            w[18] = texel;
+        }
+        let n = self.blasts.len().min(BLASTS);
+        w[17] = n as f32;
+        w[20..23].copy_from_slice(&self.eye);
+        for (k, b) in self.blasts[..n].iter().enumerate() {
+            let o = 24 + k * 8;
+            w[o..o + 3].copy_from_slice(&b.pos);
+            w[o + 3] = b.radius;
+            w[o + 4..o + 7].copy_from_slice(&b.color);
+        }
+        w
+    }
 }
 
 /// A mesh buffer the renderer keeps across frames (terrain, buildings).
@@ -473,6 +598,9 @@ struct Pipes {
     add_g: wgpu::RenderPipeline,
     add_gw: wgpu::RenderPipeline,
     blob_g: wgpu::RenderPipeline,
+    /// The battle's receivers under [`BattleLight`].
+    opaque_gb: wgpu::RenderPipeline,
+    glass_gb: wgpu::RenderPipeline,
 }
 
 fn attrs() -> [wgpu::VertexAttribute; 4] {
@@ -551,6 +679,8 @@ impl Pipes {
             add_g: pipeline("fs_glass_g", Some(ADD), false, raw),
             add_gw: pipeline_cmp("fs_glass_g", Some(ADD), true, raw, wgpu::CompareFunction::Less),
             blob_g: pipeline("fs_blob_g", Some(blob), false, raw),
+            opaque_gb: pipeline("fs_opaque_gb", None, true, raw),
+            glass_gb: pipeline("fs_glass_gb", Some(over), false, raw),
         }
     }
 }
@@ -663,6 +793,12 @@ pub(crate) struct Pipe3d {
     shadow_bg: wgpu::BindGroup,
     /// Group 2 for the light-space pass itself (a 1 × 1 stand-in: the map can't be sampled while drawn).
     shadow_pass_bg: wgpu::BindGroup,
+    /// The battle's depth map (ADR 0088 §11), made when a battle first asks for shadows.
+    hull: Option<wgpu::TextureView>,
+    hull_pipe: wgpu::RenderPipeline,
+    sbl: wgpu::BindGroupLayout,
+    shadow_smp: wgpu::Sampler,
+    hull_cmp: wgpu::Sampler,
     meshes: Vec<wgpu::Buffer>,
     dynamic: Option<(wgpu::Buffer, u64)>,
     /// The depth buffers by target size, the last used first (a frame draws targets of a few sizes: the window, a
@@ -677,6 +813,36 @@ const SHADOW_SIZE: u32 = 2048;
 
 /// The anti-aliasing's sample count.
 const SAMPLES: u32 = 4;
+
+/// A square depth texture to draw into and compare against.
+fn depth_map(d: &wgpu::Device, side: u32) -> wgpu::TextureView {
+    d.create_texture(&wgpu::TextureDescriptor {
+        label: Some("battle depth map"),
+        size: wgpu::Extent3d { width: side, height: side, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        view_formats: &[],
+    })
+    .create_view(&Default::default())
+}
+
+/// Group 2: the shadow uniform, the colony's map and its sampler, the battle's depth map and its comparison.
+fn group2(d: &wgpu::Device, layout: &wgpu::BindGroupLayout, uniform: &wgpu::Buffer, map: &wgpu::TextureView, smp: &wgpu::Sampler, hull: &wgpu::TextureView, cmp: &wgpu::Sampler) -> wgpu::BindGroup {
+    d.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: None,
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() },
+            wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(map) },
+            wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(smp) },
+            wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::TextureView(hull) },
+            wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::Sampler(cmp) },
+        ],
+    })
+}
 
 impl Pipe3d {
     pub(crate) fn new(d: &wgpu::Device, format: wgpu::TextureFormat, tex_layout: &wgpu::BindGroupLayout) -> Self {
@@ -697,6 +863,8 @@ impl Pipe3d {
                 entry(0, wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None }),
                 entry(1, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: true }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }),
                 entry(2, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
+                entry(3, wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }),
+                entry(4, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)),
             ],
         });
         let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&ubl, tex_layout, &sbl], push_constant_ranges: &[] });
@@ -723,7 +891,29 @@ impl Pipe3d {
             multiview: None,
             cache: None,
         });
-        let shadow_uniform = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 48, usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
+        let hull_pipe = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("ig2-client battle depth map"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_hull"),
+                compilation_options: Default::default(),
+                buffers: &[wgpu::VertexBufferLayout { array_stride: std::mem::size_of::<MeshVertex>() as u64, step_mode: wgpu::VertexStepMode::Vertex, attributes: &attrs }],
+            },
+            primitive: wgpu::PrimitiveState { cull_mode: None, ..Default::default() },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: DEPTH,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::Less,
+                stencil: Default::default(),
+                bias: wgpu::DepthBiasState { constant: 2, slope_scale: 2.0, clamp: 0.0 },
+            }),
+            multisample: Default::default(),
+            fragment: None,
+            multiview: None,
+            cache: None,
+        });
+        let shadow_uniform = d.create_buffer(&wgpu::BufferDescriptor { label: None, size: 48 + 152 * 4, usage:wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false });
         let shadow_view = d
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("shadow map"),
@@ -738,15 +928,14 @@ impl Pipe3d {
             .create_view(&Default::default());
         // Past the map's edge receivers read its border texels (clamped).
         let shadow_smp = d.create_sampler(&wgpu::SamplerDescriptor { mag_filter: wgpu::FilterMode::Linear, min_filter: wgpu::FilterMode::Linear, ..Default::default() });
-        let shadow_bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &sbl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: shadow_uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&shadow_view) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&shadow_smp) },
-            ],
+        let hull_cmp = d.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            compare: Some(wgpu::CompareFunction::LessEqual),
+            ..Default::default()
         });
+        let no_hull = depth_map(d, 1);
+        let shadow_bg = group2(d, &sbl, &shadow_uniform, &shadow_view, &shadow_smp, &no_hull, &hull_cmp);
         let stand_in = d
             .create_texture(&wgpu::TextureDescriptor {
                 label: None,
@@ -759,15 +948,7 @@ impl Pipe3d {
                 view_formats: &[],
             })
             .create_view(&Default::default());
-        let shadow_pass_bg = d.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: None,
-            layout: &sbl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: shadow_uniform.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&stand_in) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&shadow_smp) },
-            ],
-        });
+        let shadow_pass_bg = group2(d, &sbl, &shadow_uniform, &stand_in, &shadow_smp, &no_hull, &hull_cmp);
         // `video.state`: no depth test, SRC_ALPHA / ONE_MINUS_SRC_ALPHA on the frame's raw (gamma) view.
         let cloud = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("ig2-client clouds"),
@@ -817,6 +998,11 @@ impl Pipe3d {
             shadow_view,
             shadow_bg,
             shadow_pass_bg,
+            hull: None,
+            hull_pipe,
+            sbl,
+            shadow_smp,
+            hull_cmp,
             meshes: Vec::new(),
             dynamic: None,
             depth: Vec::new(),
@@ -901,7 +1087,7 @@ impl Pipe3d {
         (target, raw): (&wgpu::TextureView, &wgpu::TextureView),
         size: (u32, u32),
         (first, clear): (bool, Option<[f64; 4]>),
-        scene: &Scene3d,
+        (scene, battle): (&Scene3d, Option<&BattleLight>),
         draws: &[MeshDraw],
         (textures, textures_raw): (&[wgpu::BindGroup], &[wgpu::BindGroup]),
     ) {
@@ -959,6 +1145,37 @@ impl Pipe3d {
             let t = scene.uniforms.eye[3];
             let soft = if l.soft_shadows { 1.0 } else { 0.0 };
             q.write_buffer(&self.shadow_uniform, 0, bytemuck::cast_slice(&[a[0], a[1], a[2], 0.0, b[0], b[1], b[2], 0.0, size.1 as f32, t - t.floor(), soft, 0.0]));
+            q.write_buffer(&self.shadow_uniform, 48, bytemuck::cast_slice(&battle.map_or([0.0; 152], BattleLight::words)));
+        }
+        let hulls = battle.is_some_and(|b| b.shadow.is_some()) && draws.iter().any(|m| m.shadow == Shadow::Hull && !m.range.is_empty());
+        if hulls {
+            if self.hull.is_none() {
+                let map = depth_map(d, SHADOW_SIZE);
+                self.shadow_bg = group2(d, &self.sbl, &self.shadow_uniform, &self.shadow_view, &self.shadow_smp, &map, &self.hull_cmp);
+                self.hull = Some(map);
+            }
+            let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("battle depth map"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: self.hull.as_ref().unwrap(),
+                    depth_ops: Some(wgpu::Operations { load: wgpu::LoadOp::Clear(1.0), store: wgpu::StoreOp::Store }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            pass.set_pipeline(&self.hull_pipe);
+            pass.set_bind_group(0, &self.uniform_bg, &[]);
+            pass.set_bind_group(1, &textures[0], &[]);
+            pass.set_bind_group(2, &self.shadow_pass_bg, &[]);
+            for m in draws.iter().filter(|m| m.shadow == Shadow::Hull && !m.range.is_empty()) {
+                pass.set_vertex_buffer(0, match m.mesh {
+                    Some(MeshId(i)) => self.meshes[i].slice(..),
+                    None => dynbuf.slice(..),
+                });
+                pass.draw(m.range.clone(), 0..1);
+            }
         }
         if let (Some(_), true) = (scene.shadow, first) {
             // `command_glSetTarget(1)` (ELF 0x427c00): the map cleared to white, then the casters.
@@ -1017,11 +1234,14 @@ impl Pipe3d {
             let glass = phase == 1;
             for m in draws.iter().filter(|m| !m.cloud && m.shadow != Shadow::CastOnly && !m.range.is_empty() && m.glass == glass && (phase == 1 || (phase == 2) == (m.additive && !m.video))) {
                 let receives = scene.shadow.is_some() && m.shadow == Shadow::Receive;
+                let lit = battle.is_some() && matches!(m.shadow, Shadow::Hull | Shadow::Receive);
                 pass.set_pipeline(match (scene.gamma, glass, receives) {
                     (true, false, _) if m.video => &pipes.video_g,
                     (true, true, _) if m.shadow == Shadow::Blob => &pipes.blob_g,
                     (true, true, _) if m.additive => &pipes.add_g,
                     (true, false, _) if m.additive => &pipes.add_gw,
+                    (true, false, _) if lit => &pipes.opaque_gb,
+                    (true, true, _) if lit && !m.depth_write => &pipes.glass_gb,
                     (false, true, _) if m.depth_write => &pipes.glass_w,
                     (true, true, false) if m.depth_write => &pipes.glass_gw,
                     (false, false, _) => &pipes.opaque,

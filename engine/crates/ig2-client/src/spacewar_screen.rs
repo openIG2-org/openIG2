@@ -839,6 +839,7 @@ impl<'a> Scene<'a> {
         let Some(scene) = scene.as_mut() else { return };
         let light = crate::scene::normalise(planet_light());
         let _ = eye;
+        let shadow = if battle_lights() != (false, false) { crate::render3d::Shadow::Hull } else { crate::render3d::Shadow::None };
         for (i, u) in b.units.iter().enumerate() {
             // A dead ship stays shown through its explosion's first 0x29 ticks unless it retreated (`seturhajopos`,
             // spec §6.5: ELF `+0x184`, exe `+0x17c`) [obs fx8 t2300: the exe's hull beside the blast].
@@ -855,9 +856,37 @@ impl<'a> Scene<'a> {
                     scene.dynamic.push(ship_vertex(xf.point(v.pos), n, light, v.uv, alpha));
                 }
                 let range = start..scene.dynamic.len() as u32;
-                late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
+                late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow, video: false, additive: false, depth_write: false });
             }
         }
+    }
+
+    /// The battle's shadows and blast light (ADR 0088 §11) over the hulls [`Scene::ships`] pushed into `f`: the depth
+    /// map fitted round them along the parallel light, the 16 strongest lights of the explosions' fire and the shots.
+    fn battle_light(&self, f: &crate::render::Frame, b: &Battle, fx: Option<(&crate::spacewar_fx::Fx, &[ig2_sim::spacebattle::WeaponRules])>, eye: [f32; 3]) -> Option<crate::render3d::BattleLight> {
+        let (shadows, blasts) = battle_lights();
+        if !shadows && !blasts {
+            return None;
+        }
+        let scene = f.scene.as_ref()?;
+        let hulls = f.late.iter().filter(|d| d.shadow == crate::render3d::Shadow::Hull).flat_map(|d| &scene.dynamic[d.range.start as usize..d.range.end as usize]);
+        let shadow = if shadows { light_space(hulls.map(|v| v.pos), crate::scene::normalise(planet_light())) } else { None };
+        let mut sources = Vec::new();
+        if let (true, Some((fx, weapons))) = (blasts, fx) {
+            for p in fx.sets[..2].iter().flatten().filter(|p| p.color != 0 && p.size > 0.0) {
+                sources.push((self.world(p.pos), p.size, p.color));
+            }
+            for (fi, pool) in b.pools.iter().enumerate() {
+                let Some(form) = fx.tables.forms.get(fi) else { continue };
+                for s in pool.shots.iter().filter(|s| s.shooter.is_some()) {
+                    let (word, size) = crate::spacewar_fx::shot_look(s, weapons, &fx.tables.forms, form.size, b.tick);
+                    if size > 0.0 {
+                        sources.push((self.world([s.pos.x, s.pos.y, s.pos.z]), size, word));
+                    }
+                }
+            }
+        }
+        Some(crate::render3d::BattleLight { shadow, eye, blasts: blast_lights(&sources) })
     }
 
     /// `lovedekekkirak`'s pass B (ELF 0x6823c0, exe 0x578d20; spec §6.1): per live unit with its selection timers
@@ -1450,7 +1479,11 @@ impl<'a> Scene<'a> {
             let half = std::f32::consts::FRAC_PI_2;
             let crate::render::Frame { scene, late, .. } = f;
             if let Some(scene) = scene.as_mut() {
+                let n0 = late.len();
                 self.assets.planet_meshes.add_battle_planet(scene, late, surface, r * 1.16 / SCENE_SCALE, (half, half, 0.0), self.world(p), eye);
+                if battle_lights() != (false, false) {
+                    late[n0..].iter_mut().for_each(|d| d.shadow = crate::render3d::Shadow::Receive);
+                }
                 // The cloud shells (`bolygo3.xvb` at R·1.02 and R·1.04 in f64, `RotateObj(0, π/2, 0)`), which `frissit2`
                 // (exe 0x573bff, 0x573c36) turns each battle step to `(tick/900, 0, 0)` and `(tick/−1200, π/2, 0)`.
                 let t = b.tick as f32;
@@ -1491,6 +1524,69 @@ fn ship_vertex(pos: [f32; 3], n: [f32; 3], light: [f32; 3], uv: [f32; 2], alpha:
 
 fn planet_light() -> [f32; 3] {
     [-10.0, -10.0, 10.0]
+}
+
+/// The battle's shadows and blast light a mod switches on (ADR 0088 §11).
+fn battle_lights() -> (bool, bool) {
+    let v = crate::visuals::mods();
+    (v.battle_shadows, v.blast_light)
+}
+
+/// The depth map's world → clip rows (orthographic along `l`, the direction towards the light, depth 0 nearest it)
+/// fitted round `points`, and a map texel's world size; `None` without points.
+fn light_space(points: impl Iterator<Item = [f32; 3]>, l: [f32; 3]) -> Option<([[f32; 4]; 4], f32)> {
+    let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for p in points {
+        for j in 0..3 {
+            lo[j] = lo[j].min(p[j]);
+            hi[j] = hi[j].max(p[j]);
+        }
+    }
+    if lo[0] > hi[0] {
+        return None;
+    }
+    let c: [f32; 3] = std::array::from_fn(|j| (lo[j] + hi[j]) / 2.0);
+    let r = (0..3).map(|j| (hi[j] - lo[j]) * (hi[j] - lo[j])).sum::<f32>().sqrt().max(1e-4) / 2.0 * 1.02;
+    let cross = |a: [f32; 3], b: [f32; 3]| [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let up = if l[2].abs() < 0.9 { [0.0, 0.0, 1.0] } else { [1.0, 0.0, 0.0] };
+    let x = crate::scene::normalise(cross(up, l));
+    let y = cross(l, x);
+    let row = |a: [f32; 3], k: f32, o: f32| [a[0] * k, a[1] * k, a[2] * k, o - dot(a, c) * k];
+    Some(([row(x, 1.0 / r, 0.0), row(y, 1.0 / r, 0.0), row(l, -0.5 / r, 0.5), [0.0, 0.0, 0.0, 1.0]], 2.0 * r / 2048.0))
+}
+
+/// Up to [`crate::render3d::BLASTS`] point lights from light sources `(world point, size in battle units, sprite
+/// word)` (ADR 0088 §11): radius 4 × size (at least 12), colour `particle_color · min(size/16, 2)`; a source within a
+/// brighter light's radius joins it (colours summed, the point weighted), the strongest kept.
+fn blast_lights(sources: &[([f32; 3], f32, u32)]) -> Vec<crate::render3d::Blast> {
+    let mut lit: Vec<(crate::render3d::Blast, f32)> = sources
+        .iter()
+        .map(|&(pos, size, word)| {
+            let c = crate::starmap::particle_color(word);
+            let k = (size / 16.0).min(2.0);
+            let color = [c[0] * k, c[1] * k, c[2] * k];
+            (crate::render3d::Blast { pos, radius: (size * 4.0).max(12.0) / SCENE_SCALE, color }, color.iter().sum::<f32>())
+        })
+        .filter(|(_, w)| *w > 0.0)
+        .collect();
+    lit.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut out: Vec<(crate::render3d::Blast, f32)> = Vec::new();
+    for (s, w) in lit {
+        let near = out.iter_mut().find(|(o, _)| (0..3).map(|j| (o.pos[j] - s.pos[j]).powi(2)).sum::<f32>() < o.radius * o.radius);
+        match near {
+            Some((o, ow)) => {
+                let t = w / (*ow + w);
+                o.pos = std::array::from_fn(|j| o.pos[j] + (s.pos[j] - o.pos[j]) * t);
+                o.color = std::array::from_fn(|j| o.color[j] + s.color[j]);
+                o.radius = o.radius.max(s.radius);
+                *ow += w;
+            }
+            None => out.push((s, w)),
+        }
+    }
+    out.sort_by(|a, b| b.1.total_cmp(&a.1));
+    out.into_iter().take(crate::render3d::BLASTS).map(|(b, _)| b).collect()
 }
 
 /// `ora.xvb`'s frame for a reload `0..0xaa`: `SetFrame((reload/10)·1.65)` (int division; the fraction blends the
@@ -1570,6 +1666,7 @@ pub fn draw(f: &mut crate::render::Frame, r: &mut crate::render::Renderer, insta
         scene.debris(f, fx, &gfx.fx);
         scene.bolts(f, cam, fx, &gfx.fx);
     }
+    f.battle = scene.battle_light(f, s.battle, s.fx, cam.eye_world().at);
     f.mark_scene();
     scene.overlays(f, cam, hud, s.battle, s.erosseg, gfx.szar);
     for sl in &s.slots[..9] {
@@ -1899,6 +1996,36 @@ fn live(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded, world: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The depth map's rows put the casters inside the clip square, depth 0..1 nearest the light first.
+    #[test]
+    fn light_space_fits_the_hulls() {
+        let l = crate::scene::normalise(planet_light());
+        let pts = [[1.0, 2.0, 3.0], [-4.0, 0.5, 2.0], [0.0, -1.0, -2.0]];
+        let (m, texel) = light_space(pts.into_iter(), l).unwrap();
+        let clip = |p: [f32; 3]| -> [f32; 3] { std::array::from_fn(|r| m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3]) };
+        for p in pts {
+            let c = clip(p);
+            assert!(c[0].abs() <= 1.0 && c[1].abs() <= 1.0 && (0.0..=1.0).contains(&c[2]), "{c:?}");
+        }
+        // One unit towards the light is nearer.
+        let p = pts[0];
+        assert!(clip([p[0] + l[0], p[1] + l[1], p[2] + l[2]])[2] < clip(p)[2]);
+        assert!(texel > 0.0 && light_space(std::iter::empty(), l).is_none());
+    }
+
+    /// Two blasts close together are one light, a far one its own; dead or black sources give none.
+    #[test]
+    fn blast_lights_merge_and_cap() {
+        let near = 1.0 / SCENE_SCALE;
+        let lit = blast_lights(&[([0.0; 3], 32.0, 0x00ff_ffff), ([near, 0.0, 0.0], 16.0, 0x0000_00ff), ([1.0, 0.0, 0.0], 8.0, 0x00ff_0000), ([2.0, 0.0, 0.0], 8.0, 0)]);
+        assert_eq!(lit.len(), 2);
+        assert_eq!(lit[0].radius, 128.0 / SCENE_SCALE);
+        assert!(lit[0].color[0] > lit[0].color[2] && lit[0].pos[0] > 0.0 && lit[0].pos[0] < near);
+        assert_eq!(lit[1].radius, 32.0 / SCENE_SCALE);
+        let many: Vec<_> = (0..40).map(|i| ([i as f32, 0.0, 0.0], 8.0, 0x00ff_ffff)).collect();
+        assert_eq!(blast_lights(&many).len(), crate::render3d::BLASTS);
+    }
 
     /// The look-at rows of a camera that looks down −h from above are a rotation (orthonormal, det 1).
     #[test]

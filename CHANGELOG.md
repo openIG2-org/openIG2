@@ -50,6 +50,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Visual mods (`visuals.toml`) can switch on smoother edges, per-pixel lighting on every 3D model, soft shadows, scene glow and planet halos; they change only the look, so they work in multiplayer with players who don't have them.
 - `openIG2 --make-pack` makes a sharper texture pack from your own install (a few minutes; it stays on your computer): a learned upscaler for scene textures, an edge-keeping one for interface art.
 - Effect mods (`effects.toml`) can replace the space battle's and ground war's blasts, hits, shield flashes, smoke, engine glows and shot trails with their own particles and pictures; like look mods they work in multiplayer with players who don't have them.
+- A visual mod can also give the space battle soft shadows of the ships on each other and on the planet, and light the hulls from explosions and flying shots.
 - For mod makers: a "Your first mod" guide, mod metadata (version, dependencies, conflicts), and `openIG2-check` to check and package a mod.
 - For mod makers: the index entry `openIG2-check --package` writes now passes the mod index's check as it is (a look-only mod's `kind`, no empty `depends` or `conflicts`).
 
