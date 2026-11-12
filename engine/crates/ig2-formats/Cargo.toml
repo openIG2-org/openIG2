@@ -17,3 +17,6 @@ toml_edit = { workspace = true, features = ["display"] }
 
 [dev-dependencies]
 serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -50,3 +50,6 @@ quic = ["dep:quinn", "dep:rustls", "dep:rcgen", "dep:tokio"]
 webrtc = ["dep:str0m"]
 # UPnP IGD port mapping (ADR 0008 §2).
 upnp = ["dep:igd-next"]
+
+[lints]
+workspace = true

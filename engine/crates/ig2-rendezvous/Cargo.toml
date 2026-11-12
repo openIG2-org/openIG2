@@ -10,3 +10,6 @@ rust-version.workspace = true
 
 [dependencies]
 ig2-net = { version = "0.1.0", path = "../ig2-net" }
+
+[lints]
+workspace = true

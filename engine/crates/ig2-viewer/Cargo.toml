@@ -16,3 +16,6 @@ ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 png.workspace = true
 pollster.workspace = true
 wgpu.workspace = true
+
+[lints]
+workspace = true

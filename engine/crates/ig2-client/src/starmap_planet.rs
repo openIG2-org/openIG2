@@ -94,7 +94,6 @@ impl Planets {
 
     /// Planet `surface` of size `bolygomeret` at the world point `at` (h, x, y), turned by `RotateObj(0, 0, spin)`
     /// (`ShowStarmap`: `PlanetRotate · SpinSpeed/100 · 6`), into `draws` (opaque).
-    #[allow(clippy::too_many_arguments)]
     /// `opacity`: the alpha below 1 makes it translucent, still writing depth (the battle's zoom: `starmaphalvanyit`).
     #[allow(clippy::too_many_arguments)]
     pub fn add_planet(&self, scene: &mut Scene3d, draws: &mut Vec<MeshDraw>, surface: u8, size: u8, spin: f32, at: [f32; 3], eye: &Eye, opacity: f32) {
