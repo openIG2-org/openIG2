@@ -89,6 +89,10 @@ The plan and its rules: ADR 0088. Each part is engine work that does nothing unt
 - [x] **Texture pack tool** (567): `openIG2 --make-pack` makes a sharper texture pack from your own install (a learned upscaler on the graphics card for scene textures, an edge-keeping one for interface art); normal maps when a renderer reads them.
 - [ ] **Sprite animations as smooth effects** (568).
 - [ ] **Model packs** (569).
+- [ ] **HD pictures** (570, ADR 0089): every picture through the quality upscaler, held to the original's colours.
+- [ ] **HD videos and talking heads** (571), with optional in-between frames.
+- [ ] **A sharp font from the original's glyphs** (572).
+- [ ] **Model detail: smoothed meshes and normal maps** (573).
 - [ ] **Publish the remaster mods in the mod index** (needs the index repository, 549).
 
 ## After 1.0
