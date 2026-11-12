@@ -66,6 +66,8 @@ pub struct Starmap {
     pub night_side: f32,
     pub cloud_shadows: f32,
     pub engine_trails: f32,
+    pub sky_detail: f32,
+    pub cloud_detail: f32,
 }
 
 pub fn starmap() -> Starmap {
@@ -77,5 +79,7 @@ pub fn starmap() -> Starmap {
         night_side: m.night_side.unwrap_or(0.0),
         cloud_shadows: m.cloud_shadows.unwrap_or(0.0),
         engine_trails: m.engine_trails.unwrap_or(0.0),
+        sky_detail: m.sky_detail.unwrap_or(0.0),
+        cloud_detail: m.cloud_detail.unwrap_or(0.0),
     }
 }

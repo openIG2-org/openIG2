@@ -352,6 +352,14 @@ Not in the original: a mod's `visuals.toml` `[starmap]` keys add to the drawing 
   additive quad (kind 22) from the sprite's centre 5 sprite half-heights away from the target, 0.4 high, alpha
   `t·(1 − |y|/(0.25 + 0.75t))` (t 1 at the ship), colour `(DDColor[owner + 15] + 1)/2` × the strength (× 0.5 for a
   fleet the human doesn't see).
+- `sky_detail` (ADR 0088 §13): the sky sphere's texel colour `c` (lit as §6.5) × `mix(1, k, strength·glow)`, `glow`
+  = `smoothstep(0.01, 0.2, luma(c))`, `k = (0.3 + 1.4·wisp + 0.35·ridge⁵)·(1 − 0.45·dust)` from 3D value-noise fBm at
+  `5·d` (`d` the fragment's world direction from the galaxy's origin) warped by a 3-octave fBm offset × 3:
+  `wisp` 5 octaves at ×2, `ridge = 1 − |2·fbm − 1|` at ×2.5, `dust = smoothstep(0.5, 0.8, fbm)` at ×2.5. The sky's
+  vertices carry `−strength` as their alpha (no fog on the starmap); `fs_opaque_g` takes that branch.
+- `cloud_detail` (ADR 0088 §13): every drawn `Clouds1`, `Clouds2` and `KodPamacsok` sprite as quad kind 23: kind 8's
+  colour × `mix(1, 0.15 + 2.7·n², strength)`, `n` a 2D fBm (5 octaves) at `2.2·q + seed·(7.31, 3.17)` × 1.6 warped by
+  ×2.5, `q` the quad coordinate and `seed = (index + 397·set) mod 61`.
 
 ## 7. Colours
 `DDColor` (exe 0x8F8710, ELF 0x1166cd0): 43 × `0x00BBGGRR` (red in the low byte: GL vertex colours). Empire `e`'s

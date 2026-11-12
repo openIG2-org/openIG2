@@ -580,6 +580,8 @@ star_rays = 0.5              # the systems' stars glow with rays, 0..1
 night_side = 0.6             # the planets' dark side, 0..1
 cloud_shadows = 0.5          # the clouds' shadows on the planet of the long info, 0..1
 engine_trails = 0.6          # a trail behind moving fleets, 0..1
+sky_detail = 0.5             # finer wisps, filaments and dust over the sky's nebulae, 0..1
+cloud_detail = 0.5           # soft structure inside each galaxy cloud and fog clump, 0..1
 ```
 
 Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting

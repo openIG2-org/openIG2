@@ -163,6 +163,51 @@ fn fs_enc(v: VO) -> @location(0) vec4<f32> {
     return enc(shade(v, false));
 }
 
+fn soft(v: VO, d: bool) -> vec4<f32> {
+    let q = v.q;
+        let t = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
+        let dims = vec2<f32>(textureDimensions(tex));
+        let s = 1.0 / max(fwidth(t.x * dims.x), 1e-6);
+        let c = textureSample(tex, smp, t);
+        if (u.sharp & 4u) == 0u {
+            return dec(c, d) * v.color;
+        }
+        if all(dims == vec2(1.0)) {
+            let a = cover(length(q) - 1.0);
+            return vec4(dec(c, d).rgb * v.color.rgb * (4.0 / PI), v.color.a * a);
+        }
+        if s <= 1.0 {
+            return dec(c, d) * v.color;
+        }
+        return dec(bspline(t), d) * v.color;
+}
+
+// Value noise and its sum over five octaves (a mod's cloud detail).
+fn hash2(p: vec2<f32>) -> f32 {
+    var q = fract(vec3(p.xyx) * 0.1031);
+    q += dot(q, q.yzx + 33.33);
+    return fract((q.x + q.y) * q.z);
+}
+
+fn vnoise2(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let s = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash2(i), hash2(i + vec2(1.0, 0.0)), s.x), mix(hash2(i + vec2(0.0, 1.0)), hash2(i + vec2(1.0)), s.x), s.y);
+}
+
+fn fbm2(p: vec2<f32>) -> f32 {
+    var x = p;
+    var sum = 0.0;
+    var amp = 0.5;
+    for (var k = 0; k < 5; k++) {
+        sum += vnoise2(x) * amp;
+        x = x * 2.03 + vec2(17.1, 5.3);
+        amp *= 0.5;
+    }
+    return sum / (1.0 - amp * 2.0);
+}
+
 // A quad's colour; `d`: its texels decoded from sRGB here.
 fn shade(v: VO, d: bool) -> vec4<f32> {
     let q = v.q;
@@ -236,21 +281,7 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
         // glows" a magnified texture is read through the B-spline and a one-texel (white) point is a round dot of the
         // square's light.
         case 8u: {
-            let t = v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw;
-            let dims = vec2<f32>(textureDimensions(tex));
-            let s = 1.0 / max(fwidth(t.x * dims.x), 1e-6);
-            let c = textureSample(tex, smp, t);
-            if (u.sharp & 4u) == 0u {
-                return dec(c, d) * v.color;
-            }
-            if all(dims == vec2(1.0)) {
-                let a = cover(length(q) - 1.0);
-                return vec4(dec(c, d).rgb * v.color.rgb * (4.0 / PI), v.color.a * a);
-            }
-            if s <= 1.0 {
-                return dec(c, d) * v.color;
-            }
-            return dec(bspline(t), d) * v.color;
+            return soft(v, d);
         }
         // A planet's halo (ADR 0088): full up to `param.x` of the radius (the planet's limb), fading out to the edge.
         case 9u: {
@@ -269,6 +300,15 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let diag = exp(-(d.y / w) * (d.y / w)) * pow(clamp(1.0 - d.x * 1.6, 0.0, 1.0), 3.0) * 0.25;
             let outside = smoothstep(0.4, 0.65, r);
             return vec4(v.color.rgb, v.color.a * min(cross + diag, 1.0) * outside * 0.7);
+        }
+        // A galaxy cloud with a mod's detail (ADR 0088 §13): kind 8's sprite times domain-warped wisps; `param.x` = the particle's seed, `param.y` = the strength.
+        case 23u: {
+            let c = soft(v, d);
+            let p = q * 2.2 + vec2(v.param.x * 7.31, v.param.x * 3.17);
+            let w = vec2(fbm2(p + vec2(1.7, 9.2)), fbm2(p + vec2(8.3, 2.8))) - 0.5;
+            let n = fbm2(p * 1.6 + w * 2.5);
+            let k = mix(1.0, 0.15 + 2.7 * n * n, v.param.y);
+            return vec4(c.rgb * k, c.a);
         }
         // An engine trail (ADR 0088 §12): bright and wide at the head (+x), thin and gone at the tail.
         case 22u: {
@@ -354,6 +394,8 @@ pub mod kind {
     pub const RAYS: u32 = 20;
     /// A mod's engine trail (ADR 0088 §12), its head at +x.
     pub const TRAIL: u32 = 22;
+    /// A mod's galaxy cloud with procedural detail (ADR 0088 §13): `param` = (seed, strength).
+    pub const CLOUD: u32 = 23;
 }
 
 /// One quad, in physical pixels (origin top left).

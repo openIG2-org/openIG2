@@ -214,9 +214,57 @@ fn fs_glass_e(i: VO) -> @location(0) vec4<f32> {
 // clamped to 1 like its colour bytes), mixed towards the fog colour; `BIT0` (an alpha texture) discards below 0.5.
 @fragment
 fn fs_opaque_g(i: VO) -> @location(0) vec4<f32> {
+    // A vertex alpha below 0 (no fog in the engine): the starmap's sky sphere with a mod's detail at strength −alpha.
+    if (i.color.a < 0.0) {
+        var j = i;
+        j.color.a = 0.0;
+        let c = shade_cap(j, 1.0, true, 1.0, false);
+        return vec4(sky_detail(c.rgb, normalize(i.w), -i.color.a), 1.0);
+    }
     let c = shade_cap(i, 1.0, true, 1.0, false);
     if (c.a < 0.5) { discard; }
     return vec4(c.rgb, 1.0);
+}
+
+// Value noise and its sum over octaves, for a mod's sky detail.
+fn hash3(p: vec3<f32>) -> f32 {
+    var q = fract(p * 0.1031);
+    q += dot(q, q.zyx + 31.32);
+    return fract((q.x + q.y) * q.z);
+}
+
+fn vnoise(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let s = f * f * (3.0 - 2.0 * f);
+    let a = mix(mix(hash3(i), hash3(i + vec3(1.0, 0.0, 0.0)), s.x), mix(hash3(i + vec3(0.0, 1.0, 0.0)), hash3(i + vec3(1.0, 1.0, 0.0)), s.x), s.y);
+    let b = mix(mix(hash3(i + vec3(0.0, 0.0, 1.0)), hash3(i + vec3(1.0, 0.0, 1.0)), s.x), mix(hash3(i + vec3(0.0, 1.0, 1.0)), hash3(i + vec3(1.0)), s.x), s.y);
+    return mix(a, b, s.z);
+}
+
+fn fbm(p: vec3<f32>, octaves: i32) -> f32 {
+    var x = p;
+    var sum = 0.0;
+    var amp = 0.5;
+    for (var k = 0; k < octaves; k++) {
+        sum += vnoise(x) * amp;
+        x = x * 2.03 + vec3(17.1, 5.3, 11.7);
+        amp *= 0.5;
+    }
+    return sum / (1.0 - amp * 2.0);
+}
+
+// A mod's sky detail (ADR 0088 §13, re/screens/starmap.md §6.6): the nebula's own colour `rgb` in direction `d`
+// times domain-warped wisps and thin filaments, with dark dust where it glows; black stays black.
+fn sky_detail(rgb: vec3<f32>, d: vec3<f32>, s: f32) -> vec3<f32> {
+    let p = d * 5.0;
+    let w = vec3(fbm(p + vec3(1.7, 0.0, 0.0), 3), fbm(p + vec3(0.0, 9.2, 0.0), 3), fbm(p + vec3(0.0, 0.0, 4.4), 3)) - 0.5;
+    let wisp = fbm(p * 2.0 + w * 3.0, 5);
+    let ridge = 1.0 - abs(fbm(p * 2.5 + w * 3.0, 4) * 2.0 - 1.0);
+    let dust = smoothstep(0.5, 0.8, fbm(p * 2.5 - w * 2.5 + vec3(3.1), 4));
+    let glow = smoothstep(0.01, 0.2, dot(rgb, vec3(0.3, 0.59, 0.11)));
+    let k = (0.3 + 1.4 * wisp + 0.35 * pow(ridge, 5.0)) * (1.0 - 0.45 * dust);
+    return rgb * mix(1.0, k, s * glow);
 }
 
 // A blob shadow: the texel times the vertex colour, which the blend takes away from what lies below.

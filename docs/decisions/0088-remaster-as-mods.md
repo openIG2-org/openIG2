@@ -48,6 +48,8 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
    night_side = 0.6             # §12: the planets' unlit side darkened, 0..1
    cloud_shadows = 0.5          # §12: the clouds' shadows on the long info's planet, 0..1
    engine_trails = 0.6          # §12: a trail behind moving fleets, 0..1
+   sky_detail = 0.7             # §13: finer wisps and dust over the sky's nebulae, 0..1
+   cloud_detail = 0.7           # §13: soft structure inside the galaxy's clouds, 0..1
    ```
 
    - A switch set `true` is on while the mod is enabled, whatever the player's own setting; a switch left out (or
@@ -200,6 +202,19 @@ A mod holds data only (ADR 0086: no programs, no scripts), so a mod cannot bring
       heights long and 0.4 wide, bright at the ship and fading out, the owner's colour half mixed with white ×
       `engine_trails`.
     - All of it procedural: no texel or square point shows at any size (the remastered look's rule).
+13. **A detailed starmap background** (`[starmap]` `sky_detail`, `cloud_detail`, row 565's follow-up;
+    `ig2-client::starmap`, `render3d`'s `sky_detail`, `render`'s quad kind 23; re/screens/starmap.md §6.6). The
+    original's sky and clouds are a few low-resolution textures magnified many times; these keys draw finer
+    structure into them without moving or recolouring anything: every detail is a factor on the original's own
+    colour at that pixel, so black stays black and each nebula keeps its hue and place. Left out (0) they add nothing.
+    - **Sky detail.** On the sky sphere (`gomb.xvb`), per pixel, from the direction it is seen in (so the detail
+      stays fixed to the sky as the camera turns and zooms): domain-warped value-noise wisps (5 octaves), soft
+      filaments, and darker dust patches (down to 0.55), all only where the nebula glows. The factor runs from
+      about 0.3 to 2 round a mean near 1, so the sky gets structure, not light.
+    - **Cloud detail.** Each galaxy cloud and fog clump sprite (`felho2`, `felho3`) times its own domain-warped
+      wisps in the quad, seeded by its set and index, so the clouds stay the same shape as they drift; the factor
+      runs from 0.15 to about 2.9 round a mean near 1.
+    - Both procedural and smooth at any zoom: no texel or square point (the remastered look's rule).
 
 ## Consequences
 - The classic look and every capture comparison are untouched: with no mod enabled no code path changes a pixel.

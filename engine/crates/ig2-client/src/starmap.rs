@@ -1357,7 +1357,10 @@ impl View {
                         continue;
                     }
                     if let Some(t) = a.clouds[s as usize - 1] {
-                        f.push(t, Blend::GammaAdditive, Instance::new(kind::SOFT, c, [half; 2], color));
+                        let q = Instance::new(kind::SOFT, c, [half; 2], color);
+                        // A mod's cloud detail (ADR 0088 §13): each cloud its own wisps, seeded by its set and index.
+                        let q = if self.look.cloud_detail > 0.0 { Instance { kind: kind::CLOUD, param: [(p.n as f32 + 397.0 * s as f32) % 61.0, self.look.cloud_detail], ..q } } else { q };
+                        f.push(t, Blend::GammaAdditive, q);
                     }
                 }
             }
@@ -1375,7 +1378,9 @@ impl View {
         let mut draws = Vec::new();
         for (verts, tex) in &a.sky {
             let start = dynamic.len() as u32;
-            dynamic.extend_from_slice(verts);
+            // A mod's sky detail (ADR 0088 §13): its strength as the alpha below 0 (`fs_opaque_g`).
+            let detail = -self.look.sky_detail;
+            dynamic.extend(verts.iter().map(|v| crate::render3d::MeshVertex { color: [1.0, 1.0, 1.0, detail], ..*v }));
             draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
         let l = crate::scene::normalise([-1.0, -1.0, 1.0]);

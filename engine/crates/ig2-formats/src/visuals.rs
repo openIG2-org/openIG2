@@ -27,6 +27,8 @@
 //! night_side = 0.6            # the planets' unlit side darkened: 0..1
 //! cloud_shadows = 0.5         # the clouds' shadows on the long info's planet: 0..1
 //! engine_trails = 0.6         # a trail behind moving fleets: 0..1
+//! sky_detail = 0.7            # finer wisps and dust over the sky's nebulae: 0..1
+//! cloud_detail = 0.7          # soft structure inside the galaxy's clouds: 0..1
 //! ```
 
 /// The file's name at a mod's top; not a game path.
@@ -67,6 +69,10 @@ pub struct Visuals {
     pub cloud_shadows: Option<f32>,
     /// The moving fleets' engine trails, 0..=1.
     pub engine_trails: Option<f32>,
+    /// The sky sphere's procedural detail, 0..=1.
+    pub sky_detail: Option<f32>,
+    /// The galaxy clouds' procedural structure, 0..=1.
+    pub cloud_detail: Option<f32>,
 }
 
 impl Visuals {
@@ -109,6 +115,8 @@ impl Visuals {
                     ("starmap", "night_side") => v.night_side = Some(number(0.0, 1.0)?),
                     ("starmap", "cloud_shadows") => v.cloud_shadows = Some(number(0.0, 1.0)?),
                     ("starmap", "engine_trails") => v.engine_trails = Some(number(0.0, 1.0)?),
+                    ("starmap", "sky_detail") => v.sky_detail = Some(number(0.0, 1.0)?),
+                    ("starmap", "cloud_detail") => v.cloud_detail = Some(number(0.0, 1.0)?),
                     _ => return Err(format!("{at}: no such setting")),
                 }
             }
@@ -138,6 +146,8 @@ impl Visuals {
         self.night_side = higher.night_side.or(self.night_side);
         self.cloud_shadows = higher.cloud_shadows.or(self.cloud_shadows);
         self.engine_trails = higher.engine_trails.or(self.engine_trails);
+        self.sky_detail = higher.sky_detail.or(self.sky_detail);
+        self.cloud_detail = higher.cloud_detail.or(self.cloud_detail);
     }
 }
 
@@ -159,7 +169,10 @@ mod tests {
         let mut b = Visuals::parse("[starmap]\nstar_layers = 4\n", "f").unwrap();
         b.merge(&a);
         assert_eq!((b.star_layers, b.cloud_layers, b.star_rays, b.night_side, b.cloud_shadows, b.engine_trails), (Some(2), Some(3), Some(0.5), Some(1.0), Some(0.25), Some(0.75)));
-        for bad in ["[starmap]\nstar_layers = 5", "[starmap]\nstar_layers = 0", "[starmap]\ncloud_layers = 1.5", "[starmap]\nstar_rays = 2", "[starmap]\nnight_side = true", "[starmap]\nengine_trails = -1"] {
+        let mut d = Visuals::parse("[starmap]\nsky_detail = 0.25\ncloud_detail = 1\n", "e").unwrap();
+        d.merge(&Visuals::parse("[starmap]\ncloud_detail = 0.5\n", "f").unwrap());
+        assert_eq!((d.sky_detail, d.cloud_detail), (Some(0.25), Some(0.5)));
+        for bad in ["[starmap]\nstar_layers = 5", "[starmap]\nstar_layers = 0", "[starmap]\ncloud_layers = 1.5", "[starmap]\nstar_rays = 2", "[starmap]\nnight_side = true", "[starmap]\nengine_trails = -1", "[starmap]\nsky_detail = 1.5", "[starmap]\ncloud_detail = -0.5"] {
             assert!(Visuals::parse(bad, "g").is_err(), "{bad}");
         }
         let mut lit = Visuals::parse("[lighting]\nbattle_shadows = true\n", "e").unwrap();
