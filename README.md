@@ -17,6 +17,9 @@ modern displays and today's hardware.**
 [Website](https://openig2-org.github.io/openIG2/) · [Download](https://github.com/openIG2-org/openIG2/releases/latest) ·
 [User guide](docs/USER_GUIDE.md) · [Changelog](CHANGELOG.md)
 
+<a href="https://ko-fi.com/F5E72AJJBW" target="_blank"><img height="36" src="https://storage.ko-fi.com/cdn/kofi5.png?v=6" alt="Buy Me a Coffee at ko-fi.com"></a>
+<a href="https://www.buymeacoffee.com/justdawee" target="_blank"><img height="36" src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me a Coffee"></a>
+
 </div>
 
 > **Beta.** Every screen and system of the original is in, and long games run without errors. Some campaign
