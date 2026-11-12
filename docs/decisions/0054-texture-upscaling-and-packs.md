@@ -59,7 +59,7 @@ info globes), and some read pixels (hit masks, the charset).
    2× as the 4× halved; without the model (`--filters-only`, or no `models/` beside the exe nor `IG2_MODEL_DIR`) §3's
    Catmull-Rom. The model also denoises: grainy textures (grass) come out smoother. Written as `hires/<game path without .pvr>.png`, with a `mod.toml` of `kind = "visual"` (ADR 0086
    §2: outside the multiplayer check). A picture is written beside and renamed, and one already there is kept
-   (`--force` remakes it), so a stopped run continues; `--only <game path prefix>` makes part of it. The colony's 565
+   (`--force` remakes it), so a stopped run continues; `--prefix <game path prefix>` makes part of it. ADR 0089 extends the tool (stages, the quality model, the fidelity lock). The colony's 565
    textures take about 45 s and 160 MB at 4×. The pack derives from the install: it is never shared or carried by the
    mod index (ADR 0088 §6).
 

@@ -1,6 +1,6 @@
 # ADR 0089: the HD pack: every picture, video, talking head, the font and the models' detail, made from the player's install
 
-Date: 2026-11-12. Status: accepted. Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
+Date: 2026-11-12. Status: accepted; §1–3 built (row 570). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
 §5–6: the pack tool of row 567) and ADR 0013 (video). Rows 570–573 of `docs/ENHANCEMENTS.md`.
 
 ## Context
@@ -70,3 +70,23 @@ The goal: a sharper, more modern look that still reads as the original: same out
   too much for most graphics cards at 25 fps); diffusion upscalers and generated 3D models (they do not keep the
   original's faces and shapes); community upscaler models under non-commercial licences (they don't fit
   AGPL-3.0-only).
+
+## Implementation
+**Pictures (row 570)**, `ig2-client::pack_tool`, `ig2-client::learned` and `learned::rrdb`:
+- `--only pictures` (the other stages answer "not made by this version yet"); `--prefix <game path prefix>` makes
+  part of a stage; a stage sums its pictures' sizes (4× RGBA halved, about what the PNGs take) against the disk's
+  free space first and refuses when it lacks it.
+- x4plus is read from `RealESRGAN_x4plus.pth` (v0.1.0 release, SHA-256 `4fa0d389…82f1`): a PyTorch zip whose
+  `data.pkl` (`params_ema`) names each tensor's storage `data/<key>`; the tool pairs the 702 names with their keys
+  from the pickle's strings. The 351 convolutions run as 352 operations over one buffer of 2048 floats a tile texel
+  (the first features, three 192-channel dense buffers, then the ×2 steps reusing the space), each
+  `dst = a·act(conv(src)) + b·res1 + c·res2`, one compute shader, one operation a submission. Tiles are the largest of
+  192/160/128/96 texels a side the card's buffer limits allow; neighbours overlap by 32 texels, each tile's outer 8
+  texels of an overlap are dropped and the middle 16 blended linearly. The CPU runs the same operations in the tests.
+  About 1 s a 256 × 256 texture on a current graphics card.
+- The lock compares RGB only where the source's alpha is above 0; two bilinear rounds, then the remaining difference
+  over each texel's 4 × 4 (or 2 × 2) block, which always settles it. Real-ESRGAN smooths the originals' dithering,
+  so most pictures take a round or more.
+- Wrapped textures: every `.xv` archive's meshes, each face's UVs; the material's `texture` and `texture2` names
+  (`foo.bmp` → `foo_bmp`) mark every install texture of that name, padded with 16 texels of its opposite side per
+  wrapped axis before the upscale and cropped after.

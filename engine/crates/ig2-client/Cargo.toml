@@ -45,6 +45,13 @@ pollster.workspace = true
 ureq = { version = "3.4", default-features = false, features = ["rustls"] }
 zune-jpeg = "0.4"
 
+# The pack tool's free-space check (ADR 0089 §8).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # The browser build (ADR 0047).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"

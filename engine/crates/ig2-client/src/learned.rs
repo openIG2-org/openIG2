@@ -1,7 +1,9 @@
 //! The pack tool's learned upscaler (ADR 0054 §8, row 567): Real-ESRGAN's compact model `realesr-general-x4v3`
 //! (SRVGGNetCompact: 34 3×3 convolutions of 64 features with PReLU, the last one to 48, a 4× pixel shuffle, plus the
 //! input scaled by nearest neighbour; BSD-3-Clause, bundled in the release beside the binaries) run on the graphics
-//! card by a wgpu compute shader, in tiles.
+//! card by a wgpu compute shader, in tiles; the quality model Real-ESRGAN x4plus ([`rrdb`], ADR 0089 §3) beside it.
+
+pub mod rrdb;
 
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -34,13 +36,94 @@ pub struct Model {
     convs: Vec<Conv>,
 }
 
-/// Where the tool looks for the weights: `models/` beside the executable (the release's layout), else `IG2_MODEL_DIR`.
+/// Where the tool looks for the compact model's weights (see [`model_path`]).
 pub fn default_path() -> Option<PathBuf> {
-    let beside = std::env::current_exe().ok()?.parent()?.join("models").join(MODEL_FILE);
+    model_path(MODEL_FILE)
+}
+
+/// A model's weights `file`: in `models/` beside the executable (the release's layout), else in `IG2_MODEL_DIR`.
+fn model_path(file: &str) -> Option<PathBuf> {
+    let beside = std::env::current_exe().ok()?.parent()?.join("models").join(file);
     if beside.is_file() {
         return Some(beside);
     }
-    std::env::var_os("IG2_MODEL_DIR").map(|d| PathBuf::from(d).join(MODEL_FILE)).filter(|p| p.is_file())
+    std::env::var_os("IG2_MODEL_DIR").map(|d| PathBuf::from(d).join(file)).filter(|p| p.is_file())
+}
+
+/// A learned 4× upscaler on the graphics card.
+pub trait Upscaler {
+    /// `rgba` (`w` × `h`) at 4×: RGB from the model, alpha from `alpha` (the caller's filtered 4× copy, RGBA).
+    fn upscale(&self, rgba: &[u8], w: usize, h: usize, alpha: &[u8]) -> Vec<u8>;
+}
+
+/// The starts of tiles `tile` long covering `len`, neighbours sharing at least `overlap` (the last flush with the end).
+fn starts(len: usize, tile: usize, overlap: usize) -> Vec<usize> {
+    if len <= tile {
+        return vec![0];
+    }
+    let mut v: Vec<usize> = (0..).map(|k| k * (tile - overlap)).take_while(|&s| s + tile < len).collect();
+    v.push(len - tile);
+    v
+}
+
+/// The weight of a tile at output texel `x` (of a `len`-long line, scale 4) for the tile `[s, s + t)`: 1 inside;
+/// at a side with a neighbour 0 for the outer quarter of the overlap (where the tile's edge shows) and rising
+/// linearly across its middle half, so two neighbours' weights sum to 1 there.
+fn ramp(x: usize, s: usize, t: usize, len: usize, overlap: usize) -> f32 {
+    let u = (x as f32 + 0.5) / SCALE as f32;
+    let (margin, width) = (overlap as f32 / 4.0, overlap as f32 / 2.0);
+    let mut w = 1.0f32;
+    if s > 0 {
+        w = w.min((u - s as f32 - margin) / width);
+    }
+    if s + t < len {
+        w = w.min(((s + t) as f32 - u - margin) / width);
+    }
+    w.max(1e-6)
+}
+
+/// A `w` × `h` picture at 4× in tiles of at most `tile` texels a side that overlap by `overlap` and are blended
+/// across it (ADR 0089 §3): `run(x0, y0, tw, th)` gives a tile's `[3][4th][4tw]`; the result is `[3][4h][4w]`.
+pub fn tiled(w: usize, h: usize, tile: usize, overlap: usize, mut run: impl FnMut(usize, usize, usize, usize) -> Vec<f32>) -> Vec<f32> {
+    let (ow, oh) = (w * SCALE, h * SCALE);
+    let mut sum = vec![0.0f32; 3 * ow * oh];
+    let mut wsum = vec![0.0f32; ow * oh];
+    for &y0 in &starts(h, tile, overlap) {
+        for &x0 in &starts(w, tile, overlap) {
+            let (tw, th) = (tile.min(w), tile.min(h));
+            let t = run(x0, y0, tw, th);
+            let (tow, toh) = (tw * SCALE, th * SCALE);
+            for y in 0..toh {
+                let gy = y0 * SCALE + y;
+                let wy = ramp(gy, y0, th, h, overlap);
+                for x in 0..tow {
+                    let gx = x0 * SCALE + x;
+                    let k = wy * ramp(gx, x0, tw, w, overlap);
+                    wsum[gy * ow + gx] += k;
+                    for c in 0..3 {
+                        sum[(c * oh + gy) * ow + gx] += k * t[(c * toh + y) * tow + x];
+                    }
+                }
+            }
+        }
+    }
+    for c in 0..3 {
+        for (s, k) in sum[c * ow * oh..][..ow * oh].iter_mut().zip(&wsum) {
+            *s /= k;
+        }
+    }
+    sum
+}
+
+/// RGB planes `[3][h][w]` in 0..1 into RGBA bytes, alpha from `alpha` (RGBA, the same size).
+fn to_rgba(rgb: &[f32], w: usize, h: usize, alpha: &[u8]) -> Vec<u8> {
+    let mut out = alpha.to_vec();
+    for (i, p) in out.chunks_exact_mut(4).enumerate() {
+        for c in 0..3 {
+            p[c] = (rgb[c * w * h + i].clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+    out
 }
 
 impl Model {
@@ -304,8 +387,10 @@ impl Gpu {
         v
     }
 
-    /// `rgba` (`w` × `h`) at 4×: RGB from the model, alpha from `alpha` (the caller's smooth 4× copy, RGBA).
-    pub fn upscale(&self, rgba: &[u8], w: usize, h: usize, alpha: &[u8]) -> Vec<u8> {
+}
+
+impl Upscaler for Gpu {
+    fn upscale(&self, rgba: &[u8], w: usize, h: usize, alpha: &[u8]) -> Vec<u8> {
         let stride = w * SCALE;
         let mut out = alpha.to_vec();
         for ty in (0..h).step_by(TILE) {
@@ -358,6 +443,28 @@ mod tests {
         let up = gpu.upscale(&grey, 12, 12, &vec![255; 12 * 12 * 16 * 4]);
         let worst = up.chunks_exact(4).map(|p| p[0].abs_diff(128).max(p[1].abs_diff(128)).max(p[2].abs_diff(128))).max().unwrap();
         assert!(worst <= 8, "a flat grey came out {worst} off");
+    }
+
+    /// Tiles leave no seam: a tile-local filter (a 3 × 3 mean that clamps at the tile's edge) tiled equals it over
+    /// the whole picture but within a fraction of a level, and an exact per-texel result is kept exactly.
+    #[test]
+    fn tiles_blend_without_seams() {
+        assert_eq!(starts(100, 40, 8), [0, 32, 60]);
+        assert_eq!(starts(30, 40, 8), [0]);
+        let (w, h) = (150, 97);
+        let src = |x: usize, y: usize| ((x * 7 + y * 3) % 50) as f32 / 49.0;
+        let blur = |x0: usize, y0: usize, tw: usize, th: usize| -> Vec<f32> {
+            let at = |x: isize, y: isize| src(x0 + x.clamp(0, tw as isize - 1) as usize, y0 + y.clamp(0, th as isize - 1) as usize);
+            let mean = |x: usize, y: usize| (0..9).map(|k| at(x as isize + k % 3 - 1, y as isize + k / 3 - 1)).sum::<f32>() / 9.0;
+            let plane: Vec<f32> = (0..th * 4).flat_map(|y| (0..tw * 4).map(move |x| (x, y))).map(|(x, y)| mean(x / 4, y / 4)).collect();
+            plane.repeat(3)
+        };
+        let (whole, tiles) = (blur(0, 0, w, h), tiled(w, h, 64, 32, blur));
+        let worst = whole.iter().zip(&tiles).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+        assert!(worst * 255.0 < 0.5, "a seam of {} levels", worst * 255.0);
+        let exact = tiled(w, h, 64, 32, |x0, y0, tw, th| (0..3 * tw * th * 16).map(|i| src(x0 + i % (tw * 4) / 4, y0 + i / (tw * 4) % (th * 4) / 4)).collect());
+        let want: Vec<f32> = (0..3 * w * h * 16).map(|i| src(i % (w * 4) / 4, i / (w * 4) % (h * 4) / 4)).collect();
+        assert!(exact.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-5));
     }
 
     #[test]
