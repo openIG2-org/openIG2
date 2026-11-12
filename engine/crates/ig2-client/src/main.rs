@@ -106,6 +106,10 @@ mod mainscr_scenario;
 mod messages_screen;
 mod mp_lobby;
 mod mp_wait;
+#[cfg(not(target_arch = "wasm32"))]
+mod pack_tool;
+#[cfg(not(target_arch = "wasm32"))]
+mod learned;
 mod new_game;
 mod options;
 mod orders;
@@ -936,6 +940,14 @@ fn main() {
             println!("openIG2 {}", version());
             Ok(())
         }
+        Some("--make-pack") => install_root()
+            .map_err(|_| "no Imperium Galactica II install found; set IG2_INSTALL_DIR to its folder".to_string())
+            .and_then(|root| {
+                // The game's own files: a mod's replaced texture is not upscaled into the pack.
+                let lang = language(&parse(&[])?, &root);
+                Install::open_from(std::sync::Arc::new(ig2_formats::vfs::Disk), &root, lang, Vec::new()).map_err(|e| e.to_string())
+            })
+            .and_then(|install| pack_tool::main(&args[1..], &install)),
         Some("--colony-check") => match &args[1..] {
             [map, surface] => colony_check(map, surface),
             _ => Err("usage: --colony-check <map> <surface>".into()),

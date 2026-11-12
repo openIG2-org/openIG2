@@ -46,6 +46,7 @@ def main() -> int:
     a = ap.parse_args()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from version import version as release_version
+    import model
     version = os.environ.get("OPENIG2_VERSION") or release_version()
     env = dict(os.environ, OPENIG2_VERSION=version)
     manifest = ROOT / "engine" / "Cargo.toml"
@@ -68,6 +69,7 @@ def main() -> int:
     readme = (ROOT / "tools" / "release" / "README.txt").read_text().replace("{version}", version)
     (stage / "README.txt").write_text(readme)
     (stage / "VERSION.txt").write_text(version + "\n")
+    model.add_to(stage)
 
     archive = a.out / f"{name}.tar.gz"
     with tarfile.open(archive, "w:gz") as t:

@@ -2,7 +2,7 @@
 
 Date: 2026-11-01. Status: accepted. Implemented by `ig2-client::upscale` (the filters, the pack lookup, the cache),
 `ig2-client::assets` (`Image::hires`), `ig2-client::render` (the upload's mip chain), `ig2-client::scene` (pack
-models) and `ig2-client::display` (the "Texture upscaling" row).
+models), `ig2-client::display` (the "Texture upscaling" row) and `ig2-client::pack_tool` with `ig2-client::learned` (`--make-pack`, §8).
 
 ## Context
 The install's textures (re/formats/pvr.md) are 64 to 1024 texels a side, made for 800 × 600; at 1440p and 4K every
@@ -50,6 +50,18 @@ info globes), and some read pixels (hit masks, the charset).
    resolution versions of the install's, or new names in the mod's `dataraw/textures/…`).
 7. **Multiplayer**: `hires/` files only change what is drawn, so they stay out of the room's mods fingerprint (ADR
    0044 §4): players with and without a pack can play together.
+8. **The pack tool** (`openIG2 --make-pack`, `ig2-client::pack_tool`; ADR 0088 §5–6, row 567): makes a §5 pack
+   from the game's own files (no mods) on the player's machine, into the mods folder's `texture-pack/` (`--out`
+   another folder): every install `.pvr` but the font atlas, at 4× (`--factor 2`; §3's 4096 limit still applies),
+   flat art through xBRZ as in §3, the rest through Real-ESRGAN's compact model `realesr-general-x4v3` (BSD-3-Clause,
+   bundled in the release's `models/`, checked by its SHA-256) run on the graphics card by a compute shader in
+   256-texel tiles with a 34-texel halo (one per convolution, so a tile's inside is exact), alpha from Catmull-Rom,
+   2× as the 4× halved; without the model (`--filters-only`, or no `models/` beside the exe nor `IG2_MODEL_DIR`) §3's
+   Catmull-Rom. The model also denoises: grainy textures (grass) come out smoother. Written as `hires/<game path without .pvr>.png`, with a `mod.toml` of `kind = "visual"` (ADR 0086
+   §2: outside the multiplayer check). A picture is written beside and renamed, and one already there is kept
+   (`--force` remakes it), so a stopped run continues; `--only <game path prefix>` makes part of it. The colony's 565
+   textures take about 45 s and 160 MB at 4×. The pack derives from the install: it is never shared or carried by the
+   mod index (ADR 0088 §6).
 
 ## Rejected
 - **A disk cache**: the filters take about 0.35 s per million texels at 4× on one core (the starmap's set, the

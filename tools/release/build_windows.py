@@ -62,6 +62,7 @@ def main() -> int:
     a = ap.parse_args()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from version import version as release_version
+    import model
     version = os.environ.get("OPENIG2_VERSION") or release_version()
     settings = release_env(version)
     if settings is None:
@@ -99,11 +100,12 @@ def main() -> int:
     readme = (ROOT / "tools" / "release" / "README.txt").read_text().replace("{version}", version)
     (stage / "README.txt").write_text(readme.replace("\n", "\r\n"), newline="")
     (stage / "VERSION.txt").write_text(version + "\r\n", newline="")
+    model.add_to(stage)
 
     zip_path = a.out / f"{name}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        for f in sorted(stage.iterdir()):
-            z.write(f, f"{name}/{f.name}")
+        for f in sorted(p for p in stage.rglob("*") if p.is_file()):
+            z.write(f, f"{name}/{f.relative_to(stage).as_posix()}")
     if not a.keep_target and not a.target:
         shutil.rmtree(target, ignore_errors=True)
     files = ", ".join(f.name for f in sorted(stage.iterdir()))

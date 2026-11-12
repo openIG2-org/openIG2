@@ -36,6 +36,18 @@ Settings, saves
 - openIG2-check checks every file of your install and lists what fails. For mod makers, --dump-rules FILE and
   --dump-texts FILE write your install's rule values and text keys (for your own use only: never share them).
 
+Sharper textures
+- openIG2 --make-pack (in a terminal in this folder) makes a texture pack from your install:
+  every texture upscaled 4x into the mods folder's texture-pack (about 1 GB, a few minutes;
+  --factor 2 for a smaller one; a stopped run continues where it left off). Then enable
+  "texture-pack" on the Mods page. It is made from the game's files: don't share it.
+  The scene textures go through Real-ESRGAN (models/, run on your graphics card),
+  the interface art through xBRZ; --filters-only leaves the model out.
+
+Third-party files
+- models/realesr-general-x4v3.pth: Real-ESRGAN's model, BSD-3-Clause, Copyright (c) 2021
+  Xintao Wang (models/LICENSE-Real-ESRGAN.txt).
+
 Uninstall: delete this folder and, if you like, ig2-rework-options.dat and save*.ig2s.
 
 This is a beta build. Not affiliated with the original's makers or with GOG.

@@ -48,6 +48,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Mods: drop a zip into the `mods` folder and switch it on in the Mods page, or install, update and remove mods with their dependencies from the Browse tab; a broken mod no longer stops the game.
 - Mods can change rule values, texts, textures and sounds, and add techs, buildings, ship hulls, weapons, parts, tanks, races, planet types and their own stories; computer empires, saves and multiplayer games use them.
 - Visual mods (`visuals.toml`) can switch on smoother edges, per-pixel lighting on every 3D model, soft shadows, scene glow and planet halos; they change only the look, so they work in multiplayer with players who don't have them.
+- `openIG2 --make-pack` makes a sharper texture pack from your own install (a few minutes; it stays on your computer): a learned upscaler for scene textures, an edge-keeping one for interface art.
 - For mod makers: a "Your first mod" guide, mod metadata (version, dependencies, conflicts), and `openIG2-check` to check and package a mod.
 - For mod makers: the index entry `openIG2-check --package` writes now passes the mod index's check as it is (a look-only mod's `kind`, no empty `depends` or `conflicts`).
 

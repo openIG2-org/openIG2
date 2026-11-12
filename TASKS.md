@@ -85,7 +85,7 @@ The plan and its rules: ADR 0088. Each part is engine work that does nothing unt
 - [ ] **Shadows between the battle's ships, light from blasts and shots on the hulls** (564, parts 2 and 3).
 - [ ] **A richer starmap** (565).
 - [ ] **Effects as data, drawn on the graphics card** (566).
-- [ ] **Texture pack tool** (567).
+- [x] **Texture pack tool** (567): `openIG2 --make-pack` makes a sharper texture pack from your own install (a learned upscaler on the graphics card for scene textures, an edge-keeping one for interface art); normal maps when a renderer reads them.
 - [ ] **Sprite animations as smooth effects** (568).
 - [ ] **Model packs** (569).
 - [ ] **Publish the remaster mods in the mod index** (needs the index repository, 549).
