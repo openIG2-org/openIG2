@@ -577,7 +577,8 @@ atmosphere_color = "#7fb2ff"
 Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting
 alone, and a mod never switches anything off. With several mods a switch on in any is on, and a value comes from the
 highest mod that sets it. A misspelt name or a value out of range is shown under the mod on the Mods page and by
-`openIG2-check`; the file is then skipped. `mods-src/remaster-look` in the source is a ready example.
+`openIG2-check`; the file is then skipped. A ready example:
+https://github.com/openIG2-org/mods/tree/main/mods-src/remaster-look
 
 `per_pixel` lights every 3D model per pixel instead of per corner (ships, planets, the models on the research,
 design, spy, diplomacy, trade and info screens, the colony's panel models): the same lights and colours, without
