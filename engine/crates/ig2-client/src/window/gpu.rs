@@ -88,7 +88,7 @@ impl App {
         // Loaded with the rest at start: at its first opening it would hold that frame for tens of milliseconds.
         self.spy_scene = crate::spy_scene::SpyScene::load(&mut renderer, &self.install).ok().map(std::rc::Rc::new);
         crate::prof::mark("spy scene");
-        self.gpu = Some(Gpu { window, surface, config, renderer, assets, band_target: None, gui: crate::gui::Gui::new(format).install_fonts(&self.install) });
+        self.gpu = Some(Gpu { window, surface, adapter, config, renderer, assets, band_target: None, gui: crate::gui::Gui::new(format).install_fonts(&self.install) });
         Ok(())
     }
 

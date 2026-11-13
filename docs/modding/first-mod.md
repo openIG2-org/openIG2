@@ -95,9 +95,8 @@ A typo shows up here with the file, the story and the word it didn't understand,
 
 ## 6. Switch it on and play
 
-1. Main menu → Mods: `My first mod` is in the list. Switch it on and press Apply.
-2. Press Restart now.
-3. Start any new game and let two days pass. The ticker at the top shows your line and the money display jumps by
+1. Main menu → Mods: `My first mod` is in the list. Switch it on and press Apply: Apply loads it at once.
+2. Start any new game and let two days pass. The ticker at the top shows your line and the money display jumps by
    5000.
 
 If the game starts without your mod, the Mods page says why in red, naming the file and the line.

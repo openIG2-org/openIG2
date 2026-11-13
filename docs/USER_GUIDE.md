@@ -242,8 +242,8 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    Open mods folder opens it (and makes it when missing). Don't unpack the zip: the game reads it as it is.
 2. Main menu → Mods (the Mods label above Quick game, or the grouped menu's Extras → Mods): switch the mod on, use
    the arrows to order it (the higher mod's files win when two mods have the same file), then Apply.
-3. Restart the game (Restart now on the same page). The page shows each mod's problems in red and the files another
-   mod above it overrides; a broken mod is skipped and the game starts without it.
+3. Apply loads the list at once, with no restart. The page shows each mod's problems in red and the files another
+   mod above it overrides; a broken mod is skipped, and a list that fails to load falls back to no mods (the page says why).
 
 **Making a mod** in three steps (new to modding? [Your first mod](modding/first-mod.md) walks through one from start to finish):
 1. Make a folder named after your mod and put each file at the same path it has in the install:
@@ -277,7 +277,7 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    entry (it needs `version`, `requires` and `license` in `mod.toml`; only TOML, PNG, text and the game's data
    formats, no programs, scripts or archives, and no file copied from the install; fill in the entry's download URL).
 
-**Browse and install**: the Mods page's Browse tab (Ctrl+Tab switches tabs) lists mods from the openIG2 mod index. The list is fetched over HTTPS only when you open the tab (nothing is contacted at start), its signature is checked against the key built into the game, and the checked copy is kept beside your settings (`mod-index`) so Browse also works offline, with a note saying so. It lists the newest release that fits this version, with search (`/`), picture, author, licence, size, dependencies and conflicts. Install (Enter) downloads the mod and the dependencies you lack, checks every zip (size, SHA-256, safe data files only) and puts `<id>.zip` in the `mods` folder beside the game; Update replaces the zip once the new one is verified; Remove (Delete) deletes the zip. F5 refreshes. A mod you put in by hand as a folder is never replaced or removed. Installing waits while the Installed tab has changes you have not applied; then switch the mod on there and restart.
+**Browse and install**: the Mods page's Browse tab (Ctrl+Tab switches tabs) lists mods from the openIG2 mod index. The list is fetched over HTTPS only when you open the tab (nothing is contacted at start), its signature is checked against the key built into the game, and the checked copy is kept beside your settings (`mod-index`) so Browse also works offline, with a note saying so. It lists the newest release that fits this version, with search (`/`), picture, author, licence, size, dependencies and conflicts. Install (Enter) downloads the mod and the dependencies you lack, checks every zip (size, SHA-256, safe data files only) and puts `<id>.zip` in the `mods` folder beside the game; Update replaces the zip once the new one is verified; Remove (Delete) deletes the zip. F5 refreshes. A mod you put in by hand as a folder is never replaced or removed. Installing waits while the Installed tab has changes you have not applied; then switch the mod on there and press Apply (no restart).
 
 Where mods are read: the `mods` folder beside the executable and the one beside the settings files
 (`%LOCALAPPDATA%\GyroscopeGames\ig2\mods`, or `IG2_OPTIONS_DIR\mods`); a mod in the first wins over one of the same

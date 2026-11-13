@@ -113,6 +113,8 @@ impl GpuParts {
 struct Gpu {
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
+    /// Kept for a mod swap's new start on the same window ([`App::swap_mods`]).
+    adapter: wgpu::Adapter,
     config: wgpu::SurfaceConfiguration,
     renderer: Renderer,
     assets: Assets,
@@ -507,6 +509,8 @@ struct App {
     discord: crate::discord::Presence,
     /// Ours (ADR 0087): the ask for a newer release and the main menu's notice.
     update: crate::update::Updater,
+    /// Ours: the start's arguments, built again from when the Mods page swaps the mods in place ([`App::swap_mods`]).
+    opts: Option<crate::Options>,
     /// `--mp-join`'s room, joined as a Discord Join is ([`App::discord_join`]).
     mp_join: Option<String>,
     discord_races: Vec<String>,
@@ -576,6 +580,27 @@ pub fn with_icon(attrs: winit::window::WindowAttributes) -> winit::window::Windo
 }
 
 pub fn run(o: crate::Options) -> Result<(), String> {
+    let app = build(&o, false)?;
+    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
+    crate::prof::mark("event loop");
+    event_loop.set_control_flow(ControlFlow::Poll);
+    // The browser owns the loop: it runs the app after this returns.
+    #[cfg(target_arch = "wasm32")]
+    {
+        winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
+        Ok(())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut app = app;
+        event_loop.run_app(&mut app).map_err(|e| e.to_string())
+    }
+}
+
+/// The app as `o` starts it, before its window. `swap`: a mod swap's new start ([`App::swap_mods`]): no title video,
+/// no update check.
+fn build(o: &crate::Options, swap: bool) -> Result<App, String> {
+    let o = o.clone();
     let l = crate::load(&o)?;
     // The rules live for the whole process; `World` borrows them.
     let rules: &'static ig2_sim::game::GameRules = Box::leak(Box::new(l.rules));
@@ -601,7 +626,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     // starmap (`Starmap_Belep`'s `PlayMusicMain(0, 0)`); nothing plays yet: at once.
     // On the main menu the title plays first (`StartDemoMode` exe 0x4fe3c0: once per run, unless the cut-scenes are
     // off) and the menu's music follows it.
-    let title = o.main_menu && o.watch.is_none() && crate::video::playback::cutscenes_enabled();
+    let title = !swap && o.main_menu && o.watch.is_none() && crate::video::playback::cutscenes_enabled();
     let music = if o.main_menu { crate::audio::Music::Menu } else { crate::audio::Music::Main };
     // A new campaign enters the starmap after its intro (re/screens/mainscr.md §9.1).
     let start = world.start_voice.take();
@@ -621,7 +646,7 @@ pub fn run(o: crate::Options) -> Result<(), String> {
     app.apply_battle_rows();
     app.front = o.main_menu.then(|| Front::new(None, 0, &app.settings));
     // Ours (ADR 0087): a played start asks for a newer release; a scripted one stays the same picture.
-    app.update = crate::update::Updater::start(o.main_menu && o.script.is_none() && app.settings.int(crate::update::KEY) != Some(0));
+    app.update = crate::update::Updater::start(!swap && o.main_menu && o.script.is_none() && app.settings.int(crate::update::KEY) != Some(0));
     app.stage_win = o.stage_win;
     app.mp_join = o.mp_join.clone();
     if o.multiplayer && app.front.is_some() {
@@ -666,17 +691,8 @@ pub fn run(o: crate::Options) -> Result<(), String> {
         app.take_video_requests();
         app.after_video = AfterVideo::StarmapEntry(c);
     }
-    let event_loop = EventLoop::new().map_err(|e| e.to_string())?;
-    crate::prof::mark("event loop");
-    event_loop.set_control_flow(ControlFlow::Poll);
-    // The browser owns the loop: it runs the app after this returns.
-    #[cfg(target_arch = "wasm32")]
-    {
-        winit::platform::web::EventLoopExtWebSys::spawn_app(event_loop, app);
-        Ok(())
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    event_loop.run_app(&mut app).map_err(|e| e.to_string())
+    app.opts = Some(o);
+    Ok(app)
 }
 
 /// `--snapshot OUT --script S` on the starmap (or with `--colony P` the colony screen): the window's own input and
@@ -1003,6 +1019,7 @@ impl App {
             dk_owner: 0,
             discord: Default::default(),
             update: Default::default(),
+            opts: None,
             mp_join: None,
             discord_races: Vec::new(),
         }

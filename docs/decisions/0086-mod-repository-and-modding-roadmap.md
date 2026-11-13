@@ -20,7 +20,7 @@ What a mod can do today (each with its ADR and the user guide's Mods section):
 
 Packaging: a folder or a `.zip` (read in place) in the `mods` folder beside the executable or the settings folder;
 `mod.toml` (name, author, version, description, picture, game); `enabled.txt` (order = priority); the Mods page
-(switches, order arrows, problems, overridden files, Apply, Restart); a broken mod is skipped and the game starts.
+(switches, order arrows, problems, overridden files, Apply, which loads the list at once since ADR 0068 §5's 2026-11 amendment); a broken mod is skipped and the game starts.
 Multiplayer hashes every active override and patch into the room's fingerprint (`hires/` excluded) and refuses a
 joiner with other mods. Nothing in a mod executes: the formats are TOML, PNG and game data; zips are checked (no
 absolute or `..` paths, no encryption or ZIP64, 65 536 entries and 1 GiB per file at most). `openIG2-check --mod`

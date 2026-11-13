@@ -46,6 +46,7 @@ Getting the game from "every part works" to "a player can install it and play it
 ### Graphics, options and mods
 - Graphics options: anti-aliasing, per-pixel lighting, soft colony shadows, glow, smooth glows, sharp text and UI on 1440p and 4K, texture upscaling (2x or 4x) and richer battle effects; all off keeps the original's look.
 - Mods: drop a zip into the `mods` folder and switch it on in the Mods page, or install, update and remove mods with their dependencies from the Browse tab; a broken mod no longer stops the game.
+- Apply in the Mods page loads the changed mods at once from the main menu, with no restart.
 - Mods can change rule values, texts, textures and sounds, and add techs, buildings, ship hulls, weapons, parts, tanks, races, planet types and their own stories; computer empires, saves and multiplayer games use them.
 - Visual mods (`visuals.toml`) can switch on smoother edges, per-pixel lighting on every 3D model, soft shadows, scene glow and planet halos; they change only the look, so they work in multiplayer with players who don't have them.
 - Visual mods can give the starmap more and deeper stars and finer clouds, rays in each system star's own colour, a darkened night side and cloud shadows on planets, and engine trails behind moving fleets (`[starmap]` in `visuals.toml`; all off by default). Two more keys add finer wisps, filaments and dust over the sky's nebulae and soft structure inside each galaxy cloud, fixed to the sky and moving with the clouds.

@@ -304,6 +304,12 @@ impl App {
                 Ok(()) => f.quit = true,
                 Err(e) => eprintln!("ig2-client: restart: {e}"),
             },
+            Act::Swap => {
+                if let Err(e) = self.swap_mods() {
+                    eprintln!("ig2-client: mod swap: {e}");
+                    crate::mods_page::set_failed(Some(&e));
+                }
+            }
             Act::Click => {}
             Act::Reload => {
                 if let Some(old) = f.mods.take() {
@@ -313,6 +319,30 @@ impl App {
             }
         }
         self.audio.play(crate::audio::CLICK);
+    }
+
+    /// Ours (ADR 0068 §5, 2026-11 amendment): the enabled mods load in place: the install, rules, tables, world, audio
+    /// and every loaded picture start again as the game's start builds them, on the same window and device; the main
+    /// menu stays where it was with the Mods page up. A start that fails leaves the running game as it was.
+    pub(super) fn swap_mods(&mut self) -> Result<(), String> {
+        let o = self.opts.clone().ok_or("no start arguments")?;
+        let o = crate::Options { main_menu: true, watch: None, tutorial: None, multiplayer: false, new_campaign: None, mp_join: None, ..o };
+        // shortcut: each swap leaks the old rules and tables (`World` borrows them for 'static); a few MB a swap.
+        let mut new = super::build(&o, true)?;
+        std::mem::swap(&mut new.update, &mut self.update);
+        if let Some(g) = self.gpu.take() {
+            let Gpu { window, surface, adapter, renderer, .. } = g;
+            let (device, queue) = (renderer.device.clone(), renderer.queue.clone());
+            drop(renderer);
+            new.finish_gpu(GpuParts { window, surface, adapter, device, queue })?;
+        }
+        // The menu as it was; the pages' pictures belonged to the old page layer, the Mods page reads the new mods.
+        if let (Some(old), Some(f)) = (self.front.take(), &mut new.front) {
+            let browse = old.mods.map(|m| crate::mods_page::ModsPage::reopen(&new.install, m));
+            (f.s, f.ng, f.page, f.at, f.mods) = (old.s, old.ng, old.page, old.at, browse);
+        }
+        *self = new;
+        Ok(())
     }
 
     /// Ours (ADR 0085): the Custom game page's request; Start remembers the settings (as the quick game's) and leaves

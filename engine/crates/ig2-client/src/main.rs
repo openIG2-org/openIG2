@@ -661,11 +661,12 @@ pub struct Loaded {
 }
 
 pub fn load(o: &Options) -> Result<Loaded, String> {
+    mods_page::set_failed(None);
     match load_with(o) {
         // Ours (ADR 0068 §2): a mod that breaks the load can't keep the game from starting (the Mods page says why).
         Err(e) if o.mods.as_ref().is_none_or(|m| !m.is_empty()) && !ig2_formats::vfs::Mod::enabled(o.mods.clone()).0.is_empty() => {
             eprintln!("ig2-client: the mods failed to load, starting without them: {e}");
-            mods_page::set_failed(&e);
+            mods_page::set_failed(Some(&e));
             load_with(&Options { mods: Some(Vec::new()), ..o.clone() })
         }
         r => r,

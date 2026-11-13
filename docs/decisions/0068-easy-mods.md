@@ -42,9 +42,12 @@ the game.
    the enabled ones (the enabled come first, in priority order). The same checks `ig2-check` runs on mods (ADR 0044 §8,
    §12; ADR 0061 §7) run for each enabled mod alone, and the files two enabled mods both provide are listed as
    conflicts under the mod that loses them. Buttons: Open mods folder (the one beside the executable, created when
-   missing), Back, Apply (writes `enabled.txt`). The install and rules are loaded once at start, so a changed list
-   takes effect on the next start: the page says so and offers Restart now (the executable again with the same
-   arguments). Nothing about mods is changed in a running game. Keys, as the other egui pages (ADR 0053, 0059): Esc
+   missing), Back, Apply (writes `enabled.txt`). Amended 2026-11: Apply also loads the changed list in place, no
+   restart: the client runs its start again inside the same window and graphics device (install, rules, tables,
+   sounds, the menu's stand-in game, every loaded picture and model) and keeps the main menu where it was with the
+   Mods page up; a list that fails to load falls back to no mods as at start and the page says why. The page is only
+   reachable from the main menu, so no game in progress ever sees its mods change. (Before: the list took effect on
+   the next start and the page offered Restart now.) Keys, as the other egui pages (ADR 0053, 0059): Esc
    or the right button Back; Enter Apply, or Back with nothing to apply; Up/Down (Tab, Shift+Tab), Home/End the
    focused mod (an accent ring); Space its switch; Shift+Up/Down its priority; the wheel scrolls.
 6. **Multiplayer**: the fingerprint (ADR 0044 §4) is unchanged: it hashes files, not names, so a zip mod and the same
@@ -54,7 +57,7 @@ the game.
    joiner (lobby protocol 15).
 
 ## Consequences
-- Installing a mod is: download, drop the zip into `mods` beside the game, enable it in Mods, restart.
+- Installing a mod is: download, drop the zip into `mods` beside the game, enable it in Mods, Apply (it loads at once since the 2026-11 amendment of §5).
 - The settings folder's mods and `enabled.txt` keep working; old folder mods need no change.
 - A broken download can't stop the game from starting, and a zip can't name a file outside its mod.
 - Load time: a zip's directory is read at start; its files are read when used, like the install's.

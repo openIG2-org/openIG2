@@ -1,6 +1,6 @@
 //! Ours (ADR 0068 §5): the mod manager, an egui page (ADR 0062) over the main menu in the Options page's style: every
 //! mod in the mods folders with its `mod.toml`, a switch and a priority, the checks `ig2-check` runs on a mod, the
-//! files two enabled mods both have; Apply writes `enabled.txt`, which the next start loads. `mod.toml` 2 (ADR 0086
+//! files two enabled mods both have; Apply writes `enabled.txt` and loads it in place (no restart). `mod.toml` 2 (ADR 0086
 //! §2): a mod's dependencies sit under it and switch on and off with it, a mod that can't load says why. The Browse
 //! tab (ADR 0086 §1.2, [`crate::mods_browse`]) lists, installs, updates and removes the mod repository's mods.
 
@@ -41,16 +41,19 @@ pub fn loaded() -> Vec<String> {
 /// Why the enabled mods didn't load this run (the game started without them).
 static FAILED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
-pub fn set_failed(e: &str) {
-    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = Some(e.to_owned());
+/// Why the enabled mods didn't load (`None`: they did).
+pub fn set_failed(e: Option<&str>) {
+    *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = e.map(str::to_owned);
 }
 
 /// What a frame of the page asks of the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
     Back,
-    /// Start the game again (the changed list loads then).
+    /// Start the game again (the update's new version).
     Restart,
+    /// Load the written list in place (the game's start again on the same window, no restart).
+    Swap,
     Click,
     /// The mods folder changed (an install or removal): open the page again over it, the tab kept.
     Reload,
@@ -590,9 +593,7 @@ impl ModsPage {
                 } else if self.given {
                     ui.label(egui::RichText::new(tr("This run's mods come from --mod; the list applies without it.")).color(hot));
                 } else if self.pending() {
-                    ui.label(egui::RichText::new(tr("Apply saves the list; it loads at the next start.")).weak());
-                } else if self.restart_needed() {
-                    ui.label(egui::RichText::new(tr("Restart to use the changed mods.")).color(hot));
+                    ui.label(egui::RichText::new(tr("Apply saves the list and loads the mods.")).weak());
                 }
             });
             ui.separator();
@@ -600,13 +601,10 @@ impl ModsPage {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if crate::gui::primary(ui, self.pending() && !self.any_refused(), tr("Apply")).on_hover_text(tr("Save the list of enabled mods.")).clicked() {
                         self.apply();
-                        acts.push(Act::Click);
+                        acts.push(if self.restart_needed() { Act::Swap } else { Act::Click });
                     }
                     if crate::gui::secondary(ui, tr("Back")).on_hover_text(tr("Leave; changes not applied are taken back.")).clicked() {
                         acts.push(Act::Back);
-                    }
-                    if !self.pending() && self.restart_needed() && crate::gui::secondary(ui, tr("Restart now")).clicked() {
-                        acts.push(Act::Restart);
                     }
                     if crate::gui::secondary(ui, tr("Open mods folder")).on_hover_text(tr("The mods folder beside the game: drop a mod's .zip file here.")).clicked() {
                         if let Err(e) = open_folder() {
@@ -662,7 +660,7 @@ pub(crate) fn open(what: &std::ffi::OsStr) -> Result<(), String> {
     std::process::Command::new(opener).arg(what).spawn().map(|_| ()).map_err(|e| format!("{opener}: {e}"))
 }
 
-/// The game again with this run's arguments (ADR 0068 §5); the caller then quits.
+/// The game again with this run's arguments (the updater's new version, ADR 0087); the caller then quits.
 pub fn restart() -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     std::process::Command::new(exe).args(std::env::args_os().skip(1)).spawn().map(|_| ()).map_err(|e| e.to_string())
