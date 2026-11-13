@@ -33,8 +33,6 @@ const RELAY_FILE: &str = "relay.txt";
 /// The project's public rendezvous service (ADR 0018), the relay field's value until the player saves another one
 /// (an empty field, saved as an empty `relay.txt`, turns it off).
 pub const DEFAULT_RELAY: &str = "ig2relay.justdawee.hu:30000";
-/// The browser build's relay server, fixed (a page can't resolve a host name, so [`DEFAULT_RELAY`]'s address).
-pub const WEB_RELAY: &str = "84.2.94.232:30000";
 /// The longest password typed.
 const MAX_FIELD: usize = 40;
 /// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
@@ -380,9 +378,7 @@ impl Net for QuicNet {
 /// listen, so hosting gets a listener nobody reaches, and there is no LAN to search.
 #[cfg(target_arch = "wasm32")]
 #[derive(Default)]
-pub struct WebNet {
-    relay: Option<SocketAddrV4>,
-}
+pub struct WebNet;
 
 #[cfg(target_arch = "wasm32")]
 impl Net for WebNet {
@@ -402,20 +398,13 @@ impl Net for WebNet {
 
     fn connect_code(&mut self, code: &JoinCode) -> Connecting {
         let (tx, rx) = mpsc::channel();
-        let Some(relay) = self.relay else {
-            let _ = tx.send(Err("in the browser, joining needs a relay server".into()));
-            return rx;
-        };
         let (session, pin) = (code.session, code.pin);
         wasm_bindgen_futures::spawn_local(async move {
-            let r = ig2_net::webrtc::connect(&format!("http://{relay}"), session, &pin).await;
+            // The relay is fixed and named, not resolved: the browser looks the host name up (a DDNS name).
+            let r = ig2_net::webrtc::connect(&format!("http://{DEFAULT_RELAY}"), session, &pin).await;
             let _ = tx.send(r.map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| e.to_string()));
         });
         rx
-    }
-
-    fn set_relay(&mut self, relay: Option<SocketAddrV4>) {
-        self.relay = relay;
     }
 }
 
@@ -884,7 +873,7 @@ impl MpScreen {
     fn with_saved_relay(mut self) -> Self {
         let Some(d) = &self.save_dir else { return self };
         // The unit tests never reach the public service; the browser build's relay is fixed.
-        let saved = if cfg!(target_arch = "wasm32") { WEB_RELAY.to_owned() } else { saved_relay(ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)), if cfg!(test) { "" } else { DEFAULT_RELAY }) };
+        let saved = if cfg!(target_arch = "wasm32") { DEFAULT_RELAY.to_owned() } else { saved_relay(ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)), if cfg!(test) { "" } else { DEFAULT_RELAY }) };
         for c in saved.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
             self.relay.key(EntryKey::Char(c));
         }
@@ -894,6 +883,10 @@ impl MpScreen {
     /// The relay field to `net` (and to `relay.txt` when it changed); false, with the reason on the status line,
     /// when it names no address.
     fn apply_relay(&mut self, net: &mut dyn Net) -> bool {
+        // The browser build's relay is fixed in `WebNet` (a page can't resolve a host name here).
+        if cfg!(target_arch = "wasm32") {
+            return true;
+        }
         let typed = self.relay.string();
         match relay_addr(&typed) {
             Ok(a) => {
@@ -1030,7 +1023,7 @@ impl MpScreen {
         if !self.apply_relay(net) {
             return;
         }
-        if relay_addr(&self.relay.string()).ok().flatten().is_none() {
+        if !cfg!(target_arch = "wasm32") && relay_addr(&self.relay.string()).ok().flatten().is_none() {
             self.line = words::NEED_RELAY.to_vec();
             self.focus = Focus::Relay;
             return;

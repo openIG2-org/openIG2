@@ -402,7 +402,7 @@ impl MpScreen {
                     }
                 });
             });
-            // The browser build's relay server is fixed (`WEB_RELAY`).
+            // The browser build's relay server is fixed (`DEFAULT_RELAY`).
             if cfg!(target_arch = "wasm32") {
                 return;
             }
