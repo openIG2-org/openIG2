@@ -622,6 +622,39 @@ mod spot {
     pub const PUBLIC: u32 = 0x75;
     /// Ours (ADR 0033): a computer slot's level.
     pub const LEVEL: u32 = 0x78;
+    /// The footer's Cancel while a join is under way; a click on the list's empty part (deselects).
+    pub const CANCEL_JOIN: u32 = 0x39;
+    pub const DESELECT: u32 = 0x3a;
+}
+
+/// A join gives up after this many 10 ms ticks without a room (60 s).
+const JOIN_TIMEOUT: u32 = 6000;
+
+/// A listed room's state for the Status column: incompatible, else in game (rejoin only), else full, else open.
+fn room_state(a: &ig2_net::discovery::Announcement, other: bool) -> &'static [u8] {
+    match () {
+        _ if other => words::INCOMPATIBLE,
+        _ if a.started => words::IN_GAME,
+        _ if a.humans >= a.slots => words::FULL,
+        _ => words::ROOM_OPEN,
+    }
+}
+
+/// A listed room's host. The announcement names none, but a generated galaxy's room is "<host>'s galaxy"
+/// ([`MpScreen::host`]).
+fn room_host(a: &ig2_net::discovery::Announcement) -> Option<&str> {
+    a.name.strip_suffix("'s galaxy").filter(|h| a.scenario == "galaxy" && !h.is_empty())
+}
+
+/// The connection page's main plate (bottom right).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Plate {
+    Host,
+    HostSaved,
+    /// A listed room is selected.
+    Join,
+    /// A join is under way.
+    Cancel,
 }
 
 /// The options rows (spec §6).
@@ -678,6 +711,9 @@ pub struct MpScreen {
     pub lost: bool,
     /// A connection attempt: the password and the join code's session id to say hello with.
     connecting: Option<(Connecting, Option<String>, Option<u64>)>,
+    /// The join under way: what is joined (a room's name, the typed address) and its 10 ms ticks so far.
+    joining: String,
+    waited: u32,
     pub role: Option<Role>,
     pub chat: Vec<(String, String)>,
     pub entry: Field,
@@ -723,7 +759,6 @@ mod words {
     pub const PASSWORD: &[u8] = b"Password (optional)";
     pub const NONE_FOUND: &[u8] = b"No games found on the local network";
     pub const INET: &[u8] = b"No internet matchmaking: join by address or join code";
-    pub const CONNECTING: &[u8] = b"Connecting...";
     pub const COMPUTER: &[u8] = b"computer";
     pub const CLOSED: &[u8] = b"closed";
     pub const SHAPE: &[u8] = b"Galaxy shape:";
@@ -766,7 +801,6 @@ mod words {
     pub const NO_PUBLIC_HINT: &[u8] = b"Host one yourself, or press Refresh to ask again.";
     pub const NO_SAVES_HINT: &[u8] = b"A multiplayer game the host saved can be resumed here.";
     pub const HOST_SAVED: &[u8] = b"Host saved game";
-    pub const STARTED: &[u8] = b"Started";
     pub const INCOMPATIBLE: &[u8] = b"Incompatible";
     pub const LOCKED: &[u8] = b"Password";
     pub const JOINED: &[u8] = b"Joined";
@@ -804,6 +838,13 @@ mod words {
     pub const TAKE_SEAT: &[u8] = b"Take seat";
     pub const CHAT: &[u8] = b"Chat";
     pub const CHAT_HINT: &[u8] = b"Type a message; Enter sends it";
+    // A listed room's state, a join's progress and how it ended.
+    pub const ROOM_OPEN: &[u8] = b"Open (waiting)";
+    pub const IN_GAME: &[u8] = b"In game";
+    pub const FULL: &[u8] = b"Full";
+    pub const TIMED_OUT: &[u8] = b"No answer from the game (timed out)";
+    pub const FAILED: &[u8] = b"The connection attempt failed";
+    pub const STOP_JOIN: &[u8] = b"Stop joining";
 
     /// A word in the game's language, as text.
     pub fn text(lang: ig2_formats::text::Lang, w: &[u8]) -> String {
@@ -904,6 +945,8 @@ impl MpScreen {
             line: Vec::new(),
             lost: false,
             connecting: None,
+            joining: String::new(),
+            waited: 0,
             role: None,
             chat: Vec::new(),
             entry: Field::new(ig2_net::lobby::MAX_CHAT),
@@ -1090,18 +1133,26 @@ impl MpScreen {
     /// Join the selected LAN session or public room, else the typed or pasted join code or address. A public room is
     /// joined by its join code (put in the address field): its address, and the relay's hole punch and relay.
     pub fn join(&mut self, net: &mut dyn Net) {
-        if let Some(code) = self.selected.and_then(|i| self.internet.as_ref()?.get(i)).map(|(host, l)| l.join_code(*host).encode()) {
+        if self.busy() {
+            return;
+        }
+        let mut name = None;
+        if let Some((code, room)) = self.selected.and_then(|i| self.internet.as_ref()?.get(i)).map(|(host, l)| (l.join_code(*host).encode(), l.announcement.name.clone())) {
             self.address = Field::new(MAX_ADDRESS);
             for c in code.bytes() {
                 self.address.key(EntryKey::Char(c));
             }
             self.selected = None;
+            name = Some(room);
         }
         let typed = self.address.string();
         self.target = typed.clone();
+        // A join code is long: its first characters stand for it.
+        self.joining = name.unwrap_or_else(|| if typed.chars().count() > 24 { format!("{}...", typed.chars().take(16).collect::<String>()) } else { typed.clone() });
         let (rx, code) = match self.selected.and_then(|i| self.list.get(i)).filter(|_| self.internet.is_none()) {
             Some(f) => {
                 self.target = f.addr.to_string();
+                self.joining = f.announcement.name.clone();
                 (net.connect(&f.addr.to_string(), Some(f.announcement.fingerprint)), None)
             }
             None if typed.is_empty() => return,
@@ -1121,7 +1172,40 @@ impl MpScreen {
             },
         };
         self.connecting = Some((rx, self.password(), code));
-        self.line = words::CONNECTING.to_vec();
+        self.waited = 0;
+        self.line.clear();
+    }
+
+    /// A join is under way: connecting, or connected and waiting for the host's room.
+    fn busy(&self) -> bool {
+        self.connecting.is_some() || matches!(&self.role, Some(Role::Joiner(c)) if c.state.is_none())
+    }
+
+    /// Give up the join under way (the footer's Cancel, Esc, the timeout).
+    fn cancel_join(&mut self) {
+        self.connecting = None;
+        if self.busy() {
+            self.leave();
+        }
+        self.waited = 0;
+    }
+
+    /// The connection page's main plate.
+    fn plate(&self) -> Plate {
+        match () {
+            _ if self.busy() => Plate::Cancel,
+            _ if self.saves.is_some() => Plate::HostSaved,
+            _ if self.selected.is_some() => Plate::Join,
+            _ => Plate::Host,
+        }
+    }
+
+    /// The status line of the join under way (`None`: none): what is joined, the stage and the seconds so far.
+    fn progress(&self, lang: ig2_formats::text::Lang) -> Option<Vec<u8>> {
+        let secs = (self.waited / 100).to_string();
+        let name = ig2_formats::text::encode(&self.joining, lang);
+        let stage = if self.connecting.is_some() { "Connecting to {} ({} s)..." } else { "Waiting for the host of {} ({} s)..." };
+        self.busy().then(|| crate::tr::fill(lang, stage, &[&name, secs.as_bytes()]))
     }
 
     /// Join over `link` (a connection that just came up); `code` = the join code's session id.
@@ -1264,10 +1348,20 @@ impl MpScreen {
                 }
                 Ok(Err(e)) => {
                     self.connecting = None;
-                    self.line = e.into_bytes();
+                    self.line = format!("Can't join: {e}").into_bytes();
                 }
-                Err(mpsc::TryRecvError::Disconnected) => self.connecting = None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.connecting = None;
+                    self.line = words::FAILED.to_vec();
+                }
                 Err(mpsc::TryRecvError::Empty) => {}
+            }
+        }
+        if self.busy() {
+            self.waited += 1;
+            if self.waited >= JOIN_TIMEOUT {
+                self.cancel_join();
+                self.line = words::TIMED_OUT.to_vec();
             }
         }
         if self.room_mods.as_mut().is_some_and(|r| r.poll()) {
@@ -1346,6 +1440,12 @@ impl MpScreen {
 
     /// The page's press on item `id` (`right`: the right button's; the page's acts, [`page::Act::Spot`]).
     pub fn act(&mut self, id: u32, right: bool, net: &mut dyn Net) -> Option<Out> {
+        // Also while connected and waiting for the host's room.
+        if id == spot::CANCEL_JOIN {
+            self.cancel_join();
+            self.line.clear();
+            return Some(Out::Click);
+        }
         if self.role.is_none() {
             match id {
                 spot::ADDRESS => {
@@ -1378,6 +1478,7 @@ impl MpScreen {
                 }
                 spot::REFRESH => self.refresh(net),
                 spot::CANCEL => return Some(Out::Close),
+                spot::DESELECT => self.selected = None,
                 i if (spot::LIST..spot::LIST + LIST_ROWS as u32).contains(&i) => {
                     let k = (i - spot::LIST) as usize;
                     let again = self.selected == Some(k);
@@ -1582,6 +1683,15 @@ impl MpScreen {
             };
         }
         if escape {
+            // A join under way is cancelled, then the selection dropped, then the room left, then the screens.
+            if self.busy() {
+                self.cancel_join();
+                self.line.clear();
+                return None;
+            }
+            if self.role.is_none() && self.selected.take().is_some() {
+                return None;
+            }
             if self.role.is_some() {
                 self.leave();
                 return None;
@@ -3335,5 +3445,60 @@ mod tests {
         assert_eq!((f.text.as_slice(), f.cursor), (&b"abce"[..], 3));
         assert!(f.key(EntryKey::Enter));
         assert_eq!(f.take(), "abce");
+    }
+    #[test]
+    fn a_listed_room_shows_its_host_and_state() {
+        let a = ig2_net::discovery::Announcement { session: 1, name: "Ann's galaxy".into(), port: 1, fingerprint: [0; 32], password: false, version: 1, rules: RULES, scenario: "galaxy".into(), humans: 1, slots: 8, started: false };
+        assert_eq!(room_host(&a), Some("Ann"));
+        assert_eq!(room_host(&ig2_net::discovery::Announcement { scenario: "story".into(), ..a.clone() }), None, "a save's room");
+        assert_eq!(room_host(&ig2_net::discovery::Announcement { name: "LAN party".into(), ..a.clone() }), None);
+        assert_eq!(room_state(&a, false), words::ROOM_OPEN);
+        assert_eq!(room_state(&ig2_net::discovery::Announcement { password: true, ..a.clone() }, false), words::ROOM_OPEN, "Password is a tag of its own");
+        assert_eq!(room_state(&ig2_net::discovery::Announcement { humans: 8, ..a.clone() }, false), words::FULL);
+        assert_eq!(room_state(&ig2_net::discovery::Announcement { humans: 8, started: true, ..a.clone() }, false), words::IN_GAME);
+        assert_eq!(room_state(&ig2_net::discovery::Announcement { started: true, ..a.clone() }, true), words::INCOMPATIBLE);
+    }
+
+    #[test]
+    fn a_join_shows_its_progress_and_can_be_cancelled_or_time_out() {
+        let mut net = LoopNet::default();
+        let mut host = MpScreen::open(false, "Host", RULES);
+        click(&mut host, spot::HOST, false, &mut net);
+        let mut guest = MpScreen::open(false, "Guest", RULES);
+        for _ in 0..25 {
+            guest.tick(&mut net);
+        }
+        let hu = ig2_formats::text::Lang::Hu;
+        assert_eq!(guest.plate(), Plate::Host);
+        // A selected row turns the plate into Join; Esc drops the selection first, then closes.
+        guest.selected = Some(0);
+        assert_eq!(guest.plate(), Plate::Join);
+        assert!(guest.key(None, true, &mut net).is_none());
+        assert_eq!(guest.plate(), Plate::Host);
+        click(&mut guest, spot::DESELECT, false, &mut net);
+        // A host that never answers: connected, then waiting for its room until Cancel.
+        type_text(&mut guest, "127.0.0.1:1", &mut net);
+        guest.tick(&mut net);
+        assert_eq!(guest.plate(), Plate::Cancel);
+        for _ in 0..250 {
+            guest.tick(&mut net);
+        }
+        let p = guest.progress(hu).expect("a join under way");
+        assert_eq!(p, crate::tr::fill(hu, "Waiting for the host of {} ({} s)...", &[b"127.0.0.1:1", b"2"]));
+        click(&mut guest, spot::CANCEL_JOIN, false, &mut net);
+        assert!(guest.role.is_none() && guest.progress(hu).is_none() && guest.plate() == Plate::Host);
+        // The same, left alone: it gives up after a minute.
+        click(&mut guest, spot::JOIN, false, &mut net);
+        for _ in 0..JOIN_TIMEOUT + 1 {
+            guest.tick(&mut net);
+        }
+        assert!(guest.role.is_none() && !guest.busy());
+        assert_eq!(guest.line, words::TIMED_OUT);
+        // Nobody there: the error says so.
+        guest.address = Field::new(MAX_ADDRESS);
+        type_text(&mut guest, "127.0.0.1:9", &mut net);
+        guest.tick(&mut net);
+        assert_eq!(guest.line, b"Can't join: nobody hosts");
+        assert_eq!(crate::tr::bytes(hu, &guest.line)[..], [crate::tr::get(hu, "Can't join: {}").strip_suffix(b"{}").unwrap(), b"nobody hosts"].concat()[..]);
     }
 }

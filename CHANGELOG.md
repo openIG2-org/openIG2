@@ -30,6 +30,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The multiplayer pages fit at any UI scale: the panels no longer run over the Back, Host game and room footer buttons, and a column taller than the window scrolls.
 - The trade, diplomacy and spy pages fit at any UI scale: the Buy plate, message panel, statue arrows and skill buttons no longer cover or touch each other, nothing runs under Exit, and a tall agent card scrolls.
 - The modern Custom game, Information and Help pages fit at a larger UI scale: the empires table and the map keep their size on a narrow page (the page scrolls), the Information screen scrolls with the mouse wheel when the window is too short and keeps its list, charts and Exit button apart, and Help shows a scroll bar when its topics don't fit.
+- Joining a multiplayer room shows what is happening: connect errors and refusals now appear on the connection page, "Connecting..." and "Waiting for the host..." count the seconds and can be stopped (Esc too, giving up after a minute), the room list shows each host's name and a state (open, full, in game, incompatible, password), and selecting a room turns Host game into Join (double-click joins too).
 - The research and design pages fit at a large UI scale (150-200 %): the research categories scroll sideways with the mouse wheel and the Exit button stays on screen, and the design page's data panel no longer covers the blueprint list.
 
 ### Screens and controls

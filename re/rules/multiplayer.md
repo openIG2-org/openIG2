@@ -514,3 +514,11 @@ agree.
   line says "Pick one of the saved empires"; saved humans nobody holds are played by the computer from the start and
   can't take the empire back later (`HostSession::resume`, ADR 0022). Joiners start from the host's
   snapshot (`Start::snapshot`, as a rejoin), so they need no save file.
+- **Joining from the connection page** (ours, `mp_lobby/page.rs`). The status line left of the footer plates is drawn
+  (connect errors and refusals read "Can't join: <reason>"). A join shows "Connecting to <room> (N s)..." then
+  "Waiting for the host of <room> (N s)..." with a spinner; the main plate reads "Stop joining" (Esc too) and after
+  60 s without a room it gives up ("No answer from the game (timed out)"). The room list's Host column is the host's
+  name (taken from the generated "<host>'s galaxy" room name; the announcement has no host field) and Status is always
+  Open / Full / In game / Incompatible, plus a Password tag. Selecting a room turns the Host game plate into Join
+  (double-click joins; Esc or a click on the empty list deselects). Tested by `mp_lobby.rs::a_listed_room_shows_its_host_and_state`
+  and `a_join_shows_its_progress_and_can_be_cancelled_or_time_out`; snapshot `--screen lobby-joining`.

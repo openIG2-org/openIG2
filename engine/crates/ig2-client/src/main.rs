@@ -6,7 +6,7 @@
 //!           `--save` at once, or a replay watched (ADR 0038 §6).
 //! Main menu: `ig2-client --snapshot <out.png> --screen main [--ui-frames N] [--mouse X,Y] [--script S]` (no save).
 //! Options:  `ig2-client --snapshot <out.png> [--save <file.sav>] --screen options|saves [--ui-frames N] [--mouse X,Y] [--script S]`
-//!           (`saves`: the modern save and load page on slot 1); `--screen lobby|lobby-room` the multiplayer pages
+//!           (`saves`: the modern save and load page on slot 1); `--screen lobby|lobby-room|lobby-joining` the multiplayer pages
 //!           with sample rooms or a hosted room (offline).
 //! Headless: `ig2-client --snapshot <out.png> [--save <file.sav>] [--speed 1|2|3] [--ticks N] [--alpha A]
 //!            [--size WxH] [--letterbox] [--sharp-ui] [--sharp-text] [--theme NAME] [--upscale 2|4] [--ui-scale P] [--battle-effects] [--smooth-glows] [--modern] [--scale S] [--hover X,Y] [--select-fleet N] [--reveal]`

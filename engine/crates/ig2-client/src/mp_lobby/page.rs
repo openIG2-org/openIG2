@@ -11,7 +11,7 @@ use ig2_net::galaxy::{GalaxyOptions, RoomCustom, Seat, CUSTOM_PLANETS, MAX_AIS, 
 use ig2_net::lobby::SlotKind;
 use ig2_net::rendezvous::Rendezvous;
 
-use super::{spot, words, Field, Focus, MpScreen, Out, PortMap, Role};
+use super::{room_host, room_state, spot, words, Field, Focus, MpScreen, Out, Plate, PortMap, Role};
 use crate::gui::ds::{self, Font, Text, Weight};
 use crate::ui::UiTexts;
 
@@ -183,8 +183,9 @@ fn cells(r: Rect) -> Vec<Rect> {
 }
 
 /// The footer's plates at the bottom right (`bottom` points up from the screen's bottom), right to left; the status
-/// line at their left. Gives the clicked plate's index.
-fn footer(ctx: &egui::Context, st: Stage, bottom: f32, opacity: f32, plates: &[(String, f32, bool, bool)], status: &str, status_c: Color32) -> Option<usize> {
+/// line at their left (`busy`: a spinner before it). Gives the clicked plate's index.
+#[allow(clippy::too_many_arguments)]
+fn footer(ctx: &egui::Context, st: Stage, bottom: f32, opacity: f32, plates: &[(String, f32, bool, bool)], status: &str, status_c: Color32, busy: bool) -> Option<usize> {
     let rect = Rect::from_min_max(Pos2::new(st.r.left() + st.m, st.r.bottom() - bottom - 48.0), Pos2::new(st.r.right() - st.m, st.r.bottom() - bottom));
     bare(ctx, "mp-footer", rect, opacity, egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 16.0;
@@ -195,9 +196,13 @@ fn footer(ctx: &egui::Context, st: Stage, bottom: f32, opacity: f32, plates: &[(
                 out = Some(i);
             }
         }
-        let used = ui.min_rect().width();
+        if busy {
+            ui.spinner();
+        }
+        // Left of the plates (not `min_rect`: `bare` makes it the whole footer).
+        let end = ui.cursor().max.x - 8.0;
         let f = Font { size: 15.0, line: 22.0, weight: Weight::Regular, tracking: 0.05, upper: false, lcd: false };
-        Text::new(status, f).color(status_c).lines(2).paint(ui, rect.with_max_x(rect.right() - used - 24.0));
+        Text::new(status, f).color(status_c).lines(2).paint(ui, rect.with_max_x(end).with_min_y(rect.center().y - 11.0));
         out
     })
 }
@@ -395,7 +400,7 @@ impl MpScreen {
                 }
                 ui.add_space(8.0);
                 let saves = self.saves.is_some();
-                let join_on = !saves && self.connecting.is_none() && (self.selected.is_some() || !self.address.text.is_empty());
+                let join_on = !saves && !self.busy() && (self.selected.is_some() || !self.address.text.is_empty());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     if ui.add_enabled(join_on, ds::Plate::new(&s(texts.get(16, 3, 3))).width(220.0)).clicked() {
                         acts.push(Act::Spot(spot::JOIN, false));
@@ -421,14 +426,24 @@ impl MpScreen {
             });
         });
         // Back, Host; the status: a refusal, a connect error, the host lost.
-        let line = if self.lost && self.line.is_empty() { texts.get(14, 5, 3) } else { crate::tr::bytes(lang, &self.line) };
-        let line = if self.connecting.is_some() && line.is_empty() { w(words::CONNECTING) } else { s(line) };
-        let saves = self.saves.is_some();
-        let host = if saves { w(words::HOST_SAVED) } else { w(words::HOST) };
-        let plates = [(s(texts.get(15, 3, 7)), 200.0, false, true), (host, 300.0, true, !saves || self.selected.is_some())];
-        match footer(ctx, st, 72.0, op, &plates, &line, hot) {
+        // A join under way shows its stage and seconds (with a spinner) instead.
+        let progress = self.progress(lang);
+        let line = match &progress {
+            Some(p) => s(p.clone()),
+            None if self.lost && self.line.is_empty() => s(texts.get(14, 5, 3)),
+            None => s(crate::tr::bytes(lang, &self.line)),
+        };
+        let plate = self.plate();
+        let (main, main_spot) = match plate {
+            Plate::Cancel => (w(words::STOP_JOIN), spot::CANCEL_JOIN),
+            Plate::HostSaved => (w(words::HOST_SAVED), spot::HOST),
+            Plate::Join => (s(texts.get(16, 3, 3)), spot::JOIN),
+            Plate::Host => (w(words::HOST), spot::HOST),
+        };
+        let plates = [(s(texts.get(15, 3, 7)), 200.0, false, true), (main, 300.0, plate != Plate::Cancel, plate != Plate::HostSaved || self.selected.is_some())];
+        match footer(ctx, st, 72.0, op, &plates, &line, hot, progress.is_some()) {
             Some(0) => acts.push(Act::Spot(spot::CANCEL, false)),
-            Some(_) => acts.push(Act::Spot(spot::HOST, false)),
+            Some(_) => acts.push(Act::Spot(main_spot, false)),
             None => {}
         }
     }
@@ -459,8 +474,22 @@ impl MpScreen {
         let heads = [crate::tr::text(lang, "Game").to_owned(), w(words::HOST_MARK), w(words::PLAYERS), crate::tr::text(lang, "Status").to_owned()];
         ds::table_head(ui, &cells(head), &heads.each_ref().map(String::as_str), &[]);
         ui.add_space(18.0);
-        // One row: the name, the host (or the scenario, the save's players), the players, the tags; a click selects, a
-        // second click (or a double click) joins.
+        // A room's Status cell: its state, and Password on a locked one.
+        let status = |a: &ig2_net::discovery::Announcement, other: bool| {
+            let state = room_state(a, other);
+            let c = match state {
+                words::INCOMPATIBLE => k.enemy,
+                words::ROOM_OPEN => k.info,
+                _ => k.ink_silver,
+            };
+            let mut t: Vec<(&[u8], Color32)> = vec![(state, c)];
+            if a.password {
+                t.push((words::LOCKED, k.ink_silver));
+            }
+            t
+        };
+        // One row: the name, the host (the save's players), the players, the tags; a click selects, a second click
+        // (or a double click) joins.
         let mut row = |ui: &mut egui::Ui, n: usize, name: String, host: String, players: String, tags: &[(&[u8], Color32)], off: bool| {
             let on = self.selected == Some(n);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 52.0), egui::Sense::click());
@@ -486,7 +515,7 @@ impl MpScreen {
                 acts.push(Act::Spot(spot::LIST + n as u32, false));
             }
         };
-        egui::ScrollArea::vertical().id_salt("mp-list").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).auto_shrink([false, false]).show(ui, |ui| {
+        let under = egui::ScrollArea::vertical().id_salt("mp-list").scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).auto_shrink([false, false]).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             if let Some(saves) = &self.saves {
                 for (n, sv) in saves.iter().take(super::LIST_ROWS).enumerate() {
@@ -497,37 +526,23 @@ impl MpScreen {
                 for (n, (_, l)) in rooms.iter().take(super::LIST_ROWS).enumerate() {
                     let a = &l.announcement;
                     let other = a.version != ig2_net::lobby::LOBBY_VERSION || a.rules != self.rules || l.mods != self.mods;
-                    let mut t: Vec<(&[u8], Color32)> = Vec::new();
-                    if a.started {
-                        t.push((words::STARTED, k.ink_silver));
-                    }
-                    if other {
-                        t.push((words::INCOMPATIBLE, k.enemy));
-                    }
-                    if a.password {
-                        t.push((words::LOCKED, k.ink_silver));
-                    }
-                    let sub: String = a.scenario.chars().take(24).collect();
-                    row(ui, n, a.name.clone(), sub, format!("{}/{}", a.humans, a.slots), &t, other || a.started);
+                    let host: String = room_host(a).unwrap_or(&a.scenario).chars().take(24).collect();
+                    row(ui, n, a.name.clone(), host, format!("{}/{}", a.humans, a.slots), &status(a, other), other || a.started);
                 }
             } else {
                 for (n, f) in self.list.iter().take(super::LIST_ROWS).enumerate() {
                     let a = &f.announcement;
                     let other = a.rules != self.rules;
-                    let mut t: Vec<(&[u8], Color32)> = Vec::new();
-                    if a.started {
-                        t.push((words::STARTED, k.ink_silver));
-                    }
-                    if other {
-                        t.push((words::INCOMPATIBLE, k.enemy));
-                    }
-                    if a.password {
-                        t.push((words::LOCKED, k.ink_silver));
-                    }
-                    row(ui, n, a.name.clone(), f.addr.to_string(), format!("{}/{}", a.humans, a.slots), &t, other || a.started);
+                    let host = room_host(a).map_or_else(|| f.addr.to_string(), str::to_owned);
+                    row(ui, n, a.name.clone(), host, format!("{}/{}", a.humans, a.slots), &status(a, other), other || a.started);
                 }
             }
+            // A click under the rows drops the selection.
+            ui.allocate_exact_size(ui.available_size(), egui::Sense::click()).1.clicked()
         });
+        if under.inner {
+            acts.push(Act::Spot(spot::DESELECT, false));
+        }
     }
 
     // -------------------------------------------------------------------------------------------- the room
@@ -746,7 +761,7 @@ impl MpScreen {
         let ready = st.members.iter().find(|m| Some(m.id) == me).is_some_and(|m| m.ready);
         let label = if !host && ready { format!("✔ {label}") } else { label };
         let plates = [(s(texts.get(14, 1, 11)), 200.0, false, true), (label, 260.0, host || ready, true)];
-        match footer(ctx, stage, 56.0, op, &plates, &s(crate::tr::bytes(lang, &self.line)), hot) {
+        match footer(ctx, stage, 56.0, op, &plates, &s(crate::tr::bytes(lang, &self.line)), hot, false) {
             Some(0) => acts.push(Act::Spot(spot::LEAVE, false)),
             Some(_) => acts.push(Act::Spot(spot::READY, false)),
             None => {}
@@ -1046,14 +1061,21 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
         };
         let at = std::net::SocketAddrV4::new(std::net::Ipv4Addr::LOCALHOST, 1);
         s.internet = Some(vec![
-            (at, room("Alice's galaxy", "Alice", 3, 8, false, false, 0)),
-            (at, room("Friends only", "Bob", 2, 4, true, false, 0)),
-            (at, room("Big galaxy, 6 AIs", "Zoltan", 1, 8, false, false, 0)),
-            (at, room("Evening match", "Kata", 4, 4, false, true, 0)),
-            (at, room("Modded rules", "Peti", 2, 8, false, false, 1)),
+            (at, room("Alice's galaxy", "galaxy", 3, 8, false, false, 0)),
+            (at, room("Bob's galaxy", "galaxy", 2, 4, true, false, 0)),
+            (at, room("Zoltan's galaxy", "galaxy", 4, 4, false, false, 0)),
+            (at, room("Kata's galaxy", "galaxy", 4, 4, false, true, 0)),
+            (at, room("Peti's galaxy", "galaxy", 2, 8, false, false, 1)),
         ]);
         s.selected = Some(0);
         s.address.text = b"K7QF-29MX-TA4P".to_vec();
+        // `lobby-joining`: a join to the first room under way for 7 s.
+        if o.screen.as_deref() == Some("lobby-joining") {
+            let (_tx, rx) = std::sync::mpsc::channel();
+            s.connecting = Some((rx, None, None));
+            s.joining = "Alice's galaxy".into();
+            s.waited = 730;
+        }
     }
     let theme = crate::theme::Theme::modern();
     let style = crate::gui::style(&theme);
