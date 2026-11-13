@@ -670,6 +670,14 @@ impl App {
             return;
         }
         if let Some(m) = &mut f.mods {
+            // Ours: the search's selection, clipboard and undo (`crate::text_edit`); the keys it leaves are the page's.
+            if m.typing() {
+                match m.browse.search.0.key(&k.as_ref(), self.modifiers, crate::tr::game()) {
+                    Some(true) => return m.browse.edited(),
+                    Some(false) => return,
+                    None => {}
+                }
+            }
             if let Some(a) = m.key(k, self.modifiers.shift_key(), self.modifiers.control_key() || self.modifiers.alt_key()) {
                 self.mods_act(a);
             }
@@ -677,8 +685,7 @@ impl App {
         }
         if let Some(c) = &mut f.custom {
             let popup = self.gpu.as_ref().is_some_and(|g| egui::Popup::is_any_open(&g.gui.ctx));
-            let chord = self.modifiers.control_key() || self.modifiers.alt_key();
-            if let Some(a) = c.key(k, chord, popup) {
+            if let Some(a) = c.key(k, self.modifiers, popup) {
                 self.custom_act(a);
             }
             return;

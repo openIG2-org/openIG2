@@ -332,6 +332,99 @@ pub fn key(e: &mut impl Edit, key: &Key<&str>, m: ModifiersState, lang: Lang) ->
     }
 }
 
+/// A one-line field of our pages (the game's code page, a byte a character): its text, caret and selection, `take`
+/// saying which texts it holds (a typed or pasted byte that would make another is dropped).
+#[derive(Debug, Clone)]
+pub struct Line {
+    pub text: Vec<u8>,
+    pub cursor: usize,
+    pub sel: Sel,
+    take: fn(&[u8]) -> bool,
+}
+
+impl Edit for Line {
+    fn text(&self) -> &[u8] {
+        &self.text
+    }
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+    fn place(&mut self, c: usize) {
+        self.cursor = c.min(self.text.len());
+    }
+    fn sel(&mut self) -> &mut Sel {
+        &mut self.sel
+    }
+    fn put(&mut self, b: u8) {
+        let c = self.cursor.min(self.text.len());
+        let mut t = self.text.clone();
+        t.insert(c, b);
+        if b >= 0x20 && b != 0x7f && (self.take)(&t) {
+            (self.text, self.cursor) = (t, c + 1);
+        }
+    }
+    fn set(&mut self, text: Vec<u8>, cursor: usize) {
+        (self.text, self.cursor) = (text, cursor);
+    }
+}
+
+impl Line {
+    /// `text` with the caret at its end.
+    pub fn new(text: Vec<u8>, take: fn(&[u8]) -> bool) -> Self {
+        Self { cursor: text.len(), text, sel: Sel::default(), take }
+    }
+
+    /// A key with the modifiers held: the editing keys ([`key`]), then the field's own (Backspace, Delete, a typed
+    /// character in `lang`'s code page). `Some(changed)` when the field took it, `None` for the page (Enter, Esc, Tab…).
+    pub fn key(&mut self, k: &Key<&str>, m: ModifiersState, lang: Lang) -> Option<bool> {
+        match key(self, k, m, lang) {
+            Out::Changed => return Some(true),
+            Out::Pass => {}
+            _ => return Some(false),
+        }
+        let before = self.text.clone();
+        let c = self.cursor.min(self.text.len());
+        match k {
+            Key::Named(NamedKey::Backspace) if c > 0 => _ = (self.text.remove(c - 1), self.cursor = c - 1),
+            Key::Named(NamedKey::Delete) if c < self.text.len() => _ = self.text.remove(c),
+            Key::Named(NamedKey::Backspace | NamedKey::Delete) => {}
+            Key::Named(NamedKey::Space) => self.put(b' '),
+            // Alt alone types nothing (AltGr, Ctrl+Alt, does).
+            Key::Character(_) if m.alt_key() && !m.control_key() => {}
+            Key::Character(s) => {
+                for ch in s.chars().filter(|c| !c.is_control()) {
+                    // A character the code page lacks is dropped (no `&#…;` for it).
+                    if let [b] = ig2_formats::text::encode(ch.encode_utf8(&mut [0; 4]), lang)[..] {
+                        self.put(b);
+                    }
+                }
+            }
+            _ => return None,
+        }
+        Some(self.text != before)
+    }
+
+    /// The field drawn (`ds::text_field_sel`) with the caret and selection while `focused`; the pointer puts the
+    /// caret, drags a selection, double-clicks a word.
+    pub fn show(&mut self, ui: &mut egui::Ui, focused: bool, lang: Lang, hint: &str, size: egui::Vec2) -> egui::Response {
+        let sel = if focused { range(self) } else { None };
+        let text = ig2_formats::text::decode(&self.text, lang);
+        let (resp, hit) = crate::gui::ds::text_field_sel(ui, &text, focused.then_some(self.cursor.min(self.text.len())), sel, hint, size);
+        let resp = resp.on_hover_cursor(egui::CursorIcon::Text);
+        if let Some(at) = hit.filter(|_| focused) {
+            let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
+            if resp.double_clicked() {
+                word(self, at);
+            } else if pressed && resp.is_pointer_button_down_on() {
+                press(self, at, shift);
+            } else if resp.dragged() {
+                drag(self, at);
+            }
+        }
+        resp
+    }
+}
+
 /// The system clipboard (the page's in the browser, where a read arrives later through [`crate::web::take_pasted`]).
 pub fn clipboard_set(text: String) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -481,6 +574,36 @@ mod tests {
         assert_eq!(range(&mut e), Some(1..4));
         press(&mut e, 6, true);
         assert_eq!(range(&mut e), Some(1..6));
+    }
+
+    /// [`Line`]: its own Backspace and Delete at the caret, typing through `take` (digits that fit a u32), a paste
+    /// over the selection by the same rule, Ctrl+Z back.
+    #[test]
+    fn line_keys() {
+        let digits = |t: &[u8]| t.is_empty() || std::str::from_utf8(t).is_ok_and(|s| s.parse::<u32>().is_ok());
+        let mut l = Line::new(b"1234".to_vec(), digits);
+        let none = ModifiersState::empty();
+        let k = |l: &mut Line, k: Key<&str>, m| l.key(&k, m, Lang::En);
+        assert_eq!(k(&mut l, Key::Named(NamedKey::ArrowLeft), none), Some(false));
+        assert_eq!(k(&mut l, Key::Named(NamedKey::Backspace), none), Some(true));
+        assert_eq!((l.text.as_slice(), l.cursor), (&b"124"[..], 2));
+        assert_eq!(k(&mut l, Key::Named(NamedKey::Delete), none), Some(true));
+        assert_eq!(k(&mut l, Key::Character("x9"), none), Some(true));
+        assert_eq!(l.text, b"129");
+        assert_eq!(k(&mut l, Key::Named(NamedKey::Home), ModifiersState::SHIFT), Some(false));
+        assert_eq!(range(&mut l), Some(0..3));
+        assert!(paste(&mut l, b"4294967295"));
+        assert_eq!(l.text, b"4294967295");
+        // One more digit would pass u32::MAX: dropped.
+        assert_eq!(k(&mut l, Key::Character("0"), none), Some(false));
+        assert_eq!(k(&mut l, Key::Named(NamedKey::Enter), none), None);
+        // A name: the code page's letters, `é` is one byte; a CJK character has none and is dropped.
+        let mut n = Line::new(Vec::new(), |t| t.len() <= 4);
+        k(&mut n, Key::Character("é丁ab"), none);
+        assert_eq!(ig2_formats::text::decode(&n.text, Lang::En), "éab");
+        assert_eq!(k(&mut n, Key::Character("x"), ModifiersState::ALT), Some(false));
+        apply(&mut n, Cmd::Undo);
+        assert!(n.text.is_empty());
     }
 
     #[test]

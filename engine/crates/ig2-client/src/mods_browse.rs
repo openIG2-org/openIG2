@@ -17,6 +17,16 @@ const MAX_PICTURE: u32 = 2048;
 /// The longest search.
 const SEARCH_LEN: usize = 60;
 
+/// The search field: the game's code page, [`SEARCH_LEN`] bytes at most.
+#[derive(Debug, Clone)]
+pub struct Search(pub crate::text_edit::Line);
+
+impl Default for Search {
+    fn default() -> Self {
+        Self(crate::text_edit::Line::new(Vec::new(), |t| t.len() <= SEARCH_LEN))
+    }
+}
+
 fn tr(en: &'static str) -> &'static str {
     crate::tr::text(crate::tr::game(), en)
 }
@@ -59,7 +69,7 @@ pub struct Browse {
     index: Option<(Index, Source)>,
     /// Why the index didn't load (none cached either).
     error: Option<String>,
-    pub search: String,
+    pub search: Search,
     /// The search field takes the keys.
     pub typing: bool,
     have: Vec<Present>,
@@ -100,7 +110,7 @@ impl Browse {
     /// The mods listed: compatible with this version, matching the search.
     fn listed(&self) -> Vec<&Entry> {
         let Some((index, _)) = &self.index else { return Vec::new() };
-        let q = self.search.trim().to_lowercase();
+        let q = self.query().trim().to_lowercase();
         let hit = |e: &&Entry| q.is_empty() || [&e.name, &e.id, &e.author, &e.description].iter().any(|s| s.to_lowercase().contains(&q));
         index.compatible(crate::version()).into_iter().filter(hit).collect()
     }
@@ -113,6 +123,16 @@ impl Browse {
             Some(p) if p.version.as_deref().and_then(Version::parse) < Version::parse(&e.version) => (Some(Do::Update), true, None),
             Some(_) => (None, true, Some(tr("Installed"))),
         }
+    }
+
+    /// The search as text.
+    fn query(&self) -> String {
+        ig2_formats::text::decode(&self.search.0.text, crate::tr::game())
+    }
+
+    /// The search changed: no card focused.
+    pub fn edited(&mut self) {
+        self.focus = None;
     }
 
     /// No card focused (a click elsewhere), no typing (the tab left).
@@ -200,21 +220,16 @@ impl Browse {
         }
     }
 
-    /// The keys while the tab shows: typing into the search while it takes them (Enter, Esc or Tab end it);
+    /// The keys while the tab shows: the search's own keys while it takes them (`Search::0`'s `key`, called first),
+    /// Enter, Esc or Tab end it;
     /// Up/Down (Tab, Shift+Tab) the focused card, Enter or Space its Install or Update, Delete its Remove; `/` the
     /// search; F5 the list again. `None` when the key is the page's (Esc).
-    pub fn key(&mut self, key: &winit::keyboard::Key, shift: bool, chord: bool) -> Option<bool> {
+    pub fn key(&mut self, key: &winit::keyboard::Key, shift: bool) -> Option<bool> {
         use winit::keyboard::{Key, NamedKey};
         if self.typing {
-            match key.as_ref() {
-                Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Tab) => self.typing = false,
-                Key::Named(NamedKey::Backspace) => _ = self.search.pop(),
-                _ if chord => {}
-                Key::Named(NamedKey::Space) => self.type_text(" "),
-                Key::Character(c) => self.type_text(c),
-                _ => return Some(false),
+            if matches!(key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Tab)) {
+                (self.typing, self.focus) = (false, None);
             }
-            self.focus = None;
             return Some(false);
         }
         let n = self.listed().len();
@@ -255,14 +270,6 @@ impl Browse {
         }
     }
 
-    fn type_text(&mut self, text: &str) {
-        for c in text.chars().filter(|c| !c.is_control()) {
-            if self.search.chars().count() < SEARCH_LEN {
-                self.search.push(c);
-            }
-        }
-    }
-
     /// The tab's body in `height`; whether a button was clicked.
     pub fn show(&mut self, ui: &mut egui::Ui, height: f32) -> bool {
         self.poll(ui.ctx());
@@ -270,8 +277,7 @@ impl Browse {
         let bad = egui::Color32::from_rgb(235, 110, 100);
         let note = self.note();
         ui.horizontal(|ui| {
-            let caret = self.typing.then(|| self.search.chars().count());
-            let resp = crate::gui::ds::text_field(ui, &self.search, caret, tr("Search mods"), egui::vec2(300.0, 34.0)).on_hover_cursor(egui::CursorIcon::Text);
+            let resp = self.search.0.show(ui, self.typing, crate::tr::game(), tr("Search mods"), egui::vec2(300.0, 34.0));
             if resp.clicked() {
                 (self.typing, self.focus) = (true, None);
             } else if ui.input(|i| i.pointer.any_pressed()) && !resp.hovered() {
@@ -293,7 +299,7 @@ impl Browse {
             let empty = match (&self.index, &self.error) {
                 _ if self.loading.is_some() => Some((tr("Fetching the mod list...").to_owned(), false)),
                 (None, Some(e)) => Some((format!("{} {e}", tr("The mod list didn't load:")), true)),
-                (Some(_), _) if list.is_empty() && !self.search.trim().is_empty() => Some((tr("No mod matches the search.").to_owned(), false)),
+                (Some(_), _) if list.is_empty() && !self.query().trim().is_empty() => Some((tr("No mod matches the search.").to_owned(), false)),
                 (Some(_), _) if list.is_empty() => Some((format!("{} {}.", tr("No mods in the list yet for openIG2"), crate::version()), false)),
                 _ => None,
             };
@@ -460,19 +466,28 @@ mod tests {
         assert_eq!(when("2026-11-08T15:29:07Z"), "2026-11-08 15:29 UTC");
         let mut b = Browse::default();
         use winit::keyboard::{Key, NamedKey, SmolStr};
-        assert_eq!(b.key(&Key::Character(SmolStr::new("/")), false, false), Some(true));
+        use winit::keyboard::ModifiersState as M;
+        assert_eq!(b.key(&Key::Character(SmolStr::new("/")), false), Some(true));
         assert!(b.typing);
-        b.key(&Key::Character(SmolStr::new("ab")), false, false);
-        b.key(&Key::Named(NamedKey::Space), false, false);
-        b.key(&Key::Named(NamedKey::Backspace), false, false);
-        assert_eq!(b.search, "ab");
+        // The search's own keys (the window calls them first): typing, Backspace, Ctrl+A and a typed letter over it;
+        // Enter is the page's, which ends the typing.
+        let lang = ig2_formats::text::Lang::En;
+        let typed = |b: &mut Browse, k: Key<&str>, m| b.search.0.key(&k, m, lang);
+        typed(&mut b, Key::Character("abc"), M::empty());
+        typed(&mut b, Key::Named(NamedKey::Space), M::empty());
+        typed(&mut b, Key::Named(NamedKey::Backspace), M::empty());
+        assert_eq!(b.query(), "abc");
+        typed(&mut b, Key::Character("a"), M::CONTROL);
+        typed(&mut b, Key::Character("x"), M::empty());
+        assert_eq!(b.query(), "x");
+        assert_eq!(typed(&mut b, Key::Named(NamedKey::Escape), M::empty()), None);
         // Esc ends the typing first, then is the page's.
-        b.key(&Key::Named(NamedKey::Escape), false, false);
+        b.key(&Key::Named(NamedKey::Escape), false);
         assert!(!b.typing);
-        assert_eq!(b.key(&Key::Named(NamedKey::Escape), false, false), None);
+        assert_eq!(b.key(&Key::Named(NamedKey::Escape), false), None);
         // Space, Delete or Enter with no card to act on stay on the page.
         for k in [NamedKey::Space, NamedKey::Delete, NamedKey::Enter] {
-            assert_eq!(b.key(&Key::Named(k), false, false), Some(false));
+            assert_eq!(b.key(&Key::Named(k), false), Some(false));
         }
         b.typing = true;
         b.unfocus(false);

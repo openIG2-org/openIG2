@@ -380,7 +380,7 @@ impl ModsPage {
             return Some(Act::Click);
         }
         if self.browse_tab {
-            return match self.browse.key(key, shift, chord) {
+            return match self.browse.key(key, shift) {
                 None => Some(Act::Back),
                 Some(true) => Some(Act::Click),
                 Some(false) => None,

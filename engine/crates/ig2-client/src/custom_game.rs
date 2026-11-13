@@ -276,7 +276,8 @@ pub enum Act {
 /// The page's state.
 pub struct CustomPage {
     pub s: Settings,
-    focus: Option<Focus>,
+    /// The field the keys type into and its text while typed (`crate::text_edit`).
+    focus: Option<(Focus, crate::text_edit::Line)>,
     /// The skirmish entry's `NewgameRandomID`.
     pub kind: i32,
     /// The map: the start it was made from (names left out) and what it shows (`None`: the start failed).
@@ -387,53 +388,51 @@ impl CustomPage {
         self.focus.is_some()
     }
 
-    /// A key: typing into the seed or a name while one takes the keys (Enter, Esc or Tab end it; `chord`, Ctrl or Alt
-    /// held, types nothing); else Esc is Back, Enter Start, neither while a drop-down is `popup` open.
-    pub fn key(&mut self, key: &winit::keyboard::Key, chord: bool, popup: bool) -> Option<Act> {
+    /// The keys type into `f` from now on: its text with the caret at the end (the seed's digits; a name in the game's
+    /// code page, [`NAME_LEN`] bytes, no `|`, the settings file's separator).
+    fn focus_on(&mut self, f: Focus) {
+        if self.focus.as_ref().is_some_and(|(g, _)| *g == f) {
+            return;
+        }
+        let line = match f {
+            Focus::Seed => crate::text_edit::Line::new(self.s.seed.to_string().into_bytes(), |t| t.is_empty() || std::str::from_utf8(t).is_ok_and(|d| d.bytes().all(|b| b.is_ascii_digit()) && d.parse::<u32>().is_ok())),
+            Focus::Name(i) => {
+                let name = self.s.empires.get(i).map_or(Vec::new(), |e| ig2_formats::text::encode(&e.name, crate::tr::game()));
+                crate::text_edit::Line::new(name, |t| t.len() <= NAME_LEN && !t.contains(&b'|'))
+            }
+        };
+        self.focus = Some((f, line));
+    }
+
+    /// A key: the seed's or a name's own editing keys while one takes them (`crate::text_edit`, the modifiers `m`;
+    /// Enter, Esc or Tab end it); else Esc is Back, Enter Start, neither while a drop-down is `popup` open.
+    pub fn key(&mut self, key: &winit::keyboard::Key, m: winit::keyboard::ModifiersState, popup: bool) -> Option<Act> {
         use winit::keyboard::{Key, NamedKey};
         if popup {
             return None;
         }
-        let Some(f) = self.focus else {
+        let Some((f, line)) = &mut self.focus else {
             return match key.as_ref() {
                 Key::Named(NamedKey::Escape) => Some(Act::Back),
                 Key::Named(NamedKey::Enter) => Some(Act::Start),
                 _ => None,
             };
         };
-        match key.as_ref() {
-            Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Tab) => self.focus = None,
-            Key::Named(NamedKey::Backspace) => match f {
-                Focus::Seed => self.s.seed /= 10,
-                Focus::Name(i) => _ = self.s.empires.get_mut(i).and_then(|e| e.name.pop()),
+        match line.key(&key.as_ref(), m, crate::tr::game()) {
+            // The field's text is the setting's.
+            Some(true) => match *f {
+                Focus::Seed => self.s.seed = std::str::from_utf8(&line.text).ok().and_then(|d| d.parse().ok()).unwrap_or(0),
+                Focus::Name(i) => {
+                    if let Some(e) = self.s.empires.get_mut(i) {
+                        e.name = ig2_formats::text::decode(&line.text, crate::tr::game());
+                    }
+                }
             },
-            _ if chord => {}
-            Key::Named(NamedKey::Space) => self.type_text(f, " "),
-            Key::Character(c) => self.type_text(f, c),
-            _ => {}
+            Some(false) => {}
+            None if matches!(key.as_ref(), Key::Named(NamedKey::Escape | NamedKey::Enter | NamedKey::Tab)) => self.focus = None,
+            None => {}
         }
         None
-    }
-
-    fn type_text(&mut self, f: Focus, text: &str) {
-        match f {
-            Focus::Seed => {
-                for d in text.chars().filter_map(|c| c.to_digit(10)) {
-                    if let Some(n) = self.s.seed.checked_mul(10).and_then(|n| n.checked_add(d)) {
-                        self.s.seed = n;
-                    }
-                }
-            }
-            Focus::Name(i) => {
-                if let Some(e) = self.s.empires.get_mut(i) {
-                    for c in text.chars().filter(|c| !c.is_control() && *c != '|') {
-                        if e.name.chars().count() < NAME_LEN {
-                            e.name.push(c);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /// One frame of the page; `heads` gives a race's portrait, `galaxy` the map of a start ([`Preview::generate`]).
@@ -541,11 +540,13 @@ impl CustomPage {
         }
         ui.add_space(8.0);
         label(ui, &tr("Seed"));
-        let caret = (self.focus == Some(Focus::Seed)).then(|| self.s.seed.to_string().len());
-        let resp = ds::text_field(ui, &self.s.seed.to_string(), caret, "", Vec2::new(SIDE, 40.0)).on_hover_cursor(egui::CursorIcon::Text);
+        let resp = match &mut self.focus {
+            Some((Focus::Seed, line)) => line.show(ui, true, crate::tr::game(), "", Vec2::new(SIDE, 40.0)),
+            _ => ds::text_field(ui, &self.s.seed.to_string(), None, "", Vec2::new(SIDE, 40.0)).on_hover_cursor(egui::CursorIcon::Text),
+        };
         out.on_field |= resp.hovered();
         if resp.clicked() {
-            self.focus = Some(Focus::Seed);
+            self.focus_on(Focus::Seed);
         }
         if ui.add(ds::Plate::new(&tr("New seed")).width(SIDE).height(40.0)).clicked() {
             self.s.seed = crate::new_game::wall_ticks().wrapping_mul(2_654_435_761);
@@ -630,12 +631,12 @@ impl CustomPage {
             }
             let e = &mut self.s.empires[i];
             // The name.
-            let caret = (self.focus == Some(Focus::Name(i))).then(|| e.name.chars().count());
-            let resp = ds::text_field(&mut u[2], &e.name, caret, &race_name(e.race), cell(c[2], 38.0).size()).on_hover_cursor(egui::CursorIcon::Text);
+            let resp = match &mut self.focus {
+                Some((Focus::Name(f), line)) if *f == i => line.show(&mut u[2], true, crate::tr::game(), &race_name(e.race), cell(c[2], 38.0).size()),
+                _ => ds::text_field(&mut u[2], &e.name, None, &race_name(e.race), cell(c[2], 38.0).size()).on_hover_cursor(egui::CursorIcon::Text),
+            };
             out.on_field |= resp.hovered();
-            if resp.clicked() {
-                self.focus = Some(Focus::Name(i));
-            }
+            let named = resp.clicked();
             // The money and the start planets.
             let (_, d) = ds::stepper(&mut u[3], &format!("$ {}", e.money), c[3].width() - 64.0);
             if d != 0 {
@@ -650,6 +651,9 @@ impl CustomPage {
             }
             if i > 0 && n - 1 > COMPUTERS.0 && ds::pressed(&u[9].add(ds::IconKey::icon(ds::Icon::Trash).size(Vec2::splat(36.0)).tip(&tr("Remove")))) {
                 remove = Some(i);
+            }
+            if named {
+                self.focus_on(Focus::Name(i));
             }
             ui.add_space(6.0);
         }
@@ -753,23 +757,39 @@ mod tests {
     /// Typing: digits into the seed, a capped name, chords and an open drop-down ignored; Esc ends a field, then is Back.
     #[test]
     fn keys() {
-        use winit::keyboard::{Key, NamedKey};
+        use winit::keyboard::{Key, ModifiersState as M, NamedKey};
+        let none = M::empty();
         let ch = |s: &str| Key::Character(s.into());
-        let mut p = CustomPage { s: Settings::new(&T, 12), focus: Some(Focus::Seed), kind: 1, preview: None, colours: [egui::Color32::GRAY; 9] };
-        p.key(&ch("3"), false, false);
-        p.key(&ch("x"), false, false);
-        p.key(&Key::Named(NamedKey::Backspace), false, false);
-        p.key(&ch("45"), false, false);
+        let mut p = CustomPage { s: Settings::new(&T, 12), focus: None, kind: 1, preview: None, colours: [egui::Color32::GRAY; 9] };
+        p.focus_on(Focus::Seed);
+        p.key(&ch("3"), none, false);
+        p.key(&ch("x"), none, false);
+        p.key(&Key::Named(NamedKey::Backspace), none, false);
+        p.key(&ch("45"), none, false);
         assert_eq!(p.s.seed, 1245);
-        p.focus = Some(Focus::Name(1));
-        p.key(&ch("Abcdefghijkl"), false, false);
-        p.key(&ch("v"), true, false);
+        // Shift+Home selects, a digit replaces it; Ctrl+Z takes it back; past u32::MAX a digit is dropped.
+        p.key(&Key::Named(NamedKey::Home), M::SHIFT, false);
+        p.key(&ch("7"), none, false);
+        assert_eq!(p.s.seed, 7);
+        p.key(&ch("z"), M::CONTROL, false);
+        assert_eq!(p.s.seed, 1245);
+        p.key(&ch("a"), M::CONTROL, false);
+        p.key(&ch("42949672959"), none, false);
+        assert_eq!(p.s.seed, 4_294_967_295);
+        // A name: capped, its caret moves, a chord types nothing.
+        p.focus_on(Focus::Name(1));
+        p.key(&ch("Abcdefghijkl"), none, false);
+        p.key(&ch("q"), M::CONTROL, false);
         assert_eq!(p.s.empires[1].name, "Abcdefghij");
-        assert_eq!(p.key(&Key::Named(NamedKey::Escape), false, false), None);
+        p.key(&Key::Named(NamedKey::ArrowLeft), M::CONTROL, false);
+        p.key(&Key::Named(NamedKey::Delete), none, false);
+        p.key(&ch("é"), none, false);
+        assert_eq!(p.s.empires[1].name, "ébcdefghij");
+        assert_eq!(p.key(&Key::Named(NamedKey::Escape), none, false), None);
         assert!(!p.typing());
-        assert_eq!(p.key(&Key::Named(NamedKey::Escape), false, true), None);
-        assert_eq!(p.key(&Key::Named(NamedKey::Escape), false, false), Some(Act::Back));
-        assert_eq!(p.key(&Key::Named(NamedKey::Enter), false, false), Some(Act::Start));
+        assert_eq!(p.key(&Key::Named(NamedKey::Escape), none, true), None);
+        assert_eq!(p.key(&Key::Named(NamedKey::Escape), none, false), Some(Act::Back));
+        assert_eq!(p.key(&Key::Named(NamedKey::Enter), none, false), Some(Act::Start));
     }
 
     /// Spec §13.2 part 3: a new map only when the start changed; a picked star stays while the planets stay, and is

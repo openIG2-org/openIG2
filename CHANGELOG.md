@@ -39,7 +39,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Settings in seven tabs, with key rebinding, a separate voice volume, extra game speeds, a language choice, display modes (window, borderless, fullscreen, resolution, vsync, 4:3 letterbox) and a UI scale from 50 to 200 %.
 - The modern screens open and close with short fades and slides, use one line-icon set, show tooltips at once and have animated pointers.
 - Many fixes to the modern screens reported by players: blueprint selection on the design screen, the research list's height, the colony's building chooser, tabs and zoom, the main menu's Back and Load pages, and the production tooltips.
-- Text fields take the usual editing keys: select with Shift, jump by word with Ctrl, copy, cut, paste and undo, and a mouse press, drag or double click places the caret or selects; pasting works in the browser too.
+- Text fields take the usual editing keys: select with Shift, jump by word with Ctrl, copy, cut, paste and undo, and a mouse press, drag or double click places the caret or selects; pasting works in the browser too. The mods browser search and the custom game's seed and empire names take them as well, and their caret can now move.
 - Accessibility: subtitles for spoken messages and colour-blind empire colours.
 - Closer to the original: the starmap's wormhole and rally arrows, radar zones, info lines and timings, the spy screen's lists, the space battle's radar and retreat box, and the colony's building pick.
 - Optional fixes for small quirks of the original (clean name entry, models inside their boxes, centred Exit labels, Hungarian articles, title music with the intro).
