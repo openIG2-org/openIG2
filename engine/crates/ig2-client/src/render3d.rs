@@ -241,13 +241,13 @@ fn fs_glass_e(i: VO) -> @location(0) vec4<f32> {
 @fragment
 fn fs_opaque_g(i: VO) -> @location(0) vec4<f32> {
     // A vertex alpha below 0 (no fog in the engine): the starmap's sky sphere with a mod's detail at strength −alpha.
+    // One call outside the branch: WGSL samples (with their derivatives) only in uniform control flow.
+    var j = i;
+    j.color.a = max(i.color.a, 0.0);
+    let c = shade_cap(j, 1.0, true, 1.0, false);
     if (i.color.a < 0.0) {
-        var j = i;
-        j.color.a = 0.0;
-        let c = shade_cap(j, 1.0, true, 1.0, false);
         return vec4(sky_detail(c.rgb, normalize(i.w), -i.color.a), 1.0);
     }
-    let c = shade_cap(i, 1.0, true, 1.0, false);
     if (c.a < 0.5) { discard; }
     return vec4(c.rgb, 1.0);
 }
