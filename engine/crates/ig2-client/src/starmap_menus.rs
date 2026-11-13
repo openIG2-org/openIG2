@@ -242,7 +242,11 @@ pub struct Rename {
     /// `IOGombnyomasraTorles`: the first key replaces the text.
     pub clear: bool,
     pub backup: Vec<u8>,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
 }
+
+crate::text_edit::edit_field!(Rename, |e, b| e.key(RenameKey::Char(b)), clear);
 
 /// A key of the rename (`DoKeyboard` with `IOMode`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +262,7 @@ pub enum RenameKey {
 
 impl Rename {
     pub fn new(fleet: bool, index: usize, name: &[u8]) -> Self {
-        Self { fleet, index, text: name.to_vec(), cursor: name.len(), clear: true, backup: name.to_vec() }
+        Self { fleet, index, text: name.to_vec(), cursor: name.len(), clear: true, backup: name.to_vec(), sel: Default::default() }
     }
 
     /// `IOMaxLen`: 0xf for a planet, 0x13 for a fleet.

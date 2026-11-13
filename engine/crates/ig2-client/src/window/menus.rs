@@ -99,6 +99,17 @@ impl App {
         use crate::options::EntryKey;
         let changing = self.screen_changing();
         let Some(o) = &mut self.options else { return };
+        // Ours: the save name's selection, clipboard and undo (`crate::text_edit`).
+        // The multiplayer name's on the modern screen too.
+        let lang = self.hud.as_ref().map_or(ig2_formats::text::Lang::En, |h| h.texts.lang);
+        let edited = match (&mut o.s.entry, o.s.modern.as_mut().filter(|m| m.editing)) {
+            (Some(e), _) => crate::text_edit::key(e, &k.as_ref(), self.modifiers, lang),
+            (None, Some(m)) => crate::text_edit::key(m, &k.as_ref(), self.modifiers, lang),
+            (None, None) => crate::text_edit::Out::Pass,
+        };
+        if edited != crate::text_edit::Out::Pass {
+            return;
+        }
         if o.s.modern.is_some() {
             use crate::options::modern::Nav;
             // ADR 0067: the save name's Home, End and Delete, as on the original's entry.

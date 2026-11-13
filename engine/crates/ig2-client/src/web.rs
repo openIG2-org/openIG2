@@ -119,6 +119,11 @@ pub fn take_pasted() -> Option<String> {
     PASTED.lock().unwrap().take()
 }
 
+/// The page has read the clipboard ([`take_pasted`] has its text).
+pub fn pasted_ready() -> bool {
+    PASTED.lock().unwrap().is_some()
+}
+
 /// The page's clipboard (`navigator.clipboard`) as `arboard`'s: a read starts here and arrives through
 /// [`take_pasted`], so `get_text` itself gives an empty text.
 pub mod arboard {

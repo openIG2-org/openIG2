@@ -728,6 +728,16 @@ impl App {
     /// Esc restores the old name.
     pub(super) fn rename_key(&mut self, k: &Key<&str>) {
         use crate::starmap_menus::RenameKey as R;
+        // Ours: the selection, the clipboard and undo (`crate::text_edit`).
+        let lang = self.hud.as_ref().map_or(ig2_formats::text::Lang::En, |h| h.texts.lang);
+        match self.menus.rename.as_mut().map(|r| crate::text_edit::key(r, k, self.modifiers, lang)) {
+            None | Some(crate::text_edit::Out::Pass) => {}
+            Some(crate::text_edit::Out::Changed) => {
+                let text = self.menus.rename.as_ref().map(|r| r.text.clone()).unwrap_or_default();
+                return self.write_rename(&text);
+            }
+            Some(_) => return,
+        }
         let key = match k {
             Key::Named(NamedKey::Enter) => {
                 // `DoKeyboard` (exe 0x4db9a7 / 0x4db9c0, `AktKep` 2): the tutorial's 4 for a fleet (`IOAzonosito` 0x16),

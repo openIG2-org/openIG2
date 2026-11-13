@@ -124,7 +124,11 @@ pub struct NameEntry {
     /// `IOMaxLen`; `name`: the field takes only `A–Z a–z 0–9 _` (`IOAzonosito` 0x98), else any byte ≥ 0x20.
     pub max: usize,
     pub name: bool,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
 }
+
+crate::text_edit::edit_field!(NameEntry, |e, b| _ = e.key(crate::options::EntryKey::Char(b)));
 
 /// `IOMaxLen` of the name entry.
 pub const NAME_MAX: usize = 9;
@@ -142,7 +146,7 @@ pub struct HighScore {
 
 impl NameEntry {
     pub fn new(name: &[u8]) -> Self {
-        Self { text: name.to_vec(), cursor: name.len(), max: NAME_MAX, name: true }
+        Self { text: name.to_vec(), cursor: name.len(), max: NAME_MAX, name: true, sel: Default::default() }
     }
 
     /// The high-score name entry (`IOAzonosito` 0x99, `IOMaxLen` 0x14, seeded with "Player").

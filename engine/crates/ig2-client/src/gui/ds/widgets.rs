@@ -842,9 +842,15 @@ pub fn tag(ui: &mut Ui, text: &str, c: Color32) -> Response {
 /// character `caret` while the field takes the keys (`Some`: the line scrolls to keep the caret in view), `hint`
 /// muted while it is empty. The keys are the caller's; a click is the response's.
 pub fn text_field(ui: &mut Ui, text: &str, caret: Option<usize>, hint: &str, size: Vec2) -> Response {
+    text_field_sel(ui, text, caret, None, hint, size).0
+}
+
+/// A [`text_field`] with the characters `sel` lit (a selection, `crate::text_edit`); also the character the pointer
+/// is at (before which a press puts the caret) while it is over the field or drags from it.
+pub fn text_field_sel(ui: &mut Ui, text: &str, caret: Option<usize>, sel: Option<std::ops::Range<usize>>, hint: &str, size: Vec2) -> (Response, Option<usize>) {
     const FONT: Font = Font { size: 17.0, line: 20.0, weight: Weight::Medium, tracking: 0.08, upper: false, lcd: false };
     let k = tokens();
-    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click_and_drag());
     let l = look(ui, &resp, caret.is_some());
     let p = ui.painter();
     p.rect_filled(rect, RADIUS_PLATE, k.glass_deep);
@@ -856,7 +862,8 @@ pub fn text_field(ui: &mut Ui, text: &str, caret: Option<usize>, hint: &str, siz
     let inner = rect.shrink2(Vec2::new(14.0, 0.0));
     if text.is_empty() && caret.is_none() {
         Text::new(hint, FONT).color(k.ink_muted).paint(ui, inner);
-        return resp;
+        let hit = (resp.hovered() || resp.dragged()).then_some(0);
+        return (resp, hit);
     }
     let galley = ui.painter().layout_job(FONT.job(text, if l.on { k.ink } else { k.ink_muted }));
     let at_caret = galley.pos_from_cursor(egui::text::CCursor::new(caret.unwrap_or(0).min(text.chars().count()))).min.x;
@@ -864,6 +871,12 @@ pub fn text_field(ui: &mut Ui, text: &str, caret: Option<usize>, hint: &str, siz
     let top = baseline(rect, FONT) - super::fit::Fitted { galley: galley.clone(), font: FONT, cut: false, width: 0.0 }.baseline();
     let at = Pos2::new(inner.left() - shift, top);
     let painter = ui.painter_at(inner.expand2(Vec2::new(2.0, 0.0)));
+    let x_of = |c: usize| at.x + galley.pos_from_cursor(egui::text::CCursor::new(c.min(text.chars().count()))).min.x;
+    if let Some(r) = sel.filter(|r| !r.is_empty()) {
+        let band = Rect::from_x_y_ranges(x_of(r.start)..=x_of(r.end), rect.center().y - 12.0..=rect.center().y + 12.0);
+        painter.rect_filled(band, 2.0, k.rim_bright.gamma_multiply(0.6));
+    }
+    let hit = (resp.hovered() || resp.dragged()).then(|| ui.input(|i| i.pointer.interact_pos())).flatten().map(|p| galley.cursor_from_pos(Vec2::new(p.x - at.x, 0.0)).index);
     if text.is_empty() {
         Text::new(hint, FONT).color(k.ink_muted).paint(ui, inner);
     }
@@ -875,7 +888,7 @@ pub fn text_field(ui: &mut Ui, text: &str, caret: Option<usize>, hint: &str, siz
         ui.ctx().request_repaint();
     }
     painter.galley(at, galley, k.ink);
-    resp
+    (resp, hit)
 }
 
 /// A settings row (`.orow`: 50 high, its 16-point label at the left, its control at the right, the label cut to the

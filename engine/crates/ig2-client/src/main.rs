@@ -160,6 +160,7 @@ mod scenarios_modern;
 mod stats_screen;
 mod theme;
 mod trade;
+mod text_edit;
 mod tr;
 mod topbar_menus;
 mod tutorial_ui;

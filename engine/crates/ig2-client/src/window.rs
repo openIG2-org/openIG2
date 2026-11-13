@@ -28,8 +28,6 @@
 
 use std::sync::Arc;
 
-#[cfg(target_arch = "wasm32")]
-use crate::web::arboard;
 use web_time::Instant;
 
 use ig2_net::{Command, StarmapCmd};
@@ -366,6 +364,10 @@ struct App {
     /// The info screen's buttons held (`Mouse_Gomb`; `Info_Main`'s drags and select menus).
     info_down: bool,
     modifiers: ModifiersState,
+    /// The browser's Ctrl+V and the modifiers then: sent again once the page has read the clipboard
+    /// (`crate::text_edit::clipboard_get`).
+    #[cfg(target_arch = "wasm32")]
+    paste_key: Option<(WindowEvent, ModifiersState)>,
     title_at: Instant,
     frames: u32,
     /// The production view and transfer panel, their models, and a button held on them (left?).
@@ -940,6 +942,8 @@ impl App {
             right_down: None,
             info_down: false,
             modifiers: ModifiersState::empty(),
+            #[cfg(target_arch = "wasm32")]
+            paste_key: None,
             title_at: start,
             frames: 0,
             panels: Panels::default(),

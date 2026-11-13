@@ -26,6 +26,18 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, _el: &ActiveEventLoop) {
+        // The page read the clipboard: the Ctrl+V that asked again, now pasting it.
+        #[cfg(target_arch = "wasm32")]
+        if crate::web::pasted_ready() {
+            match (self.paste_key.take(), self.gpu.as_ref().map(|g| g.window.id())) {
+                (Some((event, mods)), Some(id)) => {
+                    let held = std::mem::replace(&mut self.modifiers, mods);
+                    self.window_event(_el, id, event);
+                    self.modifiers = held;
+                }
+                _ => _ = crate::web::take_pasted(),
+            }
+        }
         #[cfg(target_arch = "wasm32")]
         if let Some(parts) = self.gpu_wait.as_ref().and_then(|w| w.borrow_mut().take()) {
             self.gpu_wait = None;
@@ -64,6 +76,16 @@ impl ApplicationHandler for App {
         if let WindowEvent::KeyboardInput { event: k, .. } = &mut event {
             if !self.rebind(k) {
                 return;
+            }
+        }
+        // The browser reads the clipboard in the background: a Ctrl+V comes again when it has.
+        #[cfg(target_arch = "wasm32")]
+        if let WindowEvent::KeyboardInput { event: k, .. } = &event {
+            let m = self.modifiers;
+            let ctrl = (m.control_key() || m.super_key()) && !m.alt_key();
+            let paste = crate::text_edit::cmd(&k.logical_key.as_ref(), ctrl, m.shift_key()) == Some(crate::text_edit::Cmd::Paste);
+            if paste && k.state == ElementState::Pressed && !crate::web::pasted_ready() {
+                self.paste_key = Some((event.clone(), m));
             }
         }
         // The pointer is in the window on every screen (the main menu's, help's and options' arms below don't reach the

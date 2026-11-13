@@ -128,6 +128,7 @@ The controls are the original's; the main menu's Options screen → Controls cha
 | Colony: hold on the planet panel | The build menu |
 | Research: Auto ships / buildings / tanks | Ours: while on, an idle research slot starts the next tech of that kind by itself (off by default) |
 | Esc | Back |
+| Text fields | Shift+arrows/Home/End select, Ctrl+arrows / Ctrl+Backspace / Ctrl+Delete work by word, Ctrl+A select all, Ctrl+C / X / V copy, cut, paste, Ctrl+Z undo; the mouse places the caret, drags a selection, double click selects a word |
 | V | Vsync on/off |
 | F12 / Shift+F12 | Quick save / quick load (single player; in multiplayer F12 saves on the host) |
 

@@ -327,6 +327,48 @@ pub struct Entry {
     pub cursor: usize,
     /// `IOGombnyomasraTorles`: the first key clears the text.
     pub clear: bool,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
+}
+
+crate::text_edit::edit_field!(Entry, |e, b| _ = e.key(EntryKey::Char(b)), clear);
+
+impl Entry {
+    /// A key (`OptionsScreen::entry_key`); true on Enter.
+    fn key(&mut self, k: EntryKey) -> bool {
+        let e = self;
+        let clear = std::mem::take(&mut e.clear);
+        if clear && matches!(k, EntryKey::Char(_) | EntryKey::Back | EntryKey::Delete) {
+            e.text.clear();
+            e.cursor = 0;
+            if !matches!(k, EntryKey::Char(_)) {
+                return false;
+            }
+        }
+        match k {
+            EntryKey::Char(c) => {
+                if e.cursor < 0x20 {
+                    e.text.insert(e.cursor.min(e.text.len()), c);
+                    e.text.truncate(0x20);
+                    e.cursor += 1;
+                }
+            }
+            EntryKey::Back if e.cursor > 0 => {
+                e.cursor -= 1;
+                e.text.remove(e.cursor);
+            }
+            EntryKey::Delete if e.cursor < e.text.len() => {
+                e.text.remove(e.cursor);
+            }
+            EntryKey::Left => e.cursor = e.cursor.saturating_sub(1),
+            EntryKey::Right => e.cursor = (e.cursor + 1).min(e.text.len()),
+            EntryKey::Home => e.cursor = 0,
+            EntryKey::End => e.cursor = e.text.len(),
+            EntryKey::Enter => return true,
+            _ => {}
+        }
+        false
+    }
 }
 
 /// The screen's hot-spot ids (`Mouse_Szoveg_Set`). Under the tutorial the exe numbers the tabs, the panel and the
@@ -769,7 +811,7 @@ impl OptionsScreen {
             Some(s) => s.name.iter().take(0x20).copied().collect(),
             None => format!("Save Game {:02}", self.slot).into_bytes(),
         };
-        self.entry = Some(Entry { cursor: text.len(), text, clear: true });
+        self.entry = Some(Entry { cursor: text.len(), text, clear: true, sel: Default::default() });
     }
 
     pub(crate) fn set_page(&mut self, p: i32) {
@@ -893,39 +935,9 @@ impl OptionsScreen {
     /// instead), the arrows, Home and End; Enter saves (`Options_EnterPressed` exe 0x51a090: `LoadSave(slot,
     /// IOString, 2)`, then back).
     pub fn entry_key(&mut self, k: EntryKey) -> Option<Act> {
-        let e = self.entry.as_mut()?;
-        let clear = std::mem::take(&mut e.clear);
-        if clear && matches!(k, EntryKey::Char(_) | EntryKey::Back | EntryKey::Delete) {
-            e.text.clear();
-            e.cursor = 0;
-            if !matches!(k, EntryKey::Char(_)) {
-                return None;
-            }
-        }
-        match k {
-            EntryKey::Char(c) => {
-                if e.cursor < 0x20 {
-                    e.text.insert(e.cursor.min(e.text.len()), c);
-                    e.text.truncate(0x20);
-                    e.cursor += 1;
-                }
-            }
-            EntryKey::Back if e.cursor > 0 => {
-                e.cursor -= 1;
-                e.text.remove(e.cursor);
-            }
-            EntryKey::Delete if e.cursor < e.text.len() => {
-                e.text.remove(e.cursor);
-            }
-            EntryKey::Left => e.cursor = e.cursor.saturating_sub(1),
-            EntryKey::Right => e.cursor = (e.cursor + 1).min(e.text.len()),
-            EntryKey::Home => e.cursor = 0,
-            EntryKey::End => e.cursor = e.text.len(),
-            EntryKey::Enter => {
-                let e = self.entry.take()?;
-                return Some(Act::Save(self.slot, e.text));
-            }
-            _ => {}
+        if self.entry.as_mut()?.key(k) {
+            let e = self.entry.take()?;
+            return Some(Act::Save(self.slot, e.text));
         }
         None
     }

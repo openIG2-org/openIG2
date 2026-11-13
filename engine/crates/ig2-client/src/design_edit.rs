@@ -94,6 +94,41 @@ pub struct NameEntry {
     pub stored: Option<usize>,
     /// Ours (modern, deviation 544): the text is another listed design's name.
     pub taken: bool,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
+}
+
+crate::text_edit::edit_field!(NameEntry, |e, b| e.key(EntryKey::Char(b)), clear);
+
+impl NameEntry {
+    /// A key by the input's rules: the first character, Backspace or Delete with `clear` replaces the text.
+    pub fn key(&mut self, k: EntryKey) {
+        let e = self;
+        let clear = std::mem::take(&mut e.clear);
+        if clear && matches!(k, EntryKey::Char(_) | EntryKey::Back | EntryKey::Delete) {
+            e.text.clear();
+            e.cursor = 0;
+        }
+        match k {
+            EntryKey::Char(ch) if e.cursor < NAME_MAX => {
+                e.text.truncate(NAME_MAX - 1);
+                e.text.insert(e.cursor.min(e.text.len()), ch);
+                e.cursor += 1;
+            }
+            EntryKey::Back if !clear && e.cursor > 0 => {
+                e.cursor -= 1;
+                e.text.remove(e.cursor);
+            }
+            EntryKey::Delete if !clear && e.cursor < e.text.len() => {
+                e.text.remove(e.cursor);
+            }
+            EntryKey::Left => e.cursor = e.cursor.saturating_sub(1),
+            EntryKey::Right => e.cursor = (e.cursor + 1).min(e.text.len()),
+            EntryKey::Home => e.cursor = 0,
+            EntryKey::End => e.cursor = e.text.len(),
+            _ => {}
+        }
+    }
 }
 
 /// A key of the name input.
@@ -272,7 +307,7 @@ impl Design {
 
     /// The name input on `stored` (the viewing mode's design) or the scratch.
     fn start_entry(&mut self, text: Vec<u8>, stored: Option<usize>) {
-        self.entry = Some(NameEntry { cursor: text.len(), text, clear: true, stored, taken: false });
+        self.entry = Some(NameEntry { cursor: text.len(), text, clear: true, stored, taken: false, sel: Default::default() });
     }
 
     /// `RedesignPlan` (ELF 0x508a60 / exe 0x4b6940): a copy of the chosen design, renamed, as a new design.
@@ -646,33 +681,16 @@ impl Design {
     /// the cursor keys only drop the flag.
     /// Modern (deviation 544): a stored design's name is not written while it is another listed design's (`designs`).
     pub fn entry_key(&mut self, designs: &[[u8; 0x84]], k: EntryKey) -> Option<(usize, Vec<u8>)> {
+        self.entry.as_mut()?.key(k);
+        self.entry_written(designs)
+    }
+
+    /// The input's text written: into the scratch, or the stored design's to rename (`None` while the modern
+    /// screen finds it taken).
+    pub fn entry_written(&mut self, designs: &[[u8; 0x84]]) -> Option<(usize, Vec<u8>)> {
         let except = e_except(self.mode, self.current());
         let modern = self.modern;
         let e = self.entry.as_mut()?;
-        let clear = std::mem::take(&mut e.clear);
-        if clear && matches!(k, EntryKey::Char(_) | EntryKey::Back | EntryKey::Delete) {
-            e.text.clear();
-            e.cursor = 0;
-        }
-        match k {
-            EntryKey::Char(ch) if e.cursor < NAME_MAX => {
-                e.text.truncate(NAME_MAX - 1);
-                e.text.insert(e.cursor.min(e.text.len()), ch);
-                e.cursor += 1;
-            }
-            EntryKey::Back if !clear && e.cursor > 0 => {
-                e.cursor -= 1;
-                e.text.remove(e.cursor);
-            }
-            EntryKey::Delete if !clear && e.cursor < e.text.len() => {
-                e.text.remove(e.cursor);
-            }
-            EntryKey::Left => e.cursor = e.cursor.saturating_sub(1),
-            EntryKey::Right => e.cursor = (e.cursor + 1).min(e.text.len()),
-            EntryKey::Home => e.cursor = 0,
-            EntryKey::End => e.cursor = e.text.len(),
-            _ => {}
-        }
         e.taken = modern && name_taken(designs, &e.text, e.stored.or(except));
         let (text, stored, taken) = (e.text.clone(), e.stored, e.taken);
         match stored {

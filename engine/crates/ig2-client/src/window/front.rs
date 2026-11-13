@@ -24,11 +24,6 @@ impl App {
             }
             due += 1;
         }
-        // The browser's clipboard text, read after its Ctrl+V.
-        #[cfg(target_arch = "wasm32")]
-        if let (Some(t), Some(mp)) = (crate::web::take_pasted(), &mut fr.mp) {
-            mp.paste(&t);
-        }
         for o in outs {
             self.front_mp_out(o);
         }
@@ -500,9 +495,7 @@ impl App {
         match o {
             Out::Click => self.audio.play(crate::audio::CLICK),
             Out::Copy(s) => {
-                if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(s)) {
-                    eprintln!("ig2-client: clipboard: {e}");
-                }
+                crate::text_edit::clipboard_set(s);
                 self.audio.play(crate::audio::CLICK);
             }
             Out::Close => self.after_page(|app| {
@@ -703,21 +696,21 @@ impl App {
                 }
                 return;
             }
-            // Ctrl+V pastes (a join code), Ctrl+C copies the host's join code.
-            if self.modifiers.control_key() {
-                match k.as_ref() {
-                    Key::Character(c) if c.eq_ignore_ascii_case("v") => match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
-                        Ok(text) => mp.paste(&text),
-                        Err(e) => eprintln!("ig2-client: clipboard: {e}"),
-                    },
-                    Key::Character(c) if c.eq_ignore_ascii_case("c") => {
-                        if let Some(o) = mp.copy() {
-                            self.front_mp_out(o);
-                        }
-                    }
-                    _ => {}
+            // The focused field's selection, clipboard and undo (`crate::text_edit`); Ctrl+C with nothing selected
+            // copies the host's join code.
+            let m = self.modifiers;
+            let ctrl = (m.control_key() || m.super_key()) && !m.alt_key();
+            if ctrl && matches!(k.as_ref(), Key::Character(c) if c.eq_ignore_ascii_case("c")) && crate::text_edit::range(mp.field_mut()).is_none() {
+                if let Some(o) = mp.copy() {
+                    self.front_mp_out(o);
                 }
                 return;
+            }
+            let lang = self.hud.as_ref().map_or(ig2_formats::text::Lang::En, |h| h.texts.lang);
+            match crate::text_edit::key(mp.field_mut(), &k.as_ref(), self.modifiers, lang) {
+                crate::text_edit::Out::Pass => {}
+                crate::text_edit::Out::Changed => return mp.edited(),
+                _ => return,
             }
             // Ours (ADR 0064): Tab moves between the connection page's fields, the arrows through its list.
             match k.as_ref() {
@@ -770,6 +763,15 @@ impl App {
             if let (Key::Character("o" | "O"), Some(a)) = (k.as_ref(), f.s.settings_key()) {
                 self.front_act(a);
             }
+            return;
+        }
+        // Ours: the selection, the clipboard and undo (`crate::text_edit`).
+        let lang = self.hud.as_ref().map_or(ig2_formats::text::Lang::En, |h| h.texts.lang);
+        let entry = match (&mut f.s.high_score, &mut f.s.name) {
+            (Some(h), _) => Some(&mut h.entry),
+            (None, n) => n.as_mut(),
+        };
+        if entry.is_some_and(|e| crate::text_edit::key(e, &k.as_ref(), self.modifiers, lang) != crate::text_edit::Out::Pass) {
             return;
         }
         let key = match k.as_ref() {

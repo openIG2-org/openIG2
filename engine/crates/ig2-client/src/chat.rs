@@ -35,7 +35,11 @@ pub struct Entry {
     pub text: Vec<u8>,
     /// `IOKurzor`.
     pub cursor: usize,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
 }
+
+crate::text_edit::edit_field!(Entry, |e, b| _ = e.key(EntryKey::Char(b)));
 
 impl Entry {
     /// A key; `Some(line)` once Enter ends a non-empty entry (`ExecuteString(buf)`), `Some(empty)` for an empty one
@@ -73,6 +77,13 @@ impl Entry {
     /// `FillToScreen(IOX + min(IOKurzor, 0x33)·CharXMeret[2], IOY + CharYMeret[2], CharXMeret[2], 2, 1)`.
     pub fn draw(&self, f: &mut Frame, font: &Font, white: crate::render::TexId, v: &Virtual, palette: &[[f32; 3]], time: f32) {
         let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
+        // Ours: the selection behind its cells.
+        if let Some(a) = self.sel.anchor.map(|a| a.min(self.text.len())).filter(|&a| a != self.cursor) {
+            let (w, h) = (font.advance(2), font.height(2));
+            let (x0, x1) = (274.0 + a.min(self.cursor) as f32 * w, 274.0 + a.max(self.cursor).min(ENTRY_LEN - 1) as f32 * w);
+            let c = col(1);
+            f.push(white, crate::render::Blend::Alpha, Instance::new(crate::render::kind::SPRITE, v.px((x0 + x1) / 2.0, 6.0 + h / 2.0), [(x1 - x0) * v.k / 2.0, h * v.k / 2.0], [c[0], c[1], c[2], 0.35]));
+        }
         font.text(f, v, &self.text, 274.0, 6.0, ENTRY_LEN, 2, Align::Left, col(CHAT_COLOUR), None);
         if (time * 1000.0 / 200.0) as i64 % 2 == 0 {
             let w = font.advance(2);
@@ -181,6 +192,24 @@ mod tests {
         assert_eq!(e.text.len(), ENTRY_LEN - 1);
         assert_eq!(e.key(EntryKey::Enter).map(|t| t.len()), Some(ENTRY_LEN - 1));
         assert_eq!(Entry::default().key(EntryKey::Escape), Some(Vec::new()));
+    }
+
+    /// The editing keys keep the entry's own rules: a paste drops 0x81 and stops at the entry's length.
+    #[test]
+    fn select_all_and_paste_keep_the_entry_rules() {
+        use crate::text_edit::{apply, paste, Cmd, Out};
+        let mut e = Entry::default();
+        for b in *b"hello" {
+            e.key(EntryKey::Char(b));
+        }
+        assert_eq!(apply(&mut e, Cmd::SelectAll), Out::Done);
+        assert_eq!(apply(&mut e, Cmd::Copy), Out::Copy(b"hello".to_vec(), false));
+        assert!(paste(&mut e, &[b'a', 0x81, b'b']));
+        assert_eq!((e.text.as_slice(), e.cursor), (&b"ab"[..], 2));
+        paste(&mut e, &[b'y'; 80]);
+        assert_eq!(e.text.len(), ENTRY_LEN - 1);
+        assert_eq!(apply(&mut e, Cmd::Undo), Out::Changed);
+        assert_eq!(e.text, b"ab");
     }
 
     #[test]

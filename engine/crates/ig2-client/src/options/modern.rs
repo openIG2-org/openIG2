@@ -324,6 +324,32 @@ pub fn nav(name: &str, typing: bool) -> Option<Nav> {
     })
 }
 
+/// The multiplayer name while it is typed: its own rules (a byte ≥ 0x20, `NAME_MAX` of them) at the caret.
+impl crate::text_edit::Edit for Modern {
+    fn text(&self) -> &[u8] {
+        &self.name
+    }
+    fn cursor(&self) -> usize {
+        self.name_cursor
+    }
+    fn place(&mut self, c: usize) {
+        self.name_cursor = c.min(self.name.len());
+    }
+    fn sel(&mut self) -> &mut crate::text_edit::Sel {
+        &mut self.name_sel
+    }
+    fn put(&mut self, b: u8) {
+        if b >= 0x20 && self.name.len() < NAME_MAX {
+            let c = self.name_cursor.min(self.name.len());
+            self.name.insert(c, b);
+            self.name_cursor = c + 1;
+        }
+    }
+    fn set(&mut self, text: Vec<u8>, cursor: usize) {
+        (self.name, self.name_cursor) = (text, cursor);
+    }
+}
+
 /// The screen's own state; the values are the `OptionsScreen`'s.
 #[derive(Debug, Clone)]
 pub struct Modern {
@@ -339,6 +365,9 @@ pub struct Modern {
     pub editing: bool,
     /// `MultiplayerNev` in the font's bytes.
     pub name: Vec<u8>,
+    /// The name's caret and selection while it is typed (`crate::text_edit`).
+    name_cursor: usize,
+    name_sel: crate::text_edit::Sel,
     /// ADR 0058: the keys, the action waiting for its new key.
     pub binds: crate::bindings::Bindings,
     pub capture: Option<usize>,
@@ -356,8 +385,13 @@ pub struct Modern {
 }
 
 impl Modern {
+    /// The name's typing starts: the caret after it, nothing selected.
+    fn start_name(&mut self) {
+        (self.editing, self.name_cursor, self.name_sel) = (true, self.name.len(), Default::default());
+    }
+
     pub fn new(o: &OptionsScreen, name: Vec<u8>, binds: crate::bindings::Bindings) -> Self {
-        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, hovered: None, editing: false, name, binds, capture: None, kept: Default::default(), game: false, menu: false, ask: None, out: None, previewed: None, muted: [None; 2] };
+        let mut m = Self { tab: Tab::Display, focus: 0, keyed: false, shown: None, hovered: None, editing: false, name, name_cursor: 0, name_sel: Default::default(), binds, capture: None, kept: Default::default(), game: false, menu: false, ask: None, out: None, previewed: None, muted: [None; 2] };
         m.keep(o);
         m.previewed = scale_row(o);
         m
@@ -601,9 +635,13 @@ impl Modern {
         let lines = items.len() + tail;
         if self.editing {
             match k {
-                Nav::Char(c) if c >= 0x20 && self.name.len() < NAME_MAX => self.name.push(c),
+                Nav::Char(c) => crate::text_edit::Edit::put(self, c),
                 Nav::Erase => {
-                    self.name.pop();
+                    let c = self.name_cursor.min(self.name.len());
+                    if c > 0 {
+                        self.name.remove(c - 1);
+                        self.name_cursor = c - 1;
+                    }
                 }
                 Nav::Activate | Nav::Back => self.editing = false,
                 _ => {}
@@ -634,7 +672,7 @@ impl Modern {
                     (None, Some(&it)) if Self::enabled(o, it) => match it {
                         Item::Row(r) => Self::step(o, r, d),
                         Item::Slider(s) if k != Nav::Activate => o.sliders[s].value = (o.sliders[s].value + 5 * d).clamp(0, 100),
-                        Item::Name if k == Nav::Activate => self.editing = true,
+                        Item::Name if k == Nav::Activate => self.start_name(),
                         Item::Bind(b) if k == Nav::Activate => self.capture = Some(b),
                         Item::Reset if k == Nav::Activate => self.binds = Default::default(),
                         // Enter on a slot: Load a filled one, else Save into it.
@@ -1187,17 +1225,25 @@ impl Modern {
                 }
             }
             Item::Name => {
-                // A recessed field (`.field input`), the caret while it is typed.
-                let caret = self.editing && (ui.input(|x| x.time) * 2.0) as u64 % 2 == 0;
-                let text = s(self.name.clone()) + if caret { "|" } else { "" };
-                let (rect, resp) = ui.allocate_exact_size(egui::vec2(180.0, 36.0), egui::Sense::click());
-                let p = ui.painter();
-                p.rect_filled(rect, ds::RADIUS_PLATE, k.glass_deep);
-                ds::rim(p, rect, ds::RADIUS_PLATE, if self.editing { k.focus } else { k.rim });
-                Text::new(&text, Font::DATA.sized(16.0).tracking(0.08)).paint(ui, rect.shrink2(egui::vec2(12.0, 0.0)));
-                if resp.clicked() {
-                    self.editing = true;
+                // The kit's text field, the caret and the selection while it is typed; the pointer places and selects.
+                use crate::text_edit::{self as te, Mouse};
+                let sel = if self.editing { te::range(self) } else { None };
+                let caret = self.editing.then_some(self.name_cursor.min(self.name.len()));
+                let (resp, hit) = ds::text_field_sel(ui, &s(self.name.clone()), caret, sel, "", egui::vec2(180.0, 36.0));
+                let resp = resp.on_hover_cursor(egui::CursorIcon::Text);
+                let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
+                if !self.editing && resp.clicked() {
+                    self.start_name();
                     return true;
+                }
+                if let Some(at) = hit.filter(|_| self.editing) {
+                    if resp.double_clicked() {
+                        te::mouse(self, Mouse::Word(at));
+                    } else if pressed && resp.is_pointer_button_down_on() {
+                        te::mouse(self, Mouse::Press(at, shift));
+                    } else if resp.dragged() {
+                        te::mouse(self, Mouse::Drag(at));
+                    }
                 }
             }
             Item::Bind(b) => {
@@ -1384,8 +1430,9 @@ impl Modern {
             // The field: the name being typed with its caret, else what Save would start with.
             let resp = match &o.entry {
                 Some(e) => {
-                    let before = s(e.text[..e.cursor.min(e.text.len())].to_vec()).chars().count();
-                    ds::text_field(ui, &s(e.text.clone()), Some(before), "", egui::vec2(w, 44.0))
+                    let chars = |b: usize| s(e.text[..b.min(e.text.len())].to_vec()).chars().count();
+                    let sel = e.sel.anchor.filter(|&a| a != e.cursor).map(|a| chars(a.min(e.cursor))..chars(a.max(e.cursor)));
+                    ds::text_field_sel(ui, &s(e.text.clone()), Some(chars(e.cursor)), sel, "", egui::vec2(w, 44.0)).0
                 }
                 None => {
                     let shown = slot.as_ref().map_or_else(|| format!("Save Game {:02}", o.slot), |sl| s(sl.name.clone()));

@@ -32,6 +32,8 @@ pub enum Act {
     Back,
     /// The room-mods dialog's action (`true`) or Cancel (ADR 0086 §3).
     RoomMods(bool),
+    /// The pointer on a text field: the connection page's (`Some`) or the room's chat line.
+    Text(Option<Focus>, crate::text_edit::Mouse),
 }
 
 /// The boards' frame on the screen (points): the side margin (96 at 1920), the right column's width (584).
@@ -83,11 +85,28 @@ fn hint(ui: &mut egui::Ui, text: &str, c: Color32, lines: usize) {
     ui.painter().galley(rect.min, fit.galley, Color32::WHITE);
 }
 
-/// One of our text fields (its keys are ours): the text (dots for a password), the caret while `focused`.
+/// One of our text fields (its keys are ours): the text (dots for a password), the caret and the selection while
+/// `focused`; a press puts the caret, a drag selects, a double-click picks a word (`crate::text_edit`), as an
+/// [`Act::Text`] for `which`.
 #[allow(clippy::too_many_arguments)]
-fn field(ui: &mut egui::Ui, f: &Field, lang: ig2_formats::text::Lang, focused: bool, masked: bool, hint: &str, width: f32, height: f32) -> egui::Response {
+fn field(ui: &mut egui::Ui, f: &Field, which: Option<Focus>, lang: ig2_formats::text::Lang, focused: bool, masked: bool, hint: &str, width: f32, height: f32, acts: &mut Vec<Act>) -> egui::Response {
+    use crate::text_edit::Mouse;
     let text = if masked { "•".repeat(f.text.len()) } else { ig2_formats::text::decode(&f.text, lang) };
-    ds::text_field(ui, &text, focused.then_some(f.cursor), hint, Vec2::new(width, height))
+    let sel = f.sel.anchor.map(|a| a.min(f.text.len())).filter(|&a| focused && a != f.cursor).map(|a| a.min(f.cursor)..a.max(f.cursor));
+    let (resp, hit) = ds::text_field_sel(ui, &text, focused.then_some(f.cursor), sel, hint, Vec2::new(width, height));
+    let resp = resp.on_hover_cursor(egui::CursorIcon::Text);
+    if let Some(at) = hit {
+        let (pressed, shift) = ui.input(|i| (i.pointer.primary_pressed(), i.modifiers.shift));
+        let m = if resp.double_clicked() {
+            Some(Mouse::Word(at))
+        } else if pressed && resp.is_pointer_button_down_on() {
+            Some(Mouse::Press(at, shift))
+        } else {
+            resp.dragged().then_some(Mouse::Drag(at))
+        };
+        acts.extend(m.map(|m| Act::Text(which, m)));
+    }
+    resp
 }
 
 /// A panel at `rect` (an area of its own): its background behind `add`, `margin` inside.
@@ -271,6 +290,16 @@ impl MpScreen {
                 Act::Options(o) => self.set_options(o),
                 Act::Back => self.key(None, true, net),
                 Act::RoomMods(yes) => self.room_mods_answer(yes),
+                Act::Text(which, m) => {
+                    let f = match which {
+                        Some(Focus::Address) => &mut self.address,
+                        Some(Focus::Password) => &mut self.password,
+                        Some(Focus::Relay) => &mut self.relay,
+                        None => &mut self.entry,
+                    };
+                    crate::text_edit::mouse(f, m);
+                    None
+                }
             };
             outs.extend(o);
         }
@@ -390,12 +419,12 @@ impl MpScreen {
                 title(ui, &w(words::JOIN_DIRECTLY));
                 ui.add_space(8.0);
                 label(ui, w(words::ADDRESS).trim_end_matches(':'));
-                if field(ui, &self.address, lang, self.focus == Focus::Address, false, "192.168.0.10  /  IG2-…", width, 44.0).clicked() {
+                if field(ui, &self.address, Some(Focus::Address), lang, self.focus == Focus::Address, false, "192.168.0.10  /  IG2-…", width, 44.0, acts).clicked() {
                     acts.push(Act::Spot(spot::ADDRESS, false));
                 }
                 ui.add_space(8.0);
                 label(ui, &w(words::PASSWORD));
-                if field(ui, &self.password, lang, self.focus == Focus::Password, true, "", width, 44.0).clicked() {
+                if field(ui, &self.password, Some(Focus::Password), lang, self.focus == Focus::Password, true, "", width, 44.0, acts).clicked() {
                     acts.push(Act::Spot(spot::PASSWORD, false));
                 }
                 ui.add_space(8.0);
@@ -418,7 +447,7 @@ impl MpScreen {
                 title(ui, &w(words::RELAY_TITLE));
                 ui.add_space(8.0);
                 label(ui, &w(words::RELAY_ADDRESS));
-                if field(ui, &self.relay, lang, self.focus == Focus::Relay, false, "relay.example.org:port", width, 44.0).clicked() {
+                if field(ui, &self.relay, Some(Focus::Relay), lang, self.focus == Focus::Relay, false, "relay.example.org:port", width, 44.0, acts).clicked() {
                     acts.push(Act::Spot(spot::RELAY, false));
                 }
                 ui.add_space(10.0);
@@ -750,7 +779,7 @@ impl MpScreen {
                 ui.add_space(PANEL_GAP);
             }
             let h = rest(ui).max(180.0);
-            self.chat_panel(ui, Vec2::new(wide, h), lang);
+            self.chat_panel(ui, Vec2::new(wide, h), lang, acts);
         });
         // Leave, Ready or Start; the status: who isn't ready, two empires needed, a start error.
         let label = if host {
@@ -1003,7 +1032,7 @@ impl MpScreen {
     }
 
     /// The chat panel: the lines (the newest at the bottom) and the line being typed.
-    fn chat_panel(&self, ui: &mut egui::Ui, size: Vec2, lang: ig2_formats::text::Lang) {
+    fn chat_panel(&self, ui: &mut egui::Ui, size: Vec2, lang: ig2_formats::text::Lang, acts: &mut Vec<Act>) {
         let w = |b: &[u8]| words::text(lang, b);
         let k = ds::tokens();
         panel(ui, size, true, ds::PanelKind::Deep, 0.86, [24.0, 20.0], |ui| {
@@ -1031,7 +1060,7 @@ impl MpScreen {
             });
             ui.add_space(10.0);
             let width = ui.available_width();
-            field(ui, &self.entry, lang, true, false, &w(words::CHAT_HINT), width, 42.0);
+            field(ui, &self.entry, None, lang, true, false, &w(words::CHAT_HINT), width, 42.0, acts);
         });
     }
 }

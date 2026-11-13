@@ -226,32 +226,47 @@ impl App {
     /// (re/deviations.md).
     pub(super) fn design_entry_key(&mut self, k: &Key<&str>) {
         use crate::design_edit::EntryKey;
-        let key = match k {
-            Key::Named(NamedKey::Enter) => {
-                if let Some(d) = &mut self.design {
-                    d.entry = None;
+        // Ours: the selection, the clipboard and undo (`crate::text_edit`).
+        let lang = self.hud.as_ref().map_or(ig2_formats::text::Lang::En, |h| h.texts.lang);
+        let edited = match self.design.as_mut().and_then(|d| d.entry.as_mut()) {
+            Some(e) => crate::text_edit::key(e, k, self.modifiers, lang),
+            None => crate::text_edit::Out::Pass,
+        };
+        let key = match edited {
+            crate::text_edit::Out::Changed => None,
+            crate::text_edit::Out::Pass => Some(match k {
+                Key::Named(NamedKey::Enter) => {
+                    if let Some(d) = &mut self.design {
+                        d.entry = None;
+                    }
+                    return;
                 }
-                return;
-            }
-            Key::Named(NamedKey::Backspace) => EntryKey::Back,
-            Key::Named(NamedKey::Delete) => EntryKey::Delete,
-            Key::Named(NamedKey::Home) => EntryKey::Home,
-            Key::Named(NamedKey::End) => EntryKey::End,
-            Key::Named(NamedKey::ArrowLeft) => EntryKey::Left,
-            Key::Named(NamedKey::ArrowRight) => EntryKey::Right,
-            Key::Named(NamedKey::Space) => EntryKey::Char(b' '),
-            Key::Character(c) => {
-                let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
-                match b.first().copied().filter(|&b| b >= 0x20 && b != 0x81) {
-                    Some(b) => EntryKey::Char(b),
-                    None => return,
+                Key::Named(NamedKey::Backspace) => EntryKey::Back,
+                Key::Named(NamedKey::Delete) => EntryKey::Delete,
+                Key::Named(NamedKey::Home) => EntryKey::Home,
+                Key::Named(NamedKey::End) => EntryKey::End,
+                Key::Named(NamedKey::ArrowLeft) => EntryKey::Left,
+                Key::Named(NamedKey::ArrowRight) => EntryKey::Right,
+                Key::Named(NamedKey::Space) => EntryKey::Char(b' '),
+                Key::Character(c) => {
+                    let b = self.hud.as_ref().map_or_else(|| c.as_bytes().to_vec(), |h| h.texts.encode(c));
+                    match b.first().copied().filter(|&b| b >= 0x20 && b != 0x81) {
+                        Some(b) => EntryKey::Char(b),
+                        None => return,
+                    }
                 }
-            }
+                _ => return,
+            }),
             _ => return,
         };
         let Some(d) = &mut self.design else { return };
         let en = self.world.game.state.mem.i32(ig2_sim::save::va::EN).clamp(0, 18) as usize;
-        if let Some((k, name)) = d.entry_key(self.world.game.state.designs.get(en).map_or(&[][..], |t| &t[..]), key) {
+        let designs = self.world.game.state.designs.get(en).map_or(&[][..], |t| &t[..]);
+        let written = match key {
+            Some(key) => d.entry_key(designs, key),
+            None => d.entry_written(designs),
+        };
+        if let Some((k, name)) = written {
             // Multiplayer: the shared state changes only through the lockstep (deviation 96).
             if self.world.net.is_some() {
                 let n = name.iter().take_while(|&&c| c != 0).take(0x15).copied().collect();

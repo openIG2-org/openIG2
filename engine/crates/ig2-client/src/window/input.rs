@@ -21,6 +21,10 @@ impl App {
             }
             return false;
         };
+        // Ours: the selection, the clipboard and undo (`crate::text_edit`).
+        if crate::text_edit::key(e, key, self.modifiers, h.texts.lang) != crate::text_edit::Out::Pass {
+            return true;
+        }
         let k = match key {
             Key::Character(s) => s.bytes().next().map(E::Char),
             Key::Named(NamedKey::Space) => Some(E::Char(b' ')),
@@ -531,6 +535,15 @@ impl App {
                 return true;
             }
             return false;
+        }
+        // Ours: the search's selection, clipboard and undo (`crate::text_edit`).
+        match crate::text_edit::key(&mut log.search, key, self.modifiers, h.texts.lang) {
+            crate::text_edit::Out::Pass => {}
+            crate::text_edit::Out::Changed => {
+                log.scroll = 0;
+                return true;
+            }
+            _ => return true,
         }
         let k = match key {
             Key::Character(s) => s.bytes().next().map(E::Char),

@@ -70,6 +70,10 @@ Space as `_`); Backspace, Delete (the byte at the cursor), Home, End, ←, → e
 `FUN_0051a090`, design `DesignEntertNyomott`, MainScr `MainScr_IPEntered`, the starmap's rename with tutorial
 events 3/4); Esc cancels it per screen.
 
+Port status: the client adds selection, word jumps, copy, cut, paste and undo to every entry (deviation 547;
+`ig2-client/src/text_edit.rs`, `gui/ds/widgets.rs` `text_field_sel`); the mods browser search, the custom-game seed
+and empire names are still append-only.
+
 ## 2. `FUN_004db040(vk, ch, down)` (exe 0x4db040): the screen's handler
 
 | `AktKep` | handler |

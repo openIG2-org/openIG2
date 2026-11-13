@@ -498,11 +498,39 @@ pub struct Field {
     pub text: Vec<u8>,
     pub cursor: usize,
     max: usize,
+    /// Ours: the selection and undo (`crate::text_edit`).
+    pub sel: crate::text_edit::Sel,
+    /// A password: shown as dots, nothing of it copied.
+    secret: bool,
+}
+
+impl crate::text_edit::Edit for Field {
+    fn text(&self) -> &[u8] {
+        &self.text
+    }
+    fn cursor(&self) -> usize {
+        self.cursor
+    }
+    fn place(&mut self, c: usize) {
+        self.cursor = c.min(self.text.len());
+    }
+    fn sel(&mut self) -> &mut crate::text_edit::Sel {
+        &mut self.sel
+    }
+    fn put(&mut self, b: u8) {
+        self.key(EntryKey::Char(b));
+    }
+    fn set(&mut self, text: Vec<u8>, cursor: usize) {
+        (self.text, self.cursor) = (text, cursor);
+    }
+    fn secret(&self) -> bool {
+        self.secret
+    }
 }
 
 impl Field {
     fn new(max: usize) -> Self {
-        Self { text: Vec::new(), cursor: 0, max }
+        Self { text: Vec::new(), cursor: 0, max, sel: Default::default(), secret: false }
     }
 
     /// A key; `true` on Enter.
@@ -531,6 +559,7 @@ impl Field {
 
     fn take(&mut self) -> String {
         self.cursor = 0;
+        self.sel = Default::default();
         String::from_utf8_lossy(&std::mem::take(&mut self.text)).into_owned()
     }
 
@@ -936,7 +965,7 @@ impl MpScreen {
             list: Vec::new(),
             selected: None,
             address: Field::new(MAX_ADDRESS),
-            password: Field::new(MAX_FIELD),
+            password: Field { secret: true, ..Field::new(MAX_FIELD) },
             relay: Field::new(MAX_ADDRESS),
             internet: inet.then(Vec::new),
             browsing: None,
@@ -1085,16 +1114,25 @@ impl MpScreen {
 
     /// Clipboard text into the focused field (the connection page's) or the chat line (the room), up to its first
     /// line break.
+    #[cfg(test)]
     pub fn paste(&mut self, text: &str) {
-        let f = match (&self.role, self.focus) {
+        if crate::text_edit::paste(self.field_mut(), text.trim().as_bytes()) {
+            self.edited();
+        }
+    }
+
+    /// The field the keys type into: the focused one (the connection page's) or the chat line (the room).
+    pub fn field_mut(&mut self) -> &mut Field {
+        match (&self.role, self.focus) {
             (Some(_), _) => &mut self.entry,
             (None, Focus::Address) => &mut self.address,
             (None, Focus::Password) => &mut self.password,
             (None, Focus::Relay) => &mut self.relay,
-        };
-        for c in text.trim().lines().next().unwrap_or("").bytes().filter(|c| (0x20..0x7f).contains(c)) {
-            f.key(EntryKey::Char(c));
         }
+    }
+
+    /// The focused field's text changed: a typed address is no longer the picked row.
+    pub fn edited(&mut self) {
         if self.role.is_none() && self.focus == Focus::Address {
             self.selected = None;
         }

@@ -1156,7 +1156,7 @@ mod tests {
     #[test]
     fn a_full_name_takes_a_key_at_the_cursor_and_drops_its_last() {
         use crate::design_edit::{EntryKey, NameEntry};
-        let entry = |text: &[u8], cursor, clear| Some(NameEntry { text: text.to_vec(), cursor, clear, stored: Some(4), taken: false });
+        let entry = |text: &[u8], cursor, clear| Some(NameEntry { text: text.to_vec(), cursor, clear, stored: Some(4), taken: false, sel: Default::default() });
         let mut s = Design { entry: entry(b"ABCDEFGHIJKLMNOP", 3, false), ..blank() };
         assert_eq!(s.entry_key(&[], EntryKey::Char(b'x')), Some((4, b"ABCxDEFGHIJKLMNO".to_vec())));
         // The cursor at `IOMaxLen`: nothing goes in.
