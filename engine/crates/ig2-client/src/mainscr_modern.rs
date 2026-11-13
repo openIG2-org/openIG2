@@ -39,7 +39,8 @@ fn groups(p: Panel, history: bool) -> Vec<(Option<&'static str>, Vec<Item>)> {
         ],
         // Ours (ADR 0085): the Custom game page after the scenarios.
         Panel::Single => vec![(None, vec![Item::Campaign, Item::Scenarios, Item::CustomGame])],
-        Panel::Multi => vec![(None, vec![Item::Local, Item::Internet])],
+        // The browser build has no LAN.
+        Panel::Multi => vec![(None, if cfg!(target_arch = "wasm32") { vec![Item::Internet] } else { vec![Item::Local, Item::Internet] })],
         Panel::Tutorial => vec![(None, (1..=5).map(Item::Part).collect())],
         Panel::Level => vec![(None, vec![Item::Level(0), Item::Level(2), Item::Level(1)])],
     }

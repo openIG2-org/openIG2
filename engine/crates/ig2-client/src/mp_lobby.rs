@@ -33,6 +33,8 @@ const RELAY_FILE: &str = "relay.txt";
 /// The project's public rendezvous service (ADR 0018), the relay field's value until the player saves another one
 /// (an empty field, saved as an empty `relay.txt`, turns it off).
 pub const DEFAULT_RELAY: &str = "ig2relay.justdawee.hu:30000";
+/// The browser build's relay server, fixed (a page can't resolve a host name, so [`DEFAULT_RELAY`]'s address).
+pub const WEB_RELAY: &str = "84.2.94.232:30000";
 /// The longest password typed.
 const MAX_FIELD: usize = 40;
 /// The longest address typed or pasted (a join code with four addresses and its dashes is 84).
@@ -837,6 +839,8 @@ impl MpScreen {
 
     /// The connection page (`name` = `MultiplayerNev`, `rules` = the rules fingerprint joiners must match).
     pub fn open(inet: bool, name: &str, rules: [u8; 32]) -> Self {
+        // The browser build has no LAN: every page is the internet one.
+        let inet = inet || cfg!(target_arch = "wasm32");
         Self {
             inet,
             ask: inet,
@@ -879,8 +883,8 @@ impl MpScreen {
 
     fn with_saved_relay(mut self) -> Self {
         let Some(d) = &self.save_dir else { return self };
-        // The unit tests never reach the public service.
-        let saved = saved_relay(ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)), if cfg!(test) { "" } else { DEFAULT_RELAY });
+        // The unit tests never reach the public service; the browser build's relay is fixed.
+        let saved = if cfg!(target_arch = "wasm32") { WEB_RELAY.to_owned() } else { saved_relay(ig2_formats::userfs::read_to_string(d.join(RELAY_FILE)), if cfg!(test) { "" } else { DEFAULT_RELAY }) };
         for c in saved.trim().bytes().filter(|c| (0x20..0x7f).contains(c)) {
             self.relay.key(EntryKey::Char(c));
         }
@@ -1495,6 +1499,8 @@ impl MpScreen {
         if self.role.is_none() {
             self.focus = match self.focus {
                 Focus::Address => Focus::Password,
+                // The browser build shows no relay field.
+                Focus::Password if cfg!(target_arch = "wasm32") => Focus::Address,
                 Focus::Password => Focus::Relay,
                 Focus::Relay => Focus::Address,
             };

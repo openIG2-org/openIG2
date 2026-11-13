@@ -149,7 +149,7 @@ impl ModsPage {
         let failed = FAILED.lock().unwrap_or_else(|e| e.into_inner()).clone();
         // The game started without the mods: `--mod` isn't what chose that.
         let given = GIVEN.load(std::sync::atomic::Ordering::Relaxed) && failed.is_none();
-        let saved = Mod::enabled_names();
+        let saved = Mod::prune_enabled();
         let mut all = Mod::available();
         let mut mods: Vec<Mod> = saved.iter().filter_map(|n| all.iter().position(|m| &m.name == n).map(|i| all.remove(i))).collect();
         let first_off = mods.len();

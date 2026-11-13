@@ -402,6 +402,10 @@ impl MpScreen {
                     }
                 });
             });
+            // The browser build's relay server is fixed (`WEB_RELAY`).
+            if cfg!(target_arch = "wasm32") {
+                return;
+            }
             ui.add_space(PANEL_GAP);
             panel(ui, wide, false, ds::PanelKind::Glass, 0.88, [24.0, 22.0], |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
@@ -700,7 +704,8 @@ impl MpScreen {
                         PortMap::Mapped(a) => (Some((crate::tr::text(lang, "Port mapping: on, reachable at {}").replace("{}", &a.to_string()), k.own)), true),
                         PortMap::Failed(e) => (Some((crate::tr::text(lang, "Port mapping failed: {}").replace("{}", &e), k.enemy)), false),
                     };
-                    if opt(ui, &w(words::MAP_LABEL), map, map_on, true) {
+                    // A page can't open a router port (UPnP, NAT-PMP): no switch in the browser build.
+                    if !cfg!(target_arch = "wasm32") && opt(ui, &w(words::MAP_LABEL), map, map_on, true) {
                         acts.push(Act::Spot(spot::PORT_MAP, false));
                     }
                     if opt(ui, &w(words::PRIVATE_LABEL), Some((w(words::PRIVATE_HINT), k.ink_muted)), st.private, true) {

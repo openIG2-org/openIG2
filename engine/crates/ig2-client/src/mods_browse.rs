@@ -27,9 +27,13 @@ fn when(generated: &str) -> String {
     format!("{} UTC", t.get(..16).unwrap_or(&t))
 }
 
-/// `f` on a thread; its result on the receiver.
+/// `f` on a thread; its result on the receiver. The browser build has no threads (a spawn panics): `f` runs at once
+/// there (its downloads fail at once, [`mod_repo::get`]).
 fn spawn<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Receiver<T> {
     let (tx, rx) = channel();
+    #[cfg(target_arch = "wasm32")]
+    let _ = tx.send(f());
+    #[cfg(not(target_arch = "wasm32"))]
     std::thread::spawn(move || {
         let _ = tx.send(f());
     });

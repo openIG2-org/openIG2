@@ -117,7 +117,8 @@ fn lines(p: Panel) -> Vec<Line> {
             item(Item::Quit),
         ],
         Panel::Single => vec![head("New game"), item(Item::Campaign), item(Item::Scenarios)],
-        Panel::Multi => vec![head("Multiplayer"), item(Item::Local), item(Item::Internet)],
+        // The browser build has no LAN.
+        Panel::Multi => [head("Multiplayer"), item(Item::Local), item(Item::Internet)].into_iter().filter(|e| !cfg!(target_arch = "wasm32") || *e != item(Item::Local)).collect(),
         Panel::Tutorial => std::iter::once(head("Tutorial")).chain((1..=5).map(|n| item(Item::Part(n)))).collect(),
         Panel::Level => vec![head("Difficulty"), item(Item::Level(0)), item(Item::Level(2)), item(Item::Level(1))],
     }

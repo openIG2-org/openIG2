@@ -70,6 +70,9 @@ Getting the game from "every part works" to "a player can install it and play it
 - The galaxy simulation and the modern interface do less work every frame, and a ground war no longer stutters when a building falls.
 - Fixed: a crash in campaign 1, a black screen after minimising, the spy screen's buttons, a desync after garrisons entered a battle, and a crash from a malformed diplomacy message.
 - Fleet splitting, single clicks on the production buttons, the messages screen's list and the credits video work again.
+- A mod deleted from the mods folder is dropped from the enabled list at start instead of leaving the Mods page stuck.
+- The browser version no longer freezes on the Mods page's Browse tab; its multiplayer offers only internet games through the fixed relay server, without the relay field and port mapping.
+- The quit and exit confirmations are no longer dimmed along with the screen behind them.
 
 ## 0.6 — Fixes against the original
 Every known difference from the original was sorted into fix, enhanced option or keep, and most fixes were made.

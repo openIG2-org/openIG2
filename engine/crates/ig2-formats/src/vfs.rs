@@ -476,6 +476,21 @@ impl Mod {
         Self::enabled_file().and_then(|f| crate::userfs::read_to_string(f).ok()).map(|t| Self::parse_enabled(&t)).unwrap_or_default()
     }
 
+    /// Drop from `enabled.txt` the names with no folder or zip in the mods folders any more (deleted by hand); gives
+    /// the names kept.
+    pub fn prune_enabled() -> Vec<String> {
+        let names = Self::enabled_names();
+        let available = Self::available();
+        let kept: Vec<String> = names.iter().filter(|n| available.iter().any(|m| &m.name == *n)).cloned().collect();
+        if kept.len() != names.len() {
+            let written = Self::enabled_file().map(|f| crate::userfs::write(&f, Self::enabled_text(&kept)));
+            if let Some(Err(e)) = written {
+                eprintln!("mods: rewriting enabled.txt: {e}");
+            }
+        }
+        kept
+    }
+
     /// `enabled.txt` for `names` in priority order (ADR 0068 §4).
     pub fn enabled_text(names: &[String]) -> String {
         let mut t = String::from("# The enabled mods, the first one winning a file. Written by the game's Mods page.\n");

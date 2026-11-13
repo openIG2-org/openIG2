@@ -1416,11 +1416,11 @@ pub fn confirm(ctx: &egui::Context, id: impl std::hash::Hash, open: bool, title:
         return None;
     }
     let screen = ctx.screen_rect();
-    let back = egui::LayerId::new(egui::Order::Foreground, id.with("back"));
-    ctx.layer_painter(back).rect_filled(screen, 0.0, Color32::from_black_alpha((128.0 * t) as u8));
     let size = Vec2::new(560.0, 0.0).min(screen.size() - Vec2::splat(32.0));
     let mut answer = None;
     egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(Pos2::new(screen.center().x - size.x / 2.0, screen.center().y - 120.0 + (1.0 - t) * 16.0)).fade_in(false).show(ctx, |ui| {
+        // The dimming in the box's own layer, under it: a bare painter layer draws above every area of its order.
+        ui.painter().with_clip_rect(screen).rect_filled(screen, 0.0, Color32::from_black_alpha((128.0 * t) as u8));
         ui.multiply_opacity(t);
         ui.set_width(size.x);
         answer = confirm_box(ui, size.x, title, body, yes, no);

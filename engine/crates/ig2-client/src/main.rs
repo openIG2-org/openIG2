@@ -789,6 +789,9 @@ pub fn open_install(o: &Options) -> Result<Install, String> {
 /// a missing or broken one is reported and skipped.
 fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
     mods_page::GIVEN.store(o.mods.is_some(), std::sync::atomic::Ordering::Relaxed);
+    if o.mods.is_none() {
+        ig2_formats::vfs::Mod::prune_enabled();
+    }
     let (mods, missing) = ig2_formats::vfs::Mod::enabled(o.mods.clone());
     for (n, why) in missing {
         eprintln!("ig2-client: mod {n} not loaded: {why}");
