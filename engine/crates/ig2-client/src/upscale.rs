@@ -161,7 +161,7 @@ pub fn upscale(img: &Image, f: u8) -> Hires {
 
 /// xBRZ with the border texels repeated (the crate reads past the edge as transparent, which would fade every
 /// picture's border), in bands of rows on the machine's cores.
-fn xbrz(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
+pub(crate) fn xbrz(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
     const PAD: usize = 2;
     // The kernel reads two rows above and below, a band's first rows read past its edge: each band is scaled with
     // this many rows of context on both sides, which keeps the result the whole picture's

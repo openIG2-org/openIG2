@@ -582,6 +582,9 @@ cloud_shadows = 0.5          # the clouds' shadows on the planet of the long inf
 engine_trails = 0.6          # a trail behind moving fleets, 0..1
 sky_detail = 0.5             # finer wisps, filaments and dust over the sky's nebulae, 0..1
 cloud_detail = 0.5           # soft structure inside each galaxy cloud and fog clump, 0..1
+
+[text]
+sdf_font = true            # draw the text from the pack's sharp font (needs `--make-pack --only font`)
 ```
 
 Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting
@@ -589,6 +592,10 @@ alone, and a mod never switches anything off. With several mods a switch on in a
 highest mod that sets it. A misspelt name or a value out of range is shown under the mod on the Mods page and by
 `openIG2-check`; the file is then skipped. A ready example:
 https://github.com/openIG2-org/mods/tree/main/mods-src/remaster-look
+
+`[text] sdf_font` draws the game's text from the distance-field font that `openIG2 --make-pack --only font` makes in your
+texture pack (`hires/dataraw/screen/charset_bmp.sdf.png`): the same widths, baselines and colours, sharp at any window size and
+UI scale. Without it the classic font draws as before.
 
 ### Effect files
 A mod's `effects.toml` (at the mod's top) describes the Enhanced battle effects as particles: at each moment, what

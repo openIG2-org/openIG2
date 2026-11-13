@@ -1,6 +1,6 @@
 # ADR 0089: the HD pack: every picture, video, talking head, the font and the models' detail, made from the player's install
 
-Date: 2026-11-12. Status: accepted; §1–3 built (row 570), §4 but `--smooth` (row 571). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
+Date: 2026-11-12. Status: accepted; §1–3 built (row 570), §4 but `--smooth` (row 571), §5 (row 572). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
 §5–6: the pack tool of row 567) and ADR 0013 (video). Rows 570–573 of `docs/ENHANCEMENTS.md`.
 
 ## Context
@@ -115,3 +115,16 @@ The goal: a sharper, more modern look that still reads as the original: same out
   decoded frame as the picture the renderer uploads (the spy disc's opaque fill applied to both). About 340 MB for
   the 14 heads, 6 s a head.
 - `--smooth` (RIFE) is not built yet.
+
+**The font (row 572)**, `ig2-client::font_sdf`, `font`, the quad shader's kind 24:
+- `--only font`: the atlas (512 × 512, two texels a `KiirStr` unit) cut into `KiirStr`'s cells for the four sizes and
+  every glyph of the longer order string (`cells`: `(g % per_row)·step_x`, `(g / per_row)·step_y + start_y`, width ×
+  height); each cell alone (so no neighbour's ink reaches its field) through xBRZ ×4 then ×2, ink where the brightest
+  channel reaches 128, the signed distance measured there exactly (Felzenszwalb–Huttenlocher, the edge half a texel
+  past the outermost ink texel's centre), averaged over 2 × 2 and stored at ×4 (2048 × 2048, grey, 0.5 on the edge,
+  ±8 stored texels = one `KiirStr` unit of reach). Under a second.
+- The lock's counterpart: the field read back at the atlas's texel centres has ink exactly where the original passes
+  half, but for under 2 % of the ink texels (xBRZ rounding pixel corners).
+- The client: with `[text] sdf_font` and the file in an enabled mod, `Font` uploads the field (linear) and draws every
+  glyph as kind 24 instead of 7: the same quad, uv and colour, coverage `clamp((d − 0.5) / fwidth(d) + 0.5)` (one
+  screen pixel of ramp at any scale). Without either the font draws as before; a missing file is reported once.

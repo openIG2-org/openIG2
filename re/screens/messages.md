@@ -232,7 +232,7 @@ automatic messages, `AliasConv`'s aliases beyond `#k#`, the read message's repla
 `ig2-client::messages_screen` (`MessagesScreen`), the font in `font.rs`, the line in the HUD: text, the scrolling
 line and history, the inbox, the frame's opening and closing (matching the exe's `mesframe` at every grab), the open
 message, typing, dialogue and answers, hot-spots and tooltips, Esc. Glyphs are drawn as `kind::GLYPH` (the uv clamp)
-moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. Talking heads, speech and the typer's sounds:
+moved 1/64 px down, so §1's pixel-centre ties fall as in the exe. With a mod's `[text] sdf_font` (row 572, ADR 0089 §5) the same layout draws from the pack's distance-field atlas (`font_sdf.rs`, quad kind 24). Talking heads, speech and the typer's sounds:
 `video.md` §6, `audio.md` §7. Open rows: 4 (the side strips wider than 4:3 stay black), 309 (speech stays English, as
 the exe). Capture: `run_screendiff.py messages --script scripts/messages-{open,esc}.json` over a replay save with inbox
 messages.

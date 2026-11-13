@@ -277,6 +277,15 @@ fn shade(v: VO, d: bool) -> vec4<f32> {
             let c = dec(cubic(t, v.uv.xy + h, v.uv.xy + v.uv.zw - h), d);
             return vec4(sharpen(c.rgb, s), 1.0) * v.color;
         }
+        // A glyph from the HD pack's distance-field font (ADR 0089 §5): the cell clamped like kind 7, the edge at 0.5
+        // and its ramp one screen pixel wide at any scale.
+        case 24u: {
+            let h = 0.5 / vec2<f32>(textureDimensions(tex));
+            let t = clamp(v.uv.xy + (q * 0.5 + 0.5) * v.uv.zw, v.uv.xy + h, v.uv.xy + v.uv.zw - h);
+            let dist = textureSample(tex, smp, t).r;
+            let a = clamp((dist - 0.5) / max(fwidth(dist), 1e-6) + 0.5, 0.0, 1.0);
+            return vec4(a, a, a, 1.0) * v.color;
+        }
         // A scene's glow or particle (ADR 0064): bilinear like a sprite but never sharpened by "Sharp UI"; with "Smooth
         // glows" a magnified texture is read through the B-spline and a one-texel (white) point is a round dot of the
         // square's light.
@@ -396,6 +405,8 @@ pub mod kind {
     pub const TRAIL: u32 = 22;
     /// A mod's galaxy cloud with procedural detail (ADR 0088 §13): `param` = (seed, strength).
     pub const CLOUD: u32 = 23;
+    /// A glyph from the HD pack's distance-field font (ADR 0089 §5): [`GLYPH`]'s quad and uv on the field.
+    pub const GLYPH_SDF: u32 = 24;
 }
 
 /// One quad, in physical pixels (origin top left).

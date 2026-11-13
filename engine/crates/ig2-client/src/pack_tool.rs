@@ -15,6 +15,7 @@ use ig2_formats::xv::{Archive, Material, Mesh};
 use ig2_formats::Install;
 
 use crate::assets::Image;
+use crate::font_sdf;
 use crate::learned::{self, rrdb, Gpu, Model, Upscaler};
 use crate::upscale::{self, head_file, PACK_DIR};
 use crate::video::decode::{Clip, Frames};
@@ -22,7 +23,7 @@ use crate::video::decode::{Clip, Frames};
 /// The pack's folder name under the mods folder.
 pub const NAME: &str = "texture-pack";
 
-/// Drawn as they are (`Image::load_original`): the font atlas (ADR 0054 §3).
+/// Not a picture of the pack: the font atlas, made into a distance field by its own stage (ADR 0089 §5).
 const SKIP: &[&str] = &["dataraw/screen/charset_bmp.pvr"];
 
 const USAGE: &str = "usage: --make-pack [--out <mod folder>] [--only pictures|videos|heads|font|maps] [--factor 2|4] \
@@ -30,7 +31,7 @@ const USAGE: &str = "usage: --make-pack [--out <mod folder>] [--only pictures|vi
 
 /// The pack's parts (ADR 0089 §1), each made alone by `--only`, and whether this version makes it (rows 571–573
 /// add the others).
-const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", true), ("heads", true), ("font", false), ("maps", false)];
+const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", true), ("heads", true), ("font", true), ("maps", false)];
 
 /// The videos' factor unless `--factor` says (ADR 0089 §4); the pictures' is 4, the talking heads' always 4.
 const VIDEO_FACTOR: u8 = 2;
@@ -585,6 +586,22 @@ pub fn make_heads(install: &Install, out: &Path, prefix: &str, force: bool, mode
     Ok((written, made.len(), failed))
 }
 
+/// The font stage (ADR 0089 §5): the atlas's glyphs as a distance field ([`font_sdf::file`]); returns (written, kept,
+/// failed).
+pub fn make_font(install: &Install, out: &Path, force: bool) -> Result<(usize, usize, usize), String> {
+    prepare(out)?;
+    let file = out.join(font_sdf::file());
+    if !force && file.is_file() {
+        return Ok((0, 1, 0));
+    }
+    let rules = ig2_rules::Rules::from_install(install)?;
+    let atlas = Image::load_original(install, font_sdf::ATLAS)?;
+    let cs = &rules.charset;
+    let sdf = font_sdf::build(&atlas, cs, cs.order.len().max(cs.order_hu.len()));
+    write_whole(&file, |p| crate::assets::write_png(p, sdf.width, sdf.height, &sdf.rgba))?;
+    Ok((1, 0, 0))
+}
+
 /// `img` at `f`: flat-colour art by xBRZ (§3), the rest by the learned model when there is one (its 4× halved for
 /// 2×, alpha from the smooth filter), else Catmull-Rom.
 fn scale(img: &Image, f: u8, model: Option<&dyn Upscaler>) -> Vec<u8> {
@@ -608,7 +625,7 @@ fn halve(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
 pub fn main(args: &[String], install: &Install) -> Result<(), String> {
     let a = parse(args)?;
     if let Some(s) = a.only.filter(|s| !STAGES.contains(&(s, true))) {
-        return Err(format!("--only {s}: not made by this version yet (ADR 0089 §5–6)"));
+        return Err(format!("--only {s}: not made by this version yet (ADR 0089 §6)"));
     }
     let out = a.out.or_else(|| Mod::folder().map(|d| d.join(NAME))).ok_or("no mods folder; pass --out")?;
     println!("making an HD pack in {} (a stopped run continues where it left off)", out.display());
@@ -619,6 +636,7 @@ pub fn main(args: &[String], install: &Install) -> Result<(), String> {
                 let gpu = if a.filters_only { None } else { compact_model() };
                 make_videos(install, &out, a.factor.unwrap_or(VIDEO_FACTOR), &a.prefix, a.force, gpu.as_deref())?
             }
+            "font" => make_font(install, &out, a.force)?,
             "heads" => {
                 let gpu = if a.filters_only { None } else { learned_model(a.fast) };
                 make_heads(install, &out, &a.prefix, a.force, gpu.as_deref())?

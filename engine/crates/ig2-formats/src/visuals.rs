@@ -29,6 +29,9 @@
 //! engine_trails = 0.6         # a trail behind moving fleets: 0..1
 //! sky_detail = 0.7            # finer wisps and dust over the sky's nebulae: 0..1
 //! cloud_detail = 0.7          # soft structure inside the galaxy's clouds: 0..1
+//!
+//! [text]
+//! sdf_font = true             # the text from the HD pack's distance-field font, sharp at any size (ADR 0089 §5)
 //! ```
 
 /// The file's name at a mod's top; not a game path.
@@ -73,6 +76,8 @@ pub struct Visuals {
     pub sky_detail: Option<f32>,
     /// The galaxy clouds' procedural structure, 0..=1.
     pub cloud_detail: Option<f32>,
+    /// The text drawn from the HD pack's distance-field font when the pack has it (ADR 0089 §5).
+    pub sdf_font: bool,
 }
 
 impl Visuals {
@@ -117,6 +122,7 @@ impl Visuals {
                     ("starmap", "engine_trails") => v.engine_trails = Some(number(0.0, 1.0)?),
                     ("starmap", "sky_detail") => v.sky_detail = Some(number(0.0, 1.0)?),
                     ("starmap", "cloud_detail") => v.cloud_detail = Some(number(0.0, 1.0)?),
+                    ("text", "sdf_font") => v.sdf_font = flag()?,
                     _ => return Err(format!("{at}: no such setting")),
                 }
             }
@@ -148,6 +154,7 @@ impl Visuals {
         self.engine_trails = higher.engine_trails.or(self.engine_trails);
         self.sky_detail = higher.sky_detail.or(self.sky_detail);
         self.cloud_detail = higher.cloud_detail.or(self.cloud_detail);
+        self.sdf_font |= higher.sdf_font;
     }
 }
 
@@ -173,6 +180,20 @@ mod tests {
         d.merge(&Visuals::parse("[starmap]\ncloud_detail = 0.5\n", "f").unwrap());
         assert_eq!((d.sky_detail, d.cloud_detail), (Some(0.25), Some(0.5)));
         for bad in ["[starmap]\nstar_layers = 5", "[starmap]\nstar_layers = 0", "[starmap]\ncloud_layers = 1.5", "[starmap]\nstar_rays = 2", "[starmap]\nnight_side = true", "[starmap]\nengine_trails = -1", "[starmap]\nsky_detail = 1.5", "[starmap]\ncloud_detail = -0.5"] {
+            assert!(Visuals::parse(bad, "g").is_err(), "{bad}");
+        }
+        let mut text = Visuals::parse("[text]
+sdf_font = false
+", "e").unwrap();
+        assert!(!text.sdf_font);
+        text.merge(&Visuals::parse("[text]
+sdf_font = true
+", "f").unwrap());
+        assert!(text.sdf_font);
+        for bad in ["[text]
+sdf_font = 1", "[text]
+sdf = true", "[font]
+sdf_font = true"] {
             assert!(Visuals::parse(bad, "g").is_err(), "{bad}");
         }
         let mut lit = Visuals::parse("[lighting]\nbattle_shadows = true\n", "e").unwrap();

@@ -78,6 +78,7 @@ mod display;
 mod event_log;
 mod fleet_groups;
 mod font;
+mod font_sdf;
 mod gui;
 mod hdr;
 mod help;
