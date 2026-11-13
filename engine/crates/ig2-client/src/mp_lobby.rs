@@ -144,13 +144,15 @@ struct QuicListener {
     lan: Option<std::net::Ipv4Addr>,
     /// Browsers' WebRTC links that are not open yet (ADR 0047 part 4).
     browsers: Vec<ig2_net::webrtc::Link>,
+    /// The relay server (its STUN answers give the browsers' links a public candidate).
+    relay: Option<SocketAddrV4>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 impl QuicListener {
-    fn new(host: ig2_net::quic::QuicHost, announcer: Option<ig2_net::discovery::Announcer>) -> Self {
+    fn new(host: ig2_net::quic::QuicHost, announcer: Option<ig2_net::discovery::Announcer>, relay: Option<SocketAddrV4>) -> Self {
         let lan = ig2_net::portmap::local_ipv4(std::net::Ipv4Addr::new(192, 0, 2, 1)).ok();
-        Self { host, announcer, asking: None, mapping: None, map: PortMap::Off, lan, browsers: Vec::new() }
+        Self { host, announcer, asking: None, mapping: None, map: PortMap::Off, lan, browsers: Vec::new(), relay }
     }
 }
 
@@ -196,7 +198,7 @@ impl Listener for QuicListener {
         }
         // Browsers' offers through the relay server: answered at once, admitted once their channel opens.
         for (id, offer) in self.host.offers() {
-            match ig2_net::webrtc::answer(&offer) {
+            match ig2_net::webrtc::answer(&offer, self.relay) {
                 Ok((answer, link)) => {
                     self.host.answer(id, &answer);
                     self.browsers.push(link);
@@ -283,13 +285,13 @@ impl Net for QuicNet {
         };
         let host = bind(GAME_PORT).or_else(|_| bind(0)).map_err(|e| e.to_string())?;
         let announcer = ig2_net::discovery::Announcer::bind_lan().map_err(|e| eprintln!("ig2-client: LAN announcement: {e}")).ok();
-        Ok(Box::new(QuicListener::new(host, announcer)))
+        Ok(Box::new(QuicListener::new(host, announcer, self.relay)))
     }
 
     fn listen_game(&mut self) -> Result<Box<dyn Listener>, String> {
         let any = |port| std::net::SocketAddr::from(([0, 0, 0, 0], port));
         let host = ig2_net::quic::QuicHost::bind(any(GAME_PORT)).or_else(|_| ig2_net::quic::QuicHost::bind(any(0))).map_err(|e| e.to_string())?;
-        Ok(Box::new(QuicListener::new(host, None)))
+        Ok(Box::new(QuicListener::new(host, None, None)))
     }
 
     fn sessions(&mut self) -> Vec<Found> {
@@ -345,14 +347,20 @@ impl Net for QuicNet {
         for &a in &code.addrs {
             let (each, pin) = (each.clone(), ig2_net::quic::Pin::Prefix(code.pin.to_vec()));
             std::thread::spawn(move || {
-                let _ = each.send(ig2_net::quic::connect_pinned(a.into(), &pin).map_err(|e| format!("{a}: {e}")));
+                let _ = each.send(ig2_net::quic::connect_pinned(a.into(), &pin).map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| format!("{a}: {e}")));
             });
         }
-        // And through the rendezvous service: its hole punch, else its relay (ADR 0018 §4).
+        // And through the rendezvous service: its hole punch, else its relay (ADR 0018 §4). A code without an
+        // address is a browser's room (ADR 0047 part 4): reached over WebRTC, signalled through the service.
         if let Some(r) = self.relay {
-            let (each, session, pin) = (each.clone(), code.session, code.pin);
+            let (each, session, pin, page) = (each.clone(), code.session, code.pin, code.addrs.is_empty());
             std::thread::spawn(move || {
-                let _ = each.send(ig2_net::quic::connect_via(r, session, pin, ig2_net::quic::Via::PunchThenRelay).map_err(|e| format!("relay: {e}")));
+                let quic = ig2_net::quic::connect_via(r, session, pin, ig2_net::quic::Via::PunchThenRelay).map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| format!("relay: {e}"));
+                let link = match quic {
+                    Err(e) if page => ig2_net::webrtc::connect(r, session, &pin).map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|w| format!("{e}; {w}")),
+                    q => q,
+                };
+                let _ = each.send(link);
             });
         }
         drop(each);
@@ -362,7 +370,7 @@ impl Net for QuicNet {
             for r in answers {
                 match r {
                     Ok(l) => {
-                        let _ = tx.send(Ok(Box::new(l) as Box<dyn Transport + Send>));
+                        let _ = tx.send(Ok(l));
                         return;
                     }
                     Err(e) => errors.push(e),
@@ -374,8 +382,8 @@ impl Net for QuicNet {
     }
 }
 
-/// The browser's links (ADR 0047 part 4): a join code through the relay server's WebRTC signalling. A page can't
-/// listen, so hosting gets a listener nobody reaches, and there is no LAN to search.
+/// The browser's links (ADR 0047 parts 4 and 5): WebRTC signalled through the relay server, joining with a join code
+/// and hosting a room there; there is no LAN to search.
 #[cfg(target_arch = "wasm32")]
 #[derive(Default)]
 pub struct WebNet;
@@ -383,9 +391,12 @@ pub struct WebNet;
 #[cfg(target_arch = "wasm32")]
 impl Net for WebNet {
     fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
-        // shortcut: a page can't take connections yet (ADR 0047 part 4); browser hosting needs the relay to signal
-        // offers to a page over HTTP. Until then say so instead of opening a room nobody reaches.
-        Err("the browser version can't host yet: host from the desktop version and join its code here".into())
+        let mut fingerprint = [0u8; 32];
+        let mut key = [0u8; ig2_net::rendezvous::KEY_BYTES];
+        for c in fingerprint.chunks_mut(8).chain(key.chunks_mut(8)) {
+            c.copy_from_slice(&ig2_net::discovery::random_u64().to_le_bytes()[..c.len()]);
+        }
+        Ok(Box::new(WebListener { fingerprint, key, host: None, listing: Vec::new() }))
     }
 
     fn sessions(&mut self) -> Vec<Found> {
@@ -407,6 +418,47 @@ impl Net for WebNet {
             let _ = tx.send(r.map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| e.to_string()));
         });
         rx
+    }
+}
+
+/// A page's room (ADR 0047 part 4): reached through the relay server only, so its join code carries no address.
+#[cfg(target_arch = "wasm32")]
+struct WebListener {
+    /// Stands in for a certificate's fingerprint: the join code's pin is its start.
+    fingerprint: [u8; 32],
+    /// The room's key at the service (never in a join code).
+    key: [u8; ig2_net::rendezvous::KEY_BYTES],
+    host: Option<ig2_net::webrtc::PageHost>,
+    /// The encoded public listing (empty: unlisted).
+    listing: Vec<u8>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Listener for WebListener {
+    fn accept(&mut self) -> Option<Box<dyn Transport>> {
+        self.host.as_ref()?.accept().map(|l| Box::new(l) as Box<dyn Transport>)
+    }
+
+    fn fingerprint(&self) -> [u8; 32] {
+        self.fingerprint
+    }
+
+    fn register(&mut self, session: u64) {
+        let pin = self.fingerprint[..ig2_net::joincode::PIN_BYTES].try_into().expect("a pin");
+        let host = ig2_net::webrtc::PageHost::open(&format!("http://{DEFAULT_RELAY}"), session, pin, self.key);
+        host.set_listing(self.listing.clone());
+        self.host = Some(host);
+    }
+
+    fn rendezvous(&self) -> Rendezvous {
+        self.host.as_ref().map_or(Rendezvous::Off, |h| h.rendezvous())
+    }
+
+    fn publish(&mut self, l: Option<Listing>) {
+        self.listing = l.map(|l| l.encode()).unwrap_or_default();
+        if let Some(h) = &self.host {
+            h.set_listing(self.listing.clone());
+        }
     }
 }
 
@@ -980,11 +1032,12 @@ impl MpScreen {
         }
     }
 
-    /// The host's join code (its session, certificate and addresses), once the listener knows an address.
+    /// The host's join code (its session, certificate and addresses), once the listener knows an address or its
+    /// room is open at the relay server (a browser's room has no address: ADR 0047 part 4).
     pub fn join_code(&self) -> Option<JoinCode> {
         let Some(Role::Host { lobby, listener }) = &self.role else { return None };
         let addrs = listener.addrs();
-        (!addrs.is_empty()).then(|| JoinCode::new(lobby.session(), &listener.fingerprint(), &addrs))
+        (!addrs.is_empty() || matches!(listener.rendezvous(), Rendezvous::Registered(_))).then(|| JoinCode::new(lobby.session(), &listener.fingerprint(), &addrs))
     }
 
     /// Clipboard text into the focused field (the connection page's) or the chat line (the room), up to its first

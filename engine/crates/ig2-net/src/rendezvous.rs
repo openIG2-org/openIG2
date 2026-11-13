@@ -8,9 +8,13 @@
 //! public list (ADR 0060): host ─ Publish{Listing} ─▶ service; browser ─ List{start} (1200 B) ─▶ service ─ Rooms ─▶
 //! WebRTC (ADR 0047 part 4): page ─ HTTP POST /offer/{session}/{pin}, SDP ─▶ service ─ Offer{id, SDP} ─▶ host
 //!                          host ─ Answer{id, SDP} ─▶ service ─ HTTP 200, SDP ─▶ page
+//! page host (ADR 0047 part 4): page ─ HTTP POST /host/{session}/{pin}/{key}, listing ─▶ service (opens the room,
+//!                                     long-polled: answered with the next offer or nothing)
+//!                              page ─ HTTP POST /answer/{session}/{key}/{id}, SDP ─▶ service ─ HTTP 200 ─▶ joiner
+//! STUN Binding requests on the UDP port get the sender's address (`stun`), for WebRTC's public candidates.
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
 
@@ -58,9 +62,10 @@ impl Listing {
         (a.name.chars().count() <= MAX_NAME && a.scenario.chars().count() <= MAX_NAME).then_some(l)
     }
 
-    /// The join code of this room at `host` (its session, the certificate's pin).
+    /// The join code of this room at `host` (its session, the certificate's pin; a page host's port 0 is no address).
     pub fn join_code(&self, host: SocketAddrV4) -> crate::joincode::JoinCode {
-        crate::joincode::JoinCode::new(self.announcement.session, &self.announcement.fingerprint, &[host])
+        let addrs: &[SocketAddrV4] = if host.port() == 0 { &[] } else { &[host] };
+        crate::joincode::JoinCode::new(self.announcement.session, &self.announcement.fingerprint, addrs)
     }
 }
 
@@ -292,7 +297,22 @@ struct Room {
     bytes: Bucket,
     /// On the public list: the encoded [`Listing`] and when it was last published.
     listed: Option<(Vec<u8>, Duration)>,
+    /// A page's room (its `host` is the page's IP with port 0, which no datagram comes from).
+    page: Option<PageRoom>,
 }
+
+/// A browser host's room (ADR 0047 part 4): the key only the page that opened it knows (the pin is in every join
+/// code), and the offers waiting for its next poll.
+#[derive(Debug)]
+struct PageRoom {
+    key: [u8; KEY_BYTES],
+    offers: VecDeque<(u32, Vec<u8>)>,
+}
+
+/// A page host's room key.
+pub const KEY_BYTES: usize = 16;
+/// How long the service holds a page host's poll open when no offer waits.
+pub const PAGE_POLL: Duration = Duration::from_secs(8);
 
 /// What the service did, for its status line.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -336,6 +356,12 @@ impl Service {
 
     /// One datagram from `from` at `now`: the datagrams to send go to `out`.
     pub fn handle(&mut self, from: SocketAddrV4, b: &[u8], now: Duration, out: &mut Vec<(SocketAddrV4, Vec<u8>)>) {
+        if let Some(r) = crate::stun::answer(b, from) {
+            if self.control_ok(*from.ip(), now) {
+                out.push((from, r));
+            }
+            return;
+        }
         let Some(p) = Packet::decode(b) else {
             self.counts.dropped += 1;
             return;
@@ -364,9 +390,7 @@ impl Service {
             }
             return;
         }
-        let bucket = self.control.entry(*from.ip()).or_insert_with(|| Bucket::full(l.control_burst, now));
-        if !bucket.take(1.0, l.control_rate, l.control_burst, now) {
-            self.counts.dropped += 1;
+        if !self.control_ok(*from.ip(), now) {
             return;
         }
         match p {
@@ -383,7 +407,7 @@ impl Service {
                     Some(_) => Packet::Refused(Refusal::Taken),
                     None if full => Packet::Refused(Refusal::Full),
                     None => {
-                        self.rooms.insert(session, Room { host: from, pin, seen: now, peers: HashMap::new(), bytes: Bucket::full(l.room_burst, now), listed: None });
+                        self.rooms.insert(session, Room { host: from, pin, seen: now, peers: HashMap::new(), bytes: Bucket::full(l.room_burst, now), listed: None, page: None });
                         self.hosts.insert(from, session);
                         Packet::Registered { seen: from }
                     }
@@ -396,7 +420,8 @@ impl Service {
                 }
             }
             Packet::Lookup { session, pin } => {
-                let Some(r) = self.rooms.get(&session).filter(|r| r.pin == pin && r.host != from) else {
+                // A page's room is reached by WebRTC only (its joiners offer over HTTP).
+                let Some(r) = self.rooms.get(&session).filter(|r| r.pin == pin && r.host != from && r.page.is_none()) else {
                     out.push((from, Packet::Refused(Refusal::Unknown).encode()));
                     return;
                 };
@@ -446,20 +471,82 @@ impl Service {
     /// the Offer for its host goes to `out`; [`Service::answer`] has the reply once it came. Offers count as control
     /// packets, and a room holds as many waiting offers as it takes peers.
     pub fn offer(&mut self, from: Ipv4Addr, session: u64, pin: [u8; PIN_BYTES], sdp: &[u8], now: Duration, out: &mut Vec<(SocketAddrV4, Vec<u8>)>) -> Result<u32, Refusal> {
-        let l = self.limits;
-        if !self.control.entry(from).or_insert_with(|| Bucket::full(l.control_burst, now)).take(1.0, l.control_rate, l.control_burst, now) || sdp.len() > MAX_SDP {
-            self.counts.dropped += 1;
+        if !self.control_ok(from, now) || sdp.len() > MAX_SDP {
             return Err(Refusal::Full);
         }
         let host = self.rooms.get(&session).filter(|r| r.pin == pin).ok_or(Refusal::Unknown)?.host;
-        if self.offers.values().filter(|o| o.0 == host).count() >= l.peers_per_room {
+        if self.offers.values().filter(|o| o.0 == host).count() >= self.limits.peers_per_room {
             return Err(Refusal::Full);
         }
         self.next_offer = self.next_offer.wrapping_add(1);
         let id = self.next_offer;
         self.offers.insert(id, (host, now, None));
-        out.push((host, Packet::Offer { id, sdp }.encode()));
+        match &mut self.rooms.get_mut(&session).expect("looked up").page {
+            Some(p) => p.offers.push_back((id, sdp.to_vec())),
+            None => out.push((host, Packet::Offer { id, sdp }.encode())),
+        }
         Ok(id)
+    }
+
+    /// One control packet's worth from `from`'s rate bucket (false: over the limit, dropped).
+    fn control_ok(&mut self, from: Ipv4Addr, now: Duration) -> bool {
+        let l = self.limits;
+        let ok = self.control.entry(from).or_insert_with(|| Bucket::full(l.control_burst, now)).take(1.0, l.control_rate, l.control_burst, now);
+        if !ok {
+            self.counts.dropped += 1;
+        }
+        ok
+    }
+
+    /// A page at `from` opens or keeps its room (ADR 0047 part 4): session and pin as a join code carries them, the
+    /// page's own `key` (only it polls and answers), and its encoded [`Listing`] while public (`None`: unlisted).
+    /// Each poll keeps the room open; [`Service::page_offer`] then hands it the offers.
+    pub fn page_host(&mut self, from: Ipv4Addr, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES], listing: Option<&[u8]>, now: Duration) -> Result<(), Refusal> {
+        if !self.control_ok(from, now) {
+            return Err(Refusal::Full);
+        }
+        let l = self.limits;
+        let full = self.rooms.len() >= l.max_rooms || self.rooms.values().filter(|r| r.host.ip() == &from).count() >= l.rooms_per_ip;
+        let r = match self.rooms.get_mut(&session) {
+            Some(r) if r.pin == pin && r.page.as_ref().is_some_and(|p| p.key == key) => r,
+            Some(_) => return Err(Refusal::Taken),
+            None if full => return Err(Refusal::Full),
+            None => {
+                let page = Some(PageRoom { key, offers: VecDeque::new() });
+                let host = SocketAddrV4::new(from, 0);
+                self.rooms.entry(session).or_insert(Room { host, pin, seen: now, peers: HashMap::new(), bytes: Bucket::full(l.room_burst, now), listed: None, page })
+            }
+        };
+        r.seen = now;
+        // As Publish: only with its own session and pin.
+        r.listed = listing.and_then(Listing::decode).filter(|li| li.announcement.session == session && li.announcement.fingerprint.starts_with(&pin)).map(|li| (li.encode(), now));
+        Ok(())
+    }
+
+    /// The next offer for the page's room of `session` (it polls): its id and SDP. Keeps the room open.
+    pub fn page_offer(&mut self, session: u64, now: Duration) -> Option<(u32, Vec<u8>)> {
+        let r = self.rooms.get_mut(&session)?;
+        let p = r.page.as_mut()?;
+        r.seen = now;
+        // Expired offers are skipped.
+        while let Some((id, sdp)) = p.offers.pop_front() {
+            if self.offers.contains_key(&id) {
+                return Some((id, sdp));
+            }
+        }
+        None
+    }
+
+    /// The page host's answer to its offer `id` ([`Service::answer`] has it for the joiner then).
+    pub fn page_answer(&mut self, session: u64, key: [u8; KEY_BYTES], id: u32, sdp: &[u8]) -> Result<(), Refusal> {
+        let host = self.rooms.get(&session).filter(|r| r.page.as_ref().is_some_and(|p| p.key == key)).ok_or(Refusal::Unknown)?.host;
+        match self.offers.get_mut(&id) {
+            Some((h, _, answer @ None)) if *h == host && sdp.len() <= MAX_SDP => {
+                *answer = Some(sdp.to_vec());
+                Ok(())
+            }
+            _ => Err(Refusal::Unknown),
+        }
     }
 
     /// Offer `id`'s answer: `Some(Some)` once the host answered (the offer is done then), `Some(None)` while
@@ -572,17 +659,54 @@ pub fn serve(socket: &std::net::UdpSocket, service: &mut Service, stop: impl FnM
     serve_with_http(socket, None, service, stop)
 }
 
-/// A browser's offer from the HTTP side, for the datagram loop: the answer or an HTTP status goes to `reply`.
-struct HttpOffer {
+/// A request from the HTTP side, for the datagram loop: the reply body or an HTTP status goes to `reply`.
+struct HttpRequest {
     from: Ipv4Addr,
-    session: u64,
-    pin: [u8; PIN_BYTES],
-    sdp: Vec<u8>,
+    what: Http,
     reply: Reply,
 }
 
-/// Where an offer's answer (or an HTTP status) goes.
+enum Http {
+    /// A joiner's offer.
+    Offer { session: u64, pin: [u8; PIN_BYTES], sdp: Vec<u8> },
+    /// A page host's poll (with its listing, empty: unlisted).
+    Host { session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES], listing: Vec<u8> },
+    /// A page host's answer.
+    Answer { session: u64, key: [u8; KEY_BYTES], id: u32, sdp: Vec<u8> },
+}
+
+/// Where a reply (or an HTTP status) goes.
 type Reply = std::sync::mpsc::Sender<Result<Vec<u8>, u16>>;
+
+/// A page host's poll reply: the page's IP as the service sees it, a line break, then an offer's id, a line break
+/// and its SDP (no offer: the IP line alone).
+pub fn poll_reply(seen: Ipv4Addr, offer: Option<(u32, &[u8])>) -> Vec<u8> {
+    let mut b = format!("{seen}\n").into_bytes();
+    if let Some((id, sdp)) = offer {
+        b.extend_from_slice(format!("{id}\n").as_bytes());
+        b.extend_from_slice(sdp);
+    }
+    b
+}
+
+/// A [`poll_reply`]'s parts: the page's address, and the offer's id and SDP if one came.
+pub fn poll_parts(b: &[u8]) -> Option<(Ipv4Addr, Option<(u32, String)>)> {
+    let (seen, rest) = std::str::from_utf8(b).ok()?.split_once('\n')?;
+    let offer = match rest.split_once('\n') {
+        Some((id, sdp)) => Some((id.parse().ok()?, sdp.to_owned())),
+        None if rest.is_empty() => None,
+        None => return None,
+    };
+    Some((seen.parse().ok()?, offer))
+}
+
+fn status(r: Refusal) -> u16 {
+    match r {
+        Refusal::Unknown => 404,
+        Refusal::Taken => 409,
+        Refusal::Full => 429,
+    }
+}
 
 /// [`serve`], and with `http` the browsers' WebRTC signalling on that TCP listener (ADR 0047 part 4): `POST
 /// /offer/{session hex}/{pin hex}` with the offer's SDP, answered with the host's SDP (404 no such room, 429 a limit,
@@ -594,6 +718,8 @@ pub fn serve_with_http(socket: &std::net::UdpSocket, http: Option<std::net::TcpL
         std::thread::spawn(move || http_accept(l, tx));
     }
     let mut waiting: Vec<(u32, Reply)> = Vec::new();
+    // Page hosts' open polls: the session, the page's IP, until when, where the reply goes.
+    let mut polls: Vec<(u64, Ipv4Addr, Duration, Reply)> = Vec::new();
     let start = web_time::Instant::now();
     // A relayed datagram is at most QUIC's 1200 bytes plus the header, an answer at most MAX_SDP; anything longer is not ours.
     let mut buf = [0u8; HEAD + 4 + MAX_SDP + 1];
@@ -604,14 +730,43 @@ pub fn serve_with_http(socket: &std::net::UdpSocket, http: Option<std::net::TcpL
         if let Ok((n, std::net::SocketAddr::V4(from))) = socket.recv_from(&mut buf) {
             service.handle(from, &buf[..n], now, &mut out);
         }
-        while let Ok(o) = offers.try_recv() {
-            match service.offer(o.from, o.session, o.pin, &o.sdp, now, &mut out) {
-                Ok(id) => waiting.push((id, o.reply)),
-                Err(r) => {
-                    let _ = o.reply.send(Err(if r == Refusal::Unknown { 404 } else { 429 }));
+        while let Ok(HttpRequest { from, what, reply }) = offers.try_recv() {
+            match what {
+                Http::Offer { session, pin, sdp } => match service.offer(from, session, pin, &sdp, now, &mut out) {
+                    Ok(id) => waiting.push((id, reply)),
+                    Err(r) => {
+                        let _ = reply.send(Err(status(r)));
+                    }
+                },
+                Http::Host { session, pin, key, listing } => match service.page_host(from, session, pin, key, (!listing.is_empty()).then_some(&listing[..]), now) {
+                    // A page polls once at a time: an older open poll of its room is answered empty.
+                    Ok(()) => {
+                        if let Some(i) = polls.iter().position(|p| p.0 == session) {
+                            let old = polls.swap_remove(i);
+                            let _ = old.3.send(Ok(poll_reply(old.1, None)));
+                        }
+                        polls.push((session, from, now + PAGE_POLL, reply));
+                    }
+                    Err(r) => {
+                        let _ = reply.send(Err(status(r)));
+                    }
+                },
+                Http::Answer { session, key, id, sdp } => {
+                    let _ = reply.send(service.page_answer(session, key, id, &sdp).map(|()| Vec::new()).map_err(status));
                 }
             }
         }
+        polls.retain(|(session, seen, until, reply)| match service.page_offer(*session, now) {
+            Some((id, sdp)) => {
+                let _ = reply.send(Ok(poll_reply(*seen, Some((id, &sdp)))));
+                false
+            }
+            None if now >= *until => {
+                let _ = reply.send(Ok(poll_reply(*seen, None)));
+                false
+            }
+            None => true,
+        });
         waiting.retain(|(id, reply)| match service.answer(*id) {
             Some(None) => true,
             Some(Some(a)) => {
@@ -634,10 +789,10 @@ pub fn serve_with_http(socket: &std::net::UdpSocket, http: Option<std::net::TcpL
     Ok(())
 }
 
-/// Connections served at once (more are closed unanswered).
-const HTTP_CONNS: usize = 32;
+/// Connections served at once (more are closed unanswered): each page host holds one open poll.
+const HTTP_CONNS: usize = 128;
 
-fn http_accept(l: std::net::TcpListener, tx: std::sync::mpsc::Sender<HttpOffer>) {
+fn http_accept(l: std::net::TcpListener, tx: std::sync::mpsc::Sender<HttpRequest>) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let open = std::sync::Arc::new(AtomicUsize::new(0));
     for s in l.incoming().flatten() {
@@ -660,6 +815,7 @@ fn http_reply(s: &mut std::net::TcpStream, code: u16, body: &[u8]) -> std::io::R
         204 => "No Content",
         400 => "Bad Request",
         404 => "Not Found",
+        409 => "Conflict",
         413 => "Payload Too Large",
         429 => "Too Many Requests",
         _ => "Gateway Timeout",
@@ -672,23 +828,36 @@ fn http_reply(s: &mut std::net::TcpStream, code: u16, body: &[u8]) -> std::io::R
     s.write_all(body)
 }
 
-/// The session and pin of `/offer/{16 hex digits}/{24 hex digits}`.
-fn offer_path(path: &str) -> Option<(u64, [u8; PIN_BYTES])> {
-    let (session, pin) = path.strip_prefix("/offer/")?.split_once('/')?;
-    if session.len() != 16 || pin.len() != 2 * PIN_BYTES {
+/// `N` bytes in exactly `2 N` hex digits.
+fn hex<const N: usize>(s: &str) -> Option<[u8; N]> {
+    let mut b = [0; N];
+    if s.len() != 2 * N {
         return None;
     }
-    let mut p = [0; PIN_BYTES];
-    for (i, b) in p.iter_mut().enumerate() {
-        *b = u8::from_str_radix(pin.get(2 * i..2 * i + 2)?, 16).ok()?;
+    for (i, x) in b.iter_mut().enumerate() {
+        *x = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
     }
-    Some((u64::from_str_radix(session, 16).ok()?, p))
+    Some(b)
+}
+
+/// The request a POST to `path` with `body` makes: `/offer/{session}/{pin}` (16 and 24 hex digits),
+/// `/host/{session}/{pin}/{key}` (and 32), `/answer/{session}/{key}/{offer id, decimal}`.
+fn request(path: &str, body: Vec<u8>) -> Option<Http> {
+    let mut parts = path.strip_prefix('/')?.split('/');
+    let (kind, session) = (parts.next()?, u64::from_be_bytes(hex(parts.next()?)?));
+    let what = match kind {
+        "offer" => Http::Offer { session, pin: hex(parts.next()?)?, sdp: body },
+        "host" if body.len() <= MAX_LISTING => Http::Host { session, pin: hex(parts.next()?)?, key: hex(parts.next()?)?, listing: body },
+        "answer" => Http::Answer { session, key: hex(parts.next()?)?, id: parts.next()?.parse().ok()?, sdp: body },
+        _ => return None,
+    };
+    parts.next().is_none().then_some(what)
 }
 
 /// How long a client has to send its whole request (not each read: a trickle can't hold a connection).
 const HTTP_REQUEST_TIME: Duration = Duration::from_secs(5);
 
-fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>) -> std::io::Result<()> {
+fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpRequest>) -> std::io::Result<()> {
     use std::io::Read;
     s.set_write_timeout(Some(HTTP_REQUEST_TIME))?;
     let std::net::IpAddr::V4(from) = s.peer_addr()?.ip() else { return Ok(()) };
@@ -724,7 +893,7 @@ fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>)
         return http_reply(&mut s, 204, b"");
     }
     let len = lines.filter_map(|l| l.split_once(':')).find(|(k, _)| k.trim().eq_ignore_ascii_case("content-length")).and_then(|(_, v)| v.trim().parse::<usize>().ok());
-    let (Some(len), "POST", Some((session, pin))) = (len, method, offer_path(path)) else { return http_reply(&mut s, 400, b"") };
+    let (Some(len), "POST") = (len, method) else { return http_reply(&mut s, 400, b"") };
     if len > MAX_SDP {
         return http_reply(&mut s, 413, b"");
     }
@@ -735,11 +904,12 @@ fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpOffer>)
         }
         b.extend_from_slice(&chunk[..n]);
     }
+    let Some(what) = request(path, b[head..head + len].to_vec()) else { return http_reply(&mut s, 400, b"") };
     let (reply, answer) = std::sync::mpsc::channel();
-    if tx.send(HttpOffer { from, session, pin, sdp: b[head..head + len].to_vec(), reply }).is_err() {
+    if tx.send(HttpRequest { from, what, reply }).is_err() {
         return Ok(());
     }
-    match answer.recv_timeout(OFFER_TTL + Duration::from_secs(2)) {
+    match answer.recv_timeout(OFFER_TTL.max(PAGE_POLL) + Duration::from_secs(2)) {
         Ok(Ok(sdp)) => http_reply(&mut s, 200, &sdp),
         Ok(Err(code)) => http_reply(&mut s, code, b""),
         Err(_) => http_reply(&mut s, 504, b""),
@@ -980,8 +1150,85 @@ mod tests {
             s.offer(page, 1, PIN, b"v=0", now, &mut out).unwrap();
         }
         assert_eq!(s.offer(page, 1, PIN, b"v=0", now, &mut out), Err(Refusal::Full));
-        assert_eq!(offer_path(&crate::webrtc::offer_path(0x5eed, &PIN)), Some((0x5eed, PIN)));
-        assert_eq!(offer_path("/offer/5eed/09"), None);
+        assert!(matches!(request(&crate::webrtc::offer_path(0x5eed, &PIN), b"v".to_vec()), Some(Http::Offer { session: 0x5eed, pin: PIN, .. })));
+        assert!(request("/offer/5eed/09", Vec::new()).is_none());
+    }
+
+    const KEY: [u8; KEY_BYTES] = [3; KEY_BYTES];
+
+    #[test]
+    fn a_page_hosts_its_room_by_polling_and_answers_its_offers() {
+        let (page, joiner, t) = (Ipv4Addr::new(203, 0, 113, 5), Ipv4Addr::new(192, 0, 2, 9), Duration::ZERO);
+        let mut s = Service::default();
+        let mut out = Vec::new();
+        s.page_host(page, 1, PIN, KEY, None, t).unwrap();
+        assert_eq!(s.page_host(page, 1, PIN, [4; KEY_BYTES], None, t), Err(Refusal::Taken), "only its own key");
+        assert_eq!(s.page_offer(1, t), None);
+        // Its room is not for QUIC: a Lookup finds nothing, a Register can't take the session.
+        assert_eq!(decoded(&send(&mut s, "192.0.2.1:1", Packet::Lookup { session: 1, pin: PIN }, 0))[0].1, Packet::Refused(Refusal::Unknown));
+        assert_eq!(decoded(&send(&mut s, "192.0.2.1:1", Packet::Register { session: 1, pin: PIN }, 0))[0].1, Packet::Refused(Refusal::Taken));
+        // A joiner's offer waits for the page's poll, never as a datagram.
+        let id = s.offer(joiner, 1, PIN, b"v=0", t, &mut out).unwrap();
+        assert!(out.is_empty());
+        assert_eq!(s.page_offer(1, t), Some((id, b"v=0".to_vec())));
+        assert_eq!(s.page_offer(1, t), None, "handed once");
+        assert_eq!(s.answer(id), Some(None));
+        assert_eq!(s.page_answer(1, [4; KEY_BYTES], id, b"v=1"), Err(Refusal::Unknown), "not the room's key");
+        assert_eq!(s.page_answer(2, KEY, id, b"v=1"), Err(Refusal::Unknown));
+        s.page_answer(1, KEY, id, b"v=1").unwrap();
+        assert_eq!(s.page_answer(1, KEY, id, b"v=2"), Err(Refusal::Unknown), "answered once");
+        assert_eq!(s.answer(id), Some(Some(b"v=1".to_vec())));
+        // An offer that expired before the poll is skipped.
+        let id = s.offer(joiner, 1, PIN, b"v=0", t, &mut out).unwrap();
+        s.sweep(OFFER_TTL + Duration::from_secs(1));
+        assert_eq!(s.answer(id), None);
+        let t = OFFER_TTL + Duration::from_secs(1);
+        assert_eq!(s.page_offer(1, t), None);
+        // Listed while its polls carry the listing, with its own session and pin only; its host has no port.
+        let li = listing(1, "page");
+        s.page_host(page, 1, PIN, KEY, Some(&li.encode()), t).unwrap();
+        assert_eq!(s.listed(t), [(SocketAddrV4::new(page, 0), &li.encode()[..])]);
+        assert_eq!(li.join_code(SocketAddrV4::new(page, 0)).addrs, [], "a page host's code has no address");
+        s.page_host(page, 1, PIN, KEY, Some(&listing(2, "page").encode()), t).unwrap();
+        assert!(s.listed(t).is_empty());
+        // Polls keep it open; without them it goes.
+        let t = t + Limits::default().room_ttl;
+        s.page_host(page, 1, PIN, KEY, None, t).unwrap();
+        s.sweep(t + Duration::from_secs(1));
+        assert_eq!(s.rooms(), 1);
+        s.sweep(t + Limits::default().room_ttl + Duration::from_secs(1));
+        assert_eq!(s.rooms(), 0);
+        // Rooms per IP hold for pages too.
+        for session in 10..14 {
+            s.page_host(page, session, PIN, KEY, None, t).unwrap();
+        }
+        assert_eq!(s.page_host(page, 14, PIN, KEY, None, t), Err(Refusal::Full));
+    }
+
+    #[test]
+    fn page_hosts_requests_are_parsed_from_their_paths() {
+        let key: String = KEY.iter().map(|b| format!("{b:02x}")).collect();
+        let pin: String = PIN.iter().map(|b| format!("{b:02x}")).collect();
+        assert!(matches!(request(&format!("/host/000000000000beef/{pin}/{key}"), b"l".to_vec()), Some(Http::Host { session: 0xbeef, pin: PIN, key: KEY, .. })));
+        assert!(matches!(request(&format!("/answer/000000000000beef/{key}/77"), b"v".to_vec()), Some(Http::Answer { session: 0xbeef, key: KEY, id: 77, .. })));
+        assert!(request(&format!("/host/000000000000beef/{pin}"), Vec::new()).is_none(), "no key");
+        assert!(request(&format!("/answer/000000000000beef/{key}/x"), Vec::new()).is_none());
+        assert!(request(&format!("/host/000000000000beef/{pin}/{key}/more"), Vec::new()).is_none());
+        assert!(request(&format!("/host/000000000000beef/{pin}/{key}"), vec![0; MAX_LISTING + 1]).is_none(), "a listing too long");
+        let seen = Ipv4Addr::new(203, 0, 113, 5);
+        assert_eq!(poll_reply(seen, Some((7, b"v=0"))), b"203.0.113.5\n7\nv=0");
+        assert_eq!(poll_reply(seen, None), b"203.0.113.5\n");
+        assert_eq!(poll_parts(&poll_reply(seen, Some((7, b"v=0\r\na=x\r\n")))), Some((seen, Some((7, "v=0\r\na=x\r\n".into())))));
+        assert_eq!(poll_parts(b"203.0.113.5\n"), Some((seen, None)));
+        assert_eq!(poll_parts(b"203.0.113.5\nx"), None);
+    }
+
+    #[test]
+    fn the_service_answers_stun() {
+        let mut s = Service::default();
+        let mut out = Vec::new();
+        s.handle(a("198.51.100.4:5000"), &crate::stun::request([1; 12]), Duration::ZERO, &mut out);
+        assert_eq!(crate::stun::mapped(&out[0].1, [1; 12]), Some(a("198.51.100.4:5000")));
     }
 
     #[test]

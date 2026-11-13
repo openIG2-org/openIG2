@@ -2,7 +2,8 @@
 //! through the rendezvous service (`rendezvous::serve_with_http`: the page POSTs its offer, the host's QUIC socket
 //! gets it as `Offer` and answers). Natively (feature `webrtc`) the host answers with `str0m` on a UDP socket of its
 //! own ([`answer`]); a native joiner can offer the same way ([`connect`]). In the browser [`connect`] is the page's
-//! `RTCPeerConnection`.
+//! `RTCPeerConnection`; a page hosts with [`PageHost`] (it long-polls the service for offers and answers them).
+//! Every end asks the relay server's STUN answers for its public address.
 //!
 //! Messages larger than one data-channel message travel in [`CHUNK`]-byte pieces, each led by a byte that says whether
 //! more follow. The password binding (ADR 0008 §3.1) is a hash of both ends' DTLS fingerprints from the offer and
@@ -68,10 +69,23 @@ pub fn binding(offer: &str, answer: &str) -> [u8; 32] {
     h.finalize().into()
 }
 
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// The HTTP path the page posts its offer to: the join code's session and pin in hex.
 pub fn offer_path(session: u64, pin: &[u8]) -> String {
-    let pin: String = pin.iter().map(|b| format!("{b:02x}")).collect();
-    format!("/offer/{session:016x}/{pin}")
+    format!("/offer/{session:016x}/{}", hex(pin))
+}
+
+/// The HTTP path a page host polls (ADR 0047 part 4): its session, pin and room key in hex.
+pub fn host_path(session: u64, pin: &[u8], key: &[u8]) -> String {
+    format!("/host/{session:016x}/{}/{}", hex(pin), hex(key))
+}
+
+/// The HTTP path a page host posts its answer to offer `id` to.
+pub fn answer_path(session: u64, key: &[u8], id: u32) -> String {
+    format!("/answer/{session:016x}/{}/{id}", hex(key))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -171,15 +185,38 @@ mod native {
         Error::Rtc(e.to_string())
     }
 
-    /// A socket of its own and host candidates for this machine's loopback and LAN addresses.
-    fn bind(rtc: &mut Rtc) -> Result<(UdpSocket, u16, Option<Ipv4Addr>), Error> {
+    /// A socket of its own and host candidates for this machine's loopback and LAN addresses, and with `stun` (the
+    /// relay server) the public address it sees (ADR 0047 part 4).
+    fn bind(rtc: &mut Rtc, stun: Option<SocketAddrV4>) -> Result<(UdpSocket, u16, Option<Ipv4Addr>), Error> {
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
         let port = socket.local_addr()?.port();
         let lan = crate::portmap::local_ipv4(Ipv4Addr::new(192, 0, 2, 1)).ok().filter(|ip| !ip.is_loopback());
         for ip in [Some(Ipv4Addr::LOCALHOST), lan].into_iter().flatten() {
             rtc.add_local_candidate(Candidate::host(SocketAddr::from((ip, port)), "udp").map_err(rtc_err)?);
         }
+        if let (Some(lan), Some(public)) = (lan, stun.and_then(|s| reflexive(&socket, s))) {
+            if *public.ip() != lan && !public.ip().is_loopback() {
+                rtc.add_local_candidate(Candidate::server_reflexive(public.into(), SocketAddr::from((lan, port)), "udp").map_err(rtc_err)?);
+            }
+        }
         Ok((socket, port, lan))
+    }
+
+    /// The address the STUN server at `stun` sees `socket` at (`None`: no answer within 300 ms).
+    fn reflexive(socket: &UdpSocket, stun: SocketAddrV4) -> Option<SocketAddrV4> {
+        let mut id = [0u8; 12];
+        id[..8].copy_from_slice(&crate::discovery::random_u64().to_le_bytes());
+        id[8..].copy_from_slice(&crate::discovery::random_u64().to_le_bytes()[..4]);
+        socket.send_to(&crate::stun::request(id), stun).ok()?;
+        let deadline = Instant::now() + Duration::from_millis(300);
+        let mut buf = [0u8; 256];
+        loop {
+            socket.set_read_timeout(Some(deadline.checked_duration_since(Instant::now()).filter(|d| !d.is_zero())?)).ok()?;
+            let (n, from) = socket.recv_from(&mut buf).ok()?;
+            if let Some(a) = crate::stun::mapped(&buf[..n], id).filter(|_| from == SocketAddr::from(stun)) {
+                return Some(a);
+            }
+        }
     }
 
     fn rtc() -> Rtc {
@@ -193,10 +230,10 @@ mod native {
     }
 
     /// Answer a browser's `offer` (its SDP): the answer's SDP for the service, and the link, open once the browser
-    /// connected (`Link::is_open`; closed when it never does).
-    pub fn answer(offer: &str) -> Result<(String, Link), Error> {
+    /// connected (`Link::is_open`; closed when it never does). `stun`: the relay server, for a public candidate.
+    pub fn answer(offer: &str, stun: Option<SocketAddrV4>) -> Result<(String, Link), Error> {
         let mut rtc = rtc();
-        let (socket, port, lan) = bind(&mut rtc)?;
+        let (socket, port, lan) = bind(&mut rtc, stun)?;
         let parsed = SdpOffer::from_sdp_string(offer).map_err(rtc_err)?;
         let answer = rtc.sdp_api().accept_offer(parsed).map_err(rtc_err)?.to_sdp_string();
         let shared = Arc::new(Shared::default());
@@ -209,7 +246,7 @@ mod native {
     /// signalling, as a browser does): blocks until the channel is open.
     pub fn connect(service: SocketAddrV4, session: u64, pin: &[u8]) -> Result<Link, Error> {
         let mut rtc = rtc();
-        let (socket, port, lan) = bind(&mut rtc)?;
+        let (socket, port, lan) = bind(&mut rtc, Some(service))?;
         let mut change = rtc.sdp_api();
         let cid = change.add_channel(LABEL.into());
         let (offer, pending) = change.apply().ok_or_else(|| rtc_err("no offer"))?;
@@ -345,12 +382,14 @@ mod native {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub use web::connect;
+pub use web::{connect, PageHost};
 
 #[cfg(target_arch = "wasm32")]
 mod web {
     use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::net::SocketAddrV4;
+    use std::rc::Rc;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::sync::Arc;
@@ -358,9 +397,11 @@ mod web {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::{JsCast, JsValue};
     use wasm_bindgen_futures::JsFuture;
-    use web_sys::{MessageEvent, RtcDataChannel, RtcDataChannelState, RtcDataChannelType, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit};
+    use web_sys::{MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelEvent, RtcDataChannelState, RtcDataChannelType, RtcIceServer, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit};
 
     use super::{binding, pieces, Error, Joiner, Link, Shared, LABEL};
+    use crate::joincode::PIN_BYTES;
+    use crate::rendezvous::{Refusal, Rendezvous, KEY_BYTES};
 
     /// The page's side of a link: its connection, channel and handlers, by link id (they are not `Send`; the
     /// [`Link`] keeps the id).
@@ -411,51 +452,43 @@ mod web {
         let _ = JsFuture::from(p).await;
     }
 
-    /// Join the room of a join code's `session` and `pin` through the rendezvous service whose HTTP side is `base`
-    /// (`http://host:port`): the offer goes there, the host's answer comes back, then the channel opens.
-    pub async fn connect(base: &str, session: u64, pin: &[u8]) -> Result<Link, Error> {
-        let pc = RtcPeerConnection::new().map_err(js)?;
-        let dc = pc.create_data_channel(LABEL);
-        dc.set_binary_type(RtcDataChannelType::Arraybuffer);
-        let offer = JsFuture::from(pc.create_offer()).await.map_err(js)?;
-        let offer: RtcSessionDescriptionInit = offer.unchecked_into();
-        JsFuture::from(pc.set_local_description(&offer)).await.map_err(js)?;
-        // The whole offer at once (no trickling): wait for the candidates, two seconds at most.
+    /// A connection that learns its public address from the relay server's STUN answers (its UDP port is `base`'s
+    /// host and port; ADR 0047 part 4).
+    fn peer(base: &str) -> Result<RtcPeerConnection, Error> {
+        let server = RtcIceServer::new();
+        server.set_urls_str(&format!("stun:{}", base.split_once("://").map_or(base, |b| b.1)));
+        let cfg = RtcConfiguration::new();
+        cfg.set_ice_servers(&js_sys::Array::of1(&server));
+        RtcPeerConnection::new_with_configuration(&cfg).map_err(js)
+    }
+
+    /// The whole local description once its candidates are in (no trickling): two seconds at most.
+    async fn gathered(pc: &RtcPeerConnection) -> Result<String, Error> {
         for _ in 0..40 {
             if pc.ice_gathering_state() == web_sys::RtcIceGatheringState::Complete {
                 break;
             }
             sleep(50).await;
         }
-        let offer = pc.local_description().ok_or_else(|| Error::Rtc("no offer".into()))?.sdp();
+        Ok(pc.local_description().ok_or_else(|| Error::Rtc("no description".into()))?.sdp())
+    }
+
+    /// POST `body` to `url`: the reply's status and bytes.
+    async fn post(url: &str, body: &[u8]) -> Result<(u16, Vec<u8>), Error> {
         let init = web_sys::RequestInit::new();
         init.set_method("POST");
-        init.set_body(&JsValue::from_str(&offer));
-        let url = format!("{base}{}", super::offer_path(session, pin));
+        init.set_body(&js_sys::Uint8Array::from(body));
         let window = web_sys::window().expect("a window");
-        let resp: web_sys::Response = JsFuture::from(window.fetch_with_str_and_init(&url, &init)).await.map_err(|e| Error::Signal(js(e).to_string()))?.unchecked_into();
-        match resp.status() {
-            200 => {}
-            404 => return Err(Error::Signal("no such room".into())),
-            code => return Err(Error::Signal(format!("HTTP {code}"))),
-        }
-        let answer = JsFuture::from(resp.text().map_err(js)?).await.map_err(js)?.as_string().unwrap_or_default();
-        let desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
-        desc.set_sdp(&answer);
-        JsFuture::from(pc.set_remote_description(&desc)).await.map_err(js)?;
-        for _ in 0..200 {
-            match dc.ready_state() {
-                RtcDataChannelState::Open => break,
-                RtcDataChannelState::Closing | RtcDataChannelState::Closed => return Err(Error::Timeout),
-                _ => sleep(50).await,
-            }
-        }
-        if dc.ready_state() != RtcDataChannelState::Open {
-            pc.close();
-            return Err(Error::Timeout);
-        }
+        let resp: web_sys::Response = JsFuture::from(window.fetch_with_str_and_init(url, &init)).await.map_err(|e| Error::Signal(js(e).to_string()))?.unchecked_into();
+        let buf = JsFuture::from(resp.array_buffer().map_err(js)?).await.map_err(js)?;
+        Ok((resp.status(), js_sys::Uint8Array::new(&buf).to_vec()))
+    }
+
+    /// The page's end of channel `dc` as a [`Link`], its handlers set from now on (open once the channel is).
+    fn wrap(pc: RtcPeerConnection, dc: RtcDataChannel, binding: [u8; 32]) -> Link {
+        dc.set_binary_type(RtcDataChannelType::Arraybuffer);
         let shared = Arc::new(Shared::default());
-        shared.open.store(true, Ordering::SeqCst);
+        shared.open.store(dc.ready_state() == RtcDataChannelState::Open, Ordering::SeqCst);
         let (inc_tx, inc) = mpsc::channel();
         let mut joiner = Joiner::default();
         let s = shared.clone();
@@ -479,7 +512,162 @@ mod web {
             *n
         });
         PAGES.with(|m| m.borrow_mut().insert(id, Page { pc, dc, _on_message: on_message, _on_close: on_close }));
-        Ok(Link { inc, shared, binding: binding(&offer, &answer), _page: Handle(id) })
+        Link { inc, shared, binding, _page: Handle(id) }
+    }
+
+    /// Wait (`tries` × 50 ms at most) for `dc` to open: false when it closed or never did.
+    async fn opened(dc: impl Fn() -> Option<RtcDataChannelState>, tries: u32) -> bool {
+        for _ in 0..tries {
+            match dc() {
+                Some(RtcDataChannelState::Open) => return true,
+                Some(RtcDataChannelState::Closing | RtcDataChannelState::Closed) => return false,
+                _ => sleep(50).await,
+            }
+        }
+        false
+    }
+
+    /// Join the room of a join code's `session` and `pin` through the rendezvous service whose HTTP side is `base`
+    /// (`http://host:port`): the offer goes there, the host's answer comes back, then the channel opens.
+    pub async fn connect(base: &str, session: u64, pin: &[u8]) -> Result<Link, Error> {
+        let pc = peer(base)?;
+        let dc = pc.create_data_channel(LABEL);
+        let offer = JsFuture::from(pc.create_offer()).await.map_err(js)?;
+        JsFuture::from(pc.set_local_description(&offer.unchecked_into())).await.map_err(js)?;
+        let offer = gathered(&pc).await?;
+        let (status, answer) = match post(&format!("{base}{}", super::offer_path(session, pin)), offer.as_bytes()).await {
+            Ok(r) => r,
+            Err(e) => {
+                pc.close();
+                return Err(e);
+            }
+        };
+        let answer = String::from_utf8_lossy(&answer).into_owned();
+        let link = wrap(pc.clone(), dc.clone(), binding(&offer, &answer));
+        match status {
+            200 => {}
+            404 => return Err(Error::Signal("no such room".into())),
+            code => return Err(Error::Signal(format!("HTTP {code}"))),
+        }
+        let desc = RtcSessionDescriptionInit::new(RtcSdpType::Answer);
+        desc.set_sdp(&answer);
+        JsFuture::from(pc.set_remote_description(&desc)).await.map_err(js)?;
+        if !opened(|| Some(dc.ready_state()), 200).await {
+            return Err(Error::Timeout);
+        }
+        link.shared.open.store(true, Ordering::SeqCst);
+        Ok(link)
+    }
+
+    struct HostState {
+        rendezvous: Rendezvous,
+        /// The encoded listing each poll carries (empty: unlisted).
+        listing: Vec<u8>,
+        /// Joiners' links, handed over once open.
+        links: Vec<Link>,
+        gone: bool,
+    }
+
+    /// A page's room at the relay server (ADR 0047 part 4): it long-polls the service's HTTP side for joiners'
+    /// offers, answers each with a connection of its own and hands the channels over once open. Dropped: the polls
+    /// stop and the service lets the room expire.
+    pub struct PageHost(Rc<RefCell<HostState>>);
+
+    impl PageHost {
+        /// Open the room of `session` (the join code's `pin`; `key` only this page knows) at the service whose HTTP
+        /// side is `base`.
+        pub fn open(base: &str, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES]) -> Self {
+            let st = Rc::new(RefCell::new(HostState { rendezvous: Rendezvous::Asking, listing: Vec::new(), links: Vec::new(), gone: false }));
+            wasm_bindgen_futures::spawn_local(poll(base.to_owned(), session, pin, key, st.clone()));
+            Self(st)
+        }
+
+        pub fn set_listing(&self, listing: Vec<u8>) {
+            self.0.borrow_mut().listing = listing;
+        }
+
+        /// `Registered` with the page's address as the service sees it (port 0: no port reaches a page).
+        pub fn rendezvous(&self) -> Rendezvous {
+            self.0.borrow().rendezvous
+        }
+
+        /// A joiner's open link.
+        pub fn accept(&self) -> Option<Link> {
+            let mut s = self.0.borrow_mut();
+            s.links.retain(|l| !super::Transport::closed(l));
+            let i = s.links.iter().position(Link::is_open)?;
+            Some(s.links.swap_remove(i))
+        }
+    }
+
+    impl Drop for PageHost {
+        fn drop(&mut self) {
+            self.0.borrow_mut().gone = true;
+        }
+    }
+
+    async fn poll(base: String, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES], st: Rc<RefCell<HostState>>) {
+        let url = format!("{base}{}", super::host_path(session, &pin, &key));
+        while !st.borrow().gone {
+            let listing = st.borrow().listing.clone();
+            let r = post(&url, &listing).await;
+            let state = match r.as_ref().map(|(code, b)| (*code, crate::rendezvous::poll_parts(b))) {
+                Ok((200, Some((seen, offer)))) => {
+                    if let Some((id, sdp)) = offer {
+                        let (base, st) = (base.clone(), st.clone());
+                        wasm_bindgen_futures::spawn_local(async move {
+                            if let Err(e) = answer(&base, session, key, id, &sdp, &st).await {
+                                web_sys::console::log_1(&format!("ig2-net: a joiner's offer: {e}").into());
+                            }
+                        });
+                    }
+                    st.borrow_mut().rendezvous = Rendezvous::Registered(SocketAddrV4::new(seen, 0));
+                    continue;
+                }
+                Ok((409, _)) => Rendezvous::Refused(Refusal::Taken),
+                Ok((429, _)) => Rendezvous::Refused(Refusal::Full),
+                // An older service (no page hosts), or none.
+                _ => Rendezvous::NoAnswer,
+            };
+            st.borrow_mut().rendezvous = state;
+            sleep(3000).await;
+        }
+    }
+
+    /// Answer a joiner's `offer` (its id `id`) with a connection of its own; its channel goes to `st` once open.
+    async fn answer(base: &str, session: u64, key: [u8; KEY_BYTES], id: u32, offer: &str, st: &Rc<RefCell<HostState>>) -> Result<(), Error> {
+        let pc = peer(base)?;
+        let desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
+        desc.set_sdp(offer);
+        JsFuture::from(pc.set_remote_description(&desc)).await.map_err(js)?;
+        let answer = JsFuture::from(pc.create_answer()).await.map_err(js)?;
+        JsFuture::from(pc.set_local_description(&answer.unchecked_into())).await.map_err(js)?;
+        let answer = gathered(&pc).await?;
+        // The channel comes after the answer went out: its handlers are set as it comes, before its first message.
+        let got: Rc<RefCell<Option<(Link, RtcDataChannel)>>> = Rc::default();
+        let (pc2, got2, b) = (pc.clone(), got.clone(), binding(offer, &answer));
+        let on_channel = Closure::<dyn FnMut(RtcDataChannelEvent)>::new(move |e: RtcDataChannelEvent| {
+            let dc = e.channel();
+            *got2.borrow_mut() = Some((wrap(pc2.clone(), dc.clone(), b), dc));
+        });
+        pc.set_ondatachannel(Some(on_channel.as_ref().unchecked_ref()));
+        let sent = post(&format!("{base}{}", super::answer_path(session, &key, id)), answer.as_bytes()).await;
+        let open = matches!(sent, Ok((200, _))) && opened(|| got.borrow().as_ref().map(|(_, dc)| dc.ready_state()), 300).await;
+        pc.set_ondatachannel(None);
+        drop(on_channel);
+        let Some((link, _)) = got.borrow_mut().take().filter(|_| open) else {
+            pc.close();
+            return Err(match sent {
+                Ok((200, _)) => Error::Timeout,
+                Ok((code, _)) => Error::Signal(format!("HTTP {code}")),
+                Err(e) => e,
+            });
+        };
+        link.shared.open.store(true, Ordering::SeqCst);
+        if !st.borrow().gone {
+            st.borrow_mut().links.push(link);
+        }
+        Ok(())
     }
 }
 

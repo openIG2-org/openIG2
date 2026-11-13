@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use ig2_net::joincode::PIN_BYTES;
 use ig2_net::quic::{QuicHost, Rendezvous};
-use ig2_net::rendezvous::{serve_with_http, Service};
+use ig2_net::rendezvous::{poll_parts, serve_with_http, Service, KEY_BYTES};
 use ig2_net::webrtc::{self, Link};
 use ig2_net::{Command, Host, Msg, Peer, Transport, DEFAULT_DELAY};
 use ig2_sim::game::Game;
@@ -74,7 +74,7 @@ fn join(relay: &Relay, host: &QuicHost, session: u64, pin: [u8; PIN_BYTES]) -> (
     let mut pending = Vec::new();
     let there = wait(|| {
         for (id, offer) in host.offers() {
-            let (answer, link) = webrtc::answer(&offer).unwrap();
+            let (answer, link) = webrtc::answer(&offer, Some(relay.addr)).unwrap();
             host.answer(id, &answer);
             pending.push(link);
         }
@@ -139,4 +139,51 @@ fn two_peers_in_lockstep_over_webrtc() {
     assert_eq!(a.hashes, b.hashes);
     assert!(host.desyncs.is_empty(), "{:?}", host.desyncs);
     assert_eq!(host.log.iter().map(|b| b.commands.len()).sum::<usize>(), 1);
+}
+
+/// A page's fetch: POST `body` to `path` at the service's HTTP side, the status and the reply.
+fn post(at: SocketAddrV4, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    use std::io::{Read, Write};
+    let mut s = std::net::TcpStream::connect(at).unwrap();
+    write!(s, "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+    s.write_all(body).unwrap();
+    let mut r = Vec::new();
+    s.read_to_end(&mut r).unwrap();
+    let head = r.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let code = std::str::from_utf8(&r[9..12]).unwrap().parse().unwrap();
+    (code, r[head + 4..].to_vec())
+}
+
+#[test]
+fn a_page_host_answers_a_joiner_through_its_polls() {
+    let relay = Relay::start();
+    let (session, pin, key) = (0xbeef, [5u8; PIN_BYTES], [6u8; KEY_BYTES]);
+    let poll = webrtc::host_path(session, &pin, &key);
+    // The page's poll opens the room and waits; the joiner's offer comes back as its reply.
+    let at = relay.addr;
+    let polled = std::thread::spawn(move || post(at, &poll, b""));
+    let joiner = {
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            webrtc::connect(at, session, &pin)
+        })
+    };
+    let (code, reply) = polled.join().unwrap();
+    assert_eq!(code, 200);
+    let (seen, offer) = poll_parts(&reply).unwrap();
+    assert!(seen.is_loopback());
+    let (id, offer) = offer.expect("the joiner's offer");
+    assert_eq!(post(at, &webrtc::host_path(session, &pin, &[7; KEY_BYTES]), b"").0, 409, "another key can't take the room");
+    let (answer, mut there) = webrtc::answer(&offer, Some(relay.addr)).unwrap();
+    assert_eq!(post(at, &webrtc::answer_path(session, &[7; KEY_BYTES], id), answer.as_bytes()).0, 404, "nor answer for it");
+    assert_eq!(post(at, &webrtc::answer_path(session, &key, id), answer.as_bytes()).0, 200);
+    let mut joiner = joiner.join().unwrap().unwrap();
+    wait(|| there.is_open().then_some(()));
+    assert_eq!(joiner.binding(), there.binding());
+    joiner.send(&Msg::Hash { turn: 2, hash: 9 });
+    assert_eq!(wait(|| there.recv().unwrap()), Msg::Hash { turn: 2, hash: 9 });
+    there.send(&Msg::Hash { turn: 3, hash: 1 });
+    assert_eq!(wait(|| joiner.recv().unwrap()), Msg::Hash { turn: 3, hash: 1 });
+    // A page's room is not for QUIC joiners.
+    assert!(ig2_net::quic::connect_via(relay.addr, session, pin, ig2_net::quic::Via::RelayOnly).is_err());
 }

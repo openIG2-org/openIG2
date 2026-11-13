@@ -13,7 +13,7 @@
 //! `quic::connect` (`quinn`, one UDP port, a pinned self-signed session certificate).
 //! `rendezvous`: the optional rendezvous and relay service (ADR 0018); `quic::RelaySocket` carries QUIC through it.
 //! `webrtc`: browser joiners over a data channel signalled through the service (ADR 0047 part 4; feature `webrtc`
-//! natively, always in the browser).
+//! natively, always in the browser); a page hosts through the service too. `stun`: the service's STUN answers.
 
 pub mod command;
 pub mod discovery;
@@ -28,6 +28,7 @@ pub mod rendezvous;
 pub mod replay;
 pub mod session;
 pub mod snapshot;
+pub mod stun;
 pub mod transport;
 pub mod webrtc;
 pub mod wire;

@@ -60,7 +60,11 @@ direct-only.
 The browser build (ADR 0047 part 4) joins through the service only: it types the relay server and the host's join
 code, posts its WebRTC offer to `http://<relay>/offer/<session>/<pin>`, and the service passes it to the room's host
 (any native client with that relay set), whose answer comes back the same way. The game then runs over a WebRTC data
-channel between the two machines, not through the service. The page can't host. A page served over HTTPS can only
+channel between the two machines, not through the service. A page hosts too: it keeps a room open at the service
+by polling `http://<relay>/host/<session>/<pin>/<key>` and answers its joiners' offers through
+`/answer/<session>/<key>/<id>`; its join code carries no address, and desktop players reach it through the same
+signalling. The service also answers STUN on its UDP port, so every WebRTC end learns its public address from it
+(ADR 0047 part 4). A page served over HTTPS can only
 reach an HTTPS service, which this one isn't yet: run the page from `http://127.0.0.1` (or the LAN) for now.
 
 ## The public game list

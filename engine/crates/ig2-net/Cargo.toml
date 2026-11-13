@@ -37,7 +37,7 @@ getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }
 js-sys.workspace = true
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true
-web-sys = { workspace = true, features = ["Window", "MessageEvent", "RtcPeerConnection", "RtcDataChannel", "RtcDataChannelState", "RtcDataChannelType", "RtcIceGatheringState", "RtcSdpType", "RtcSessionDescription", "RtcSessionDescriptionInit", "Request", "RequestInit", "Response"] }
+web-sys = { workspace = true, features = ["Window", "MessageEvent", "RtcPeerConnection", "RtcConfiguration", "RtcIceServer", "RtcDataChannelEvent", "console", "RtcDataChannel", "RtcDataChannelState", "RtcDataChannelType", "RtcIceGatheringState", "RtcSdpType", "RtcSessionDescription", "RtcSessionDescriptionInit", "Request", "RequestInit", "Response"] }
 
 [dev-dependencies]
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }

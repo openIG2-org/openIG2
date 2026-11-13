@@ -4,7 +4,8 @@ Date: 2026-11-01. Status: accepted; part 1 implemented (`ig2-formats::vfs::Files
 part 2 implemented (the client in a page up to the main menu with its music, `web/`, `tools/build_web.py`); part 3
 implemented but for video (single player on WebGPU or WebGL2, the player's files in OPFS, `tools/serve_web.py`);
 part 4 implemented (a browser joins a native host over WebRTC through the rendezvous service, videos through
-WebCodecs). Hosting a public page (part 5) waits for the maintainers' decision.
+WebCodecs; a browser hosts a room there too, STUN from the service itself, 2026-11-13). Hosting a public page (part 5)
+waits for the maintainers' decision.
 
 ## Context
 Opening a URL and playing needs no install step and runs on any machine with a current browser. The engine ships no
@@ -122,13 +123,42 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
   start uses them; a portable implementation for the sim (the `libm` crate) would make every platform agree, so the
   Consequences' "byte-identical" holds on one platform only until then.
 
+## Part 4 continued: a browser hosts
+A page takes no connections, so the service stands in for its socket (ADR 0018's relay is untouched):
+- **The room**: the page long-polls `POST /host/{session}/{pin}/{key}` (16, 24 and 32 hex digits): the first poll
+  opens a room for the session as Register does, each later one keeps it open, and the body is its encoded public
+  listing (empty: unlisted). `key` is the page's own random secret, never in a join code: only the page that opened
+  the room polls it and answers its offers (another key: 409; full: 429). The service holds the poll up to 8 s and
+  answers with the page's address as it sees it, then an offer's id and SDP if a joiner's came. The page answers with
+  `POST /answer/{session}/{key}/{id}` and the joiner's own `/offer/` request returns that answer. A page's room has no
+  socket, so a QUIC Lookup of it is refused, a Register can't take its session, and its listing has port 0, which
+  `Listing::join_code` turns into a code without an address.
+- **The page** (`webrtc::PageHost`, the client's `WebListener`): a random 32-byte fingerprint stands in for the
+  certificate's (the join code's pin is its start); each offer gets an `RTCPeerConnection` of its own, the channel's
+  handlers are set as `ondatachannel` brings it (before its first message can come), and the lobby admits the link
+  once open. The room shows a join code once the service answered, its seen address without a port.
+- **Joiners**: a browser offers as before. A desktop joiner tries QUIC through the service first; when that fails and
+  the code carries no address it offers over HTTP signalling to the same service (`webrtc::connect`), so desktop and
+  browser players meet in a browser's room.
+- **STUN, the project's choice**: the service answers STUN Binding requests (RFC 8489, XOR-MAPPED-ADDRESS, never
+  larger than the request, counted against the control limit) on its UDP port, and every WebRTC end asks it: pages
+  through `RTCPeerConnection`'s `iceServers` (`stun:` the relay's host and port), native ends (str0m) with one request
+  from their link's socket before the offer or answer (300 ms at most), added as a server-reflexive candidate. No
+  third party's STUN server learns the players' addresses, and the relay a player already trusts is the only server
+  involved. There is no TURN: two players behind symmetric NATs still can't reach each other over WebRTC.
+- **Tests**: `rendezvous` unit tests for the page room (keys, offers handed once, expiry, listing, limits, paths and
+  replies), the STUN answer against RFC 5769's sample, and `ig2-net/tests/webrtc.rs`'s page host polling a running
+  service over HTTP and answering a native joiner. Verified live: a page hosted through a local service, its room
+  showed a join code, `ig2-client --mp-join` joined it and the two played in lockstep.
+- **Known limit**: a page's game runs in its animation frames; a hidden or minimised tab stops them, and its joiners
+  then take the host as gone (as for a browser joiner's own tab).
+
 ## What is left
 - **A public page and an HTTPS service:** a page served over HTTPS can only reach an HTTPS signalling endpoint, and
   publishing the page is the maintainers' call (part 5). Until then the page runs from `tools/serve_web.py` on this
   machine against a service the player runs.
-- **Internet NAT traversal for browsers:** the host's WebRTC candidates are its loopback and LAN addresses (no STUN);
-  a browser outside the host's LAN needs the host's public address as a candidate (the service sees it on Register)
-  or a relay over WebSocket. Browsers can't host yet, so two browsers can't play each other.
+- **NAT traversal beyond STUN:** every end gets its public address from the service's STUN answers (above); players
+  behind symmetric NATs would need a TURN-like relay over WebSocket.
 - **Clipboard, mods, memory:** the web clipboard for join codes (typed for now); mods in OPFS; reading the install on
   demand from a worker instead of holding it in memory (now about 700 MB with the videos).
 - **Cross-platform determinism:** the sim's transcendental functions from one portable implementation (above).

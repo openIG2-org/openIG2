@@ -721,6 +721,8 @@ impl MpScreen {
                     };
                     if let Some(r) = relay {
                         let seen = match listener.rendezvous() {
+                            // A browser's room: no port reaches it.
+                            Rendezvous::Registered(a) if a.port() == 0 => a.ip().to_string(),
                             Rendezvous::Registered(a) => a.to_string(),
                             _ => String::new(),
                         };
