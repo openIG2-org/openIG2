@@ -596,6 +596,10 @@ cloud_detail = 0.5           # soft structure inside each galaxy cloud and fog c
 
 [text]
 sdf_font = true            # draw the text from the pack's sharp font (needs `--make-pack --only font`)
+
+[models]
+smooth = 1                 # round the meshes as they load, 0..2 levels (0 = as the original)
+normal_maps = true         # surface relief from the pack's maps (needs `--make-pack --only maps` and per-pixel lighting)
 ```
 
 Every line is optional. `true` switches a look on whatever your own setting; a line left out leaves your setting
@@ -607,6 +611,13 @@ https://github.com/openIG2-org/mods/tree/main/mods-src/remaster-look
 `[text] sdf_font` draws the game's text from the distance-field font that `openIG2 --make-pack --only font` makes in your
 texture pack (`hires/dataraw/screen/charset_bmp.sdf.png`): the same widths, baselines and colours, sharp at any window size and
 UI scale. Without it the classic font draws as before.
+
+`[models] smooth` subdivides ship hulls (battle and designer) and the colony's buildings and vehicles when they load;
+edges where faces meet at more than 40 degrees stay hard, so outlines and panel lines keep their shape. Screen frames,
+buttons, wire globes and the colony ground are left alone. `normal_maps` makes models lit per pixel (the Per-pixel
+lighting option or `[lighting] per_pixel`) read the `hires/<texture>_n.png` maps that `openIG2 --make-pack --only maps`
+derives from your pack's pictures (else the originals): the battle's hulls and the colony show surface relief under
+the light. A texture without a map lights as before.
 
 ### Effect files
 A mod's `effects.toml` (at the mod's top) describes the Enhanced battle effects as particles: at each moment, what

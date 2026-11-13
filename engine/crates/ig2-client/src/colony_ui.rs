@@ -1600,7 +1600,7 @@ fn bake_panel(model: &Model, texs: &[TexId], m: &M3, at: V3, lights: &crate::lig
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
             let (n, c) = lights.vertex(crate::lighting::normal(m, v.lnormal), [0.0; 3]);
-            dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
+            dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], a], tangent: crate::lighting::tangent(m, v.ltangent) });
         }
         // The pass's camera sits at the origin of its own space.
         if crate::colony::building_env(p) {

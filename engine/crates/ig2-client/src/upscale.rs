@@ -18,6 +18,8 @@ pub struct Hires {
     pub rgba: Vec<u8>,
     /// An exact multiple of the original: its halvings reach the original's size, whose own levels follow.
     pub upscaled: bool,
+    /// The pack's normal map for it (`hires/<path>_n.png`, ADR 0089 §6), when a mod's `[models] normal_maps` asks.
+    pub normal: Option<Arc<Hires>>,
 }
 
 /// A pack's pictures: `hires/<game path>` in an enabled mod (ADR 0054 §5).
@@ -77,8 +79,25 @@ fn pack(install: &Install, path: &str) -> Option<Arc<Hires>> {
     // Keyed by the game path and the file's length: another pack's picture of the same name is another entry.
     cached((format!("{file}#{}", bytes.len()), 0), || {
         let decoded = if file.ends_with(".png") { decode_png(&bytes) } else { decode_pvr(&bytes) };
-        decoded.map_err(|e| eprintln!("ig2-client: {file}: {e}")).ok()
+        let mut h = decoded.map_err(|e| eprintln!("ig2-client: {file}: {e}")).ok()?;
+        h.normal = normal_map(install, stem);
+        Some(h)
     })
+}
+
+/// The pack's normal map for the texture `stem` (ADR 0089 §6), when a mod switches them on.
+fn normal_map(install: &Install, stem: &str) -> Option<Arc<Hires>> {
+    if !crate::visuals::mods().normal_maps {
+        return None;
+    }
+    let file = normal_file(stem);
+    let bytes = install.read(&file).ok()?;
+    decode_png(&bytes).map_err(|e| eprintln!("ig2-client: {file}: {e}")).ok().map(Arc::new)
+}
+
+/// The normal map's pack file for the install texture `stem` (its path without the extension).
+pub fn normal_file(stem: &str) -> String {
+    format!("{PACK_DIR}{stem}_n.png")
 }
 
 /// The pack's picture of frame `i` of the talking head `path` (`anim/fejek/<name>.ani`): `hires/anim/fejek/<name>/<i>.png`
@@ -124,13 +143,13 @@ pub(crate) fn decode_png(bytes: &[u8]) -> Result<Hires, String> {
         png::ColorType::GrayscaleAlpha => buf.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
         c => return Err(format!("unsupported colour type {c:?}")),
     };
-    Ok(Hires { width: info.width, height: info.height, rgba, upscaled: false })
+    Ok(Hires { width: info.width, height: info.height, rgba, upscaled: false, normal: None })
 }
 
 fn decode_pvr(bytes: &[u8]) -> Result<Hires, String> {
     let pvr = Pvr::parse(bytes).map_err(|e| e.to_string())?;
     let rgba = pvr.decode_levels().map_err(|e| e.to_string())?.into_iter().next().ok_or("no pixels")?.pixels;
-    Ok(Hires { width: pvr.width, height: pvr.height, rgba, upscaled: false })
+    Ok(Hires { width: pvr.width, height: pvr.height, rgba, upscaled: false, normal: None })
 }
 
 /// The factor a `w` × `h` texture is scaled by at the row's `f`: 4, else 2, so that no side passes [`MAX_SIDE`].
@@ -156,7 +175,7 @@ pub fn is_flat(img: &Image) -> bool {
 pub fn upscale(img: &Image, f: u8) -> Hires {
     let (w, h) = (img.width as usize, img.height as usize);
     let rgba = if is_flat(img) { xbrz(&img.rgba, w, h, f as usize) } else { cubic(&img.rgba, w, h, f as usize) };
-    Hires { width: img.width * f as u32, height: img.height * f as u32, rgba, upscaled: true }
+    Hires { width: img.width * f as u32, height: img.height * f as u32, rgba, upscaled: true, normal: None }
 }
 
 /// xBRZ with the border texels repeated (the crate reads past the edge as transparent, which would fade every

@@ -466,7 +466,7 @@ fn lerp_piece(a: &Piece, b: &Piece, t: f32) -> Piece {
         return a.clone();
     }
     let l = |x: V3, y: V3| -> V3 { std::array::from_fn(|k| x[k] + (y[k] - x[k]) * t) };
-    let verts = a.verts.iter().zip(&b.verts).map(|(x, y)| scene::Vert { pos: l(x.pos, y.pos), normal: scene::normalise(l(x.normal, y.normal)), uv: x.uv, lnormal: l(x.lnormal, y.lnormal), fnormal: x.fnormal }).collect();
+    let verts = a.verts.iter().zip(&b.verts).map(|(x, y)| scene::Vert { pos: l(x.pos, y.pos), normal: scene::normalise(l(x.normal, y.normal)), uv: x.uv, lnormal: l(x.lnormal, y.lnormal), fnormal: x.fnormal, tangent: x.tangent, ltangent: x.ltangent }).collect();
     Piece { verts, tex: a.tex }
 }
 
@@ -543,7 +543,8 @@ impl Builder {
                 }
                 Look::Flat => (v.normal, [1.0; 3], 0.0),
             };
-            self.dynamic.push(MeshVertex { pos: p, normal: n, uv: v.uv, color: [rgb[0], rgb[1], rgb[2], a] });
+            let tangent = if matches!(look, Look::Flat) { [0.0; 4] } else { lighting::through_tangent(&at, v.pos, v.ltangent) };
+            self.dynamic.push(MeshVertex { pos: p, normal: n, uv: v.uv, color: [rgb[0], rgb[1], rgb[2], a], tangent });
         }
         // The opaque video disc takes the remaster's `VIDEO` material.
         let video = matches!(look, Look::Flat);
@@ -574,7 +575,7 @@ impl Builder {
         let start = self.dynamic.len() as u32;
         let n = [0.0, 0.0, 1.0];
         for q in [off(a, 1.0), off(a, -1.0), off(b, 1.0), off(b, -1.0), off(b, 1.0), off(a, -1.0)] {
-            self.dynamic.push(MeshVertex { pos: q, normal: n, uv: [0.0, 0.0], color: [rgb[0], rgb[1], rgb[2], o] });
+            self.dynamic.push(MeshVertex { pos: q, normal: n, uv: [0.0, 0.0], color: [rgb[0], rgb[1], rgb[2], o], tangent: [0.0; 4] });
         }
         self.glass.push(MeshDraw { mesh: None, range: start..self.dynamic.len() as u32, tex: white, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
     }

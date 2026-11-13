@@ -303,7 +303,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
         for (v, q) in tri.iter().zip(w) {
             let n = scene::normalise(scene::apply(&t.matrix, v.normal));
             let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), n);
-            out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0] * k, c[1] * k, c[2] * k, a] });
+            out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0] * k, c[1] * k, c[2] * k, a], tangent: lighting::tangent(&t.matrix, v.ltangent) });
         }
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });

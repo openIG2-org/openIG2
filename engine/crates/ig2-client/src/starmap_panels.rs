@@ -1797,7 +1797,7 @@ fn bake(model: &Model, m: &M3, at: V3, texs: &[TexId], glows: &[Option<TexId>], 
         for v in &p.verts {
             let q = scene::apply(m, v.pos);
             let (n, c) = lights.vertex(lighting::normal(m, v.lnormal), [0.0; 3]);
-            out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
+            out.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], a], tangent: lighting::tangent(m, v.ltangent) });
         }
         let tex = texs.get(pi).copied().unwrap_or(texs.first().copied().unwrap_or(TexId(0)));
         draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });

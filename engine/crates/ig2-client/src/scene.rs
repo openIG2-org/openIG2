@@ -88,6 +88,11 @@ pub struct Vert {
     /// The file normal as `LoadObject` keeps it (normalised; a zero one is (1, 0, 0)), in its mesh's own space: the
     /// environment mapping's `N` (`envszamol`, [`env_uv`]).
     pub fnormal: V3,
+    /// The direction of growing u across `normal` and the side of growing v (`w`, ±1; zero: none), for a pack's normal
+    /// map (ADR 0089 §6, `mesh_detail::tangents`).
+    pub tangent: [f32; 4],
+    /// The same beside `lnormal`.
+    pub ltangent: [f32; 4],
 }
 
 /// The environment mapping (`vagashatarkirak` ELF 0x606c90 / exe 0x5395d0, property 0x4000; `envszamol` ELF 0x6110e0,
@@ -298,6 +303,7 @@ impl Model {
             parts: Vec::new(),
             nodes: Vec::new(),
             frame,
+            smooth: crate::mesh_detail::levels(path),
         };
         w.node(&scene, &IDENTITY, &IDENTITY, [0.0; 3], "", &[]);
         let recounted = !skips_box_recount(&scene);
@@ -361,9 +367,11 @@ impl Model {
                     let d = apply(t, [q[0] - n.at[0], q[1] - n.at[1], q[2] - n.at[2]]);
                     q = [d[0] + n.at[0], d[1] + n.at[1], d[2] + n.at[2]];
                     v.normal = normalise(apply(nt, v.normal));
+                    v.tangent = crate::mesh_detail::turn(t, v.tangent);
                 }
                 if let Some(lt) = &lturn {
                     v.lnormal = apply(lt, v.lnormal);
+                    v.ltangent = crate::mesh_detail::turn(lt, v.ltangent);
                 }
                 v.pos = [q[0] + shift[0], q[1] + shift[1], q[2] + shift[2]];
             }
@@ -390,6 +398,8 @@ impl Model {
                     v.normal = normalise(l(v.normal, w.normal));
                     // `Kocka` blends the keys' rotation matrices linearly (no renormalising).
                     v.lnormal = l(v.lnormal, w.lnormal);
+                    let lt = |a: [f32; 4], b: [f32; 4]| -> [f32; 4] { std::array::from_fn(|k| if k < 3 { a[k] + (b[k] - a[k]) * t } else { a[3] }) };
+                    (v.tangent, v.ltangent) = (lt(v.tangent, w.tangent), lt(v.ltangent, w.ltangent));
                 }
             }
         }
@@ -420,6 +430,8 @@ struct Walk<'a, 'b> {
     parts: Vec<Part>,
     nodes: Vec<NodePose>,
     frame: Option<usize>,
+    /// The subdivision levels its meshes take (ADR 0089 §6).
+    smooth: u8,
 }
 
 impl Walk<'_, '_> {
@@ -516,11 +528,19 @@ impl Walk<'_, '_> {
                                 uv: v.uv,
                                 lnormal: apply(&ml, [fnormal[0], fnormal[1], -fnormal[2]]),
                                 fnormal,
+                                tangent: [0.0; 4],
+                                ltangent: [0.0; 4],
                             });
                         }
                     }
-                    for (k, (verts, edges)) in by_mat.into_iter().zip(edges).enumerate() {
+                    for (k, (mut verts, mut edges)) in by_mat.into_iter().zip(edges).enumerate() {
                         if !verts.is_empty() {
+                            // A mod's `[models]` (ADR 0089 §6): the part subdivided, its sharp edges kept.
+                            if self.smooth > 0 {
+                                (verts, edges) = crate::mesh_detail::subdivide(&verts, &edges, self.smooth);
+                                crate::mesh_detail::smooth_normals(&mut verts);
+                            }
+                            crate::mesh_detail::tangents(&mut verts, &m, &ml);
                             self.parts.push(Part { texture: texs.get(k).cloned().flatten(), path: path.clone(), index: index.clone(), verts, look: Look::Opaque, edges, transparency: trs.first().copied().unwrap_or(0.0), self_illum: if lit { tex2.get(k).cloned().flatten().or_else(|| texs.get(k).cloned().flatten()) } else { None }, texture_name: names.get(k).map(|n| n.0.clone()).unwrap_or_default(), texture2_name: names.get(k).map(|n| n.1.clone()).unwrap_or_default(), matrix: m });
                         }
                     }
@@ -667,6 +687,11 @@ fn normal_matrix(m: &M3) -> M3 {
     ];
     // The cofactor matrix is the inverse transpose up to the determinant's scale (normals are renormalised).
     cof
+}
+
+/// The determinant of `m`.
+pub fn det(m: &M3) -> f32 {
+    m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6])
 }
 
 /// The cross product `a × b`.

@@ -190,6 +190,25 @@ pub fn through(at: impl Fn(V3) -> V3, p: V3, lnormal: V3) -> V3 {
     })
 }
 
+/// A part's lighting tangent (`scene::Vert::ltangent`, ADR 0089 §6) turned like its lighting normal by [`normal`]:
+/// the side flipped where `m` mirrors.
+pub fn tangent(m: &M3, lt: [f32; 4]) -> [f32; 4] {
+    let d = normal(m, [lt[0], lt[1], lt[2]]);
+    if lt[3] == 0.0 { [0.0; 4] } else { [d[0], d[1], d[2], lt[3] * scene::det(m).signum()] }
+}
+
+/// [`tangent`] for a placement given as a point map ([`through`]).
+pub fn through_tangent(at: impl Fn(V3) -> V3, p: V3, lt: [f32; 4]) -> [f32; 4] {
+    let o = at(p);
+    let m: M3 = std::array::from_fn(|k| {
+        let (i, j) = (k / 3, k % 3);
+        let mut q = p;
+        q[j] += 1.0;
+        at(q)[i] - o[i]
+    });
+    tangent(&m, lt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

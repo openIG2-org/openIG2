@@ -333,7 +333,7 @@ fn edge_quads(edges: &[(V3, V3, [f32; 4])], px: f32, tex: TexId, out: &mut Vec<M
         let off = |p: V3, w: f32, s: f32| [p[0] + n[0] * 0.5 * px / 600.0 * w * s, p[1] + n[1] * 0.5 * px / 600.0 * w * s, p[2]];
         let q = [off(a, wa, -1.0), off(a, wa, 1.0), off(b, wb, 1.0), off(b, wb, -1.0)];
         for i in [0, 1, 2, 0, 2, 3] {
-            out.push(MeshVertex { pos: q[i], normal: [0.0, 0.0, 1.0], uv: [0.5, 0.5], color: c });
+            out.push(MeshVertex { pos: q[i], normal: [0.0, 0.0, 1.0], uv: [0.5, 0.5], color: c, tangent: [0.0; 4] });
         }
         glass |= c[3] < 1.0;
     }
@@ -444,7 +444,7 @@ pub(crate) fn glow(p: &scene::Part, t: &scene::Transform, tex: TexId, transparen
         }
         for (v, q) in tri.iter().zip(w) {
             // A zero normal: the colour is the light (no scene lighting).
-            out.push(MeshVertex { pos: q, normal: [0.0; 3], uv: v.uv, color: [g, g, g, 1.0] });
+            out.push(MeshVertex { pos: q, normal: [0.0; 3], uv: v.uv, color: [g, g, g, 1.0], tangent: [0.0; 4] });
         }
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
@@ -465,7 +465,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
             let n = scene::normalise(scene::apply(&t.matrix, v.normal));
             let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), n);
             // The colour bytes multiply the texture in the gamma pass (re/screens/render.md §2).
-            out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
+            out.push(MeshVertex { pos: q, normal: n, uv: v.uv, color: [c[0], c[1], c[2], a], tangent: lighting::tangent(&t.matrix, v.ltangent) });
         }
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });

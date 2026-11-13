@@ -132,7 +132,7 @@ pub fn line_quad(eye: V3, px: f32, a: V3, b: V3, ca: [f32; 4], cb: [f32; 4]) -> 
     let d: V3 = std::array::from_fn(|k| b[k] - a[k]);
     let side = crate::scene::normalise([d[1] * to_eye[2] - d[2] * to_eye[1], d[2] * to_eye[0] - d[0] * to_eye[2], d[0] * to_eye[1] - d[1] * to_eye[0]]);
     let w = dist * px / 2.0;
-    let q = |p: V3, s: f32, c: [f32; 4]| MeshVertex { pos: std::array::from_fn(|k| p[k] + side[k] * w * s), normal: [0.0; 3], uv: [0.0; 2], color: c };
+    let q = |p: V3, s: f32, c: [f32; 4]| MeshVertex { pos: std::array::from_fn(|k| p[k] + side[k] * w * s), normal: [0.0; 3], uv: [0.0; 2], color: c, tangent: [0.0; 4] };
     [q(a, -1.0, ca), q(b, -1.0, cb), q(b, 1.0, cb), q(a, -1.0, ca), q(b, 1.0, cb), q(a, 1.0, ca)]
 }
 

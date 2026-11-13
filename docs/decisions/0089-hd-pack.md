@@ -1,6 +1,6 @@
 # ADR 0089: the HD pack: every picture, video, talking head, the font and the models' detail, made from the player's install
 
-Date: 2026-11-12. Status: accepted; §1–3 built (row 570), §4 but `--smooth` (row 571), §5 (row 572). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
+Date: 2026-11-12. Status: accepted; §1–3 built (row 570), §4 but `--smooth` (row 571), §5 (row 572), §6 (row 573). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
 §5–6: the pack tool of row 567) and ADR 0013 (video). Rows 570–573 of `docs/ENHANCEMENTS.md`.
 
 ## Context
@@ -128,3 +128,31 @@ The goal: a sharper, more modern look that still reads as the original: same out
 - The client: with `[text] sdf_font` and the file in an enabled mod, `Font` uploads the field (linear) and draws every
   glyph as kind 24 instead of 7: the same quad, uv and colour, coverage `clamp((d − 0.5) / fwidth(d) + 0.5)` (one
   screen pixel of ramp at any scale). Without either the font draws as before; a missing file is reported once.
+
+**The models' detail (row 573)**, `ig2-client::mesh_detail`, `scene`, `render3d`'s group 3, `pack_tool`:
+- `[models] smooth` subdivides the ships' (`vector/spacewar/`, `vector/design/`) and the colony's (`vector/colony/`,
+  not `terrainobj/`) meshes when they load; the screens' frames, buttons and wire globes keep theirs (smoothed, the
+  research globe's pentagons buckled). Points are welded by position; an edge is a crease when its two faces' normals
+  differ by more than 40° (each face turned the way its corners' file normals face: the files wind faces either way),
+  when it borders one face or three. A crease vertex slides along two creases running on within 40° of a line, else
+  stays. Most ships and buildings round off by a few hundredths of their size.
+- The file normals are per corner in the engine's own convention, neither the faces' geometric normals nor shared
+  between faces (the designer's `cirk1_2`: 210 of 2,868 corners equal their face's normal, 32 of 544 points carry
+  one normal). Rebuilt from the geometry they lit the hulls wrongly; so each new corner takes the area-weighted mean of
+  the file normals at its point over the faces within 40° of its own (`normal`, `fnormal` and `lnormal` each in its
+  own space, `lnormal`'s length kept).
+- Tangents for every part at load, from its triangles' UVs (corners sharing point, UV and normal share one); `w` the
+  side of growing v. `tangent` beside the root normal, `ltangent` beside the lighting normal (through the part's
+  matrix's inverse, z negated, the lighting chain); a screen turns them like its normals (`lighting::tangent`, the side
+  flipped by a mirroring placement). `MeshVertex::tangent` carries them at the screens lit per pixel and the battle's
+  hulls; every other vertex has none.
+- `--only maps`: for each scene texture (`…/textures/…`) the pack's picture when there is one, else the original;
+  height = luminance (0 where transparent), Sobel (wrapping where the models wrap the texture), the normal
+  `(−s·∂h/∂x, −s·∂h/∂y, 1)` with `s` the strength per original texel times the picture's factor: battle and designer
+  hulls 0.6, the colony and the screens' models 0.5, the rest 0.25. Written `hires/<path>_n.png`; under a second a
+  texture.
+- The client loads a map beside a pack picture when a mod sets `normal_maps`, as a second texture bound in group 3
+  (stored values, repeating); a texture without one binds a transparent texel. The fragment shader turns the normal
+  of a vertex with a tangent and a map before any lighting, keeping its length (the light set's code), so the table
+  light per pixel (ADR 0088 §9), the battle's lights (§11) and the colony's sun all read it. Without a map nothing
+  changes.

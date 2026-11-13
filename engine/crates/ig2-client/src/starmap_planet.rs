@@ -255,7 +255,7 @@ impl Mesh {
                     let n = normalise(std::array::from_fn(|j| pos[k][j] - at[j]));
                     let (normal, lit) = lit(n, &tri[k]);
                     let uv = [tri[k].uv[0] * part.uv_mul[0], tri[k].uv[1] * part.uv_mul[1]];
-                    scene.dynamic.push(MeshVertex { pos: pos[k], normal, uv, color: [lit, lit, lit, fade(n)] });
+                    scene.dynamic.push(MeshVertex { pos: pos[k], normal, uv, color: [lit, lit, lit, fade(n)], tangent: [0.0; 4] });
                 }
             }
             let range = start..scene.dynamic.len() as u32;

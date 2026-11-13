@@ -32,6 +32,10 @@
 //!
 //! [text]
 //! sdf_font = true             # the text from the HD pack's distance-field font, sharp at any size (ADR 0089 §5)
+//!
+//! [models]
+//! smooth = 1                  # subdivision levels when a mesh loads, 0..2 (edges sharper than 40° stay hard)
+//! normal_maps = true          # the HD pack's `hires/<texture>_n.png` under per-pixel light
 //! ```
 
 /// The file's name at a mod's top; not a game path.
@@ -78,6 +82,10 @@ pub struct Visuals {
     pub cloud_detail: Option<f32>,
     /// The text drawn from the HD pack's distance-field font when the pack has it (ADR 0089 §5).
     pub sdf_font: bool,
+    /// The models' subdivision levels, 0..=2 (ADR 0089 §6).
+    pub smooth: Option<u8>,
+    /// The pack's normal maps on the models lit per pixel (ADR 0089 §6).
+    pub normal_maps: bool,
 }
 
 impl Visuals {
@@ -123,6 +131,8 @@ impl Visuals {
                     ("starmap", "sky_detail") => v.sky_detail = Some(number(0.0, 1.0)?),
                     ("starmap", "cloud_detail") => v.cloud_detail = Some(number(0.0, 1.0)?),
                     ("text", "sdf_font") => v.sdf_font = flag()?,
+                    ("models", "smooth") => v.smooth = Some(count(0, 2)?),
+                    ("models", "normal_maps") => v.normal_maps = flag()?,
                     _ => return Err(format!("{at}: no such setting")),
                 }
             }
@@ -155,6 +165,8 @@ impl Visuals {
         self.sky_detail = higher.sky_detail.or(self.sky_detail);
         self.cloud_detail = higher.cloud_detail.or(self.cloud_detail);
         self.sdf_font |= higher.sdf_font;
+        self.smooth = higher.smooth.or(self.smooth);
+        self.normal_maps |= higher.normal_maps;
     }
 }
 
@@ -200,6 +212,13 @@ sdf_font = true"] {
         assert_eq!((lit.battle_shadows, lit.blast_light), (true, false));
         lit.merge(&Visuals::parse("[lighting]\nblast_light = true\nbattle_shadows = false\n", "f").unwrap());
         assert_eq!((lit.battle_shadows, lit.blast_light), (true, true));
+        let mut m = Visuals::parse("[models]\nsmooth = 2\nnormal_maps = true\n", "h").unwrap();
+        assert_eq!((m.smooth, m.normal_maps), (Some(2), true));
+        m.merge(&Visuals::parse("[models]\nsmooth = 0\n", "i").unwrap());
+        assert_eq!((m.smooth, m.normal_maps), (Some(0), true));
+        for bad in ["[models]\nsmooth = 3", "[models]\nsmooth = 1.5", "[models]\nnormal_maps = 1", "[models]\nnormal_map = true"] {
+            assert!(Visuals::parse(bad, "j").is_err(), "{bad}");
+        }
         for bad in ["[lighting]\nblom = true", "[starmap]\natmosphere = 2", "[starmap]\natmosphere_color = \"blue\"", "[lighting]\nbloom = 1", "[lighting]\nhdr = 1", "[lighting]\nbattle_shadows = 1", "[lighting]\nblast_lights = true", "[lighting]\nbloom_strength = 3","lighting = 1"] {
             assert!(Visuals::parse(bad, "d").is_err(), "{bad}");
         }

@@ -626,7 +626,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
     let start = out.len() as u32;
     for v in &p.verts {
         let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), [0.0; 3]);
-        out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], opacity] });
+        out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], opacity], tangent: lighting::tangent(&t.matrix, v.ltangent) });
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: opacity < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
 }

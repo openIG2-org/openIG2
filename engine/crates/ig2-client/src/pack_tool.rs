@@ -2,7 +2,7 @@
 //! §5–6, row 567). Every install texture the client draws, upscaled, as `mods/<name>/hires/<game path>.png`; the pack
 //! derives from the game's files, so it is never shared (the mod index carries none). ADR 0089 makes it the HD pack:
 //! stages (`--only`), the quality model (Real-ESRGAN x4plus), the fidelity lock, seamless wrapped textures, the
-//! videos re-encoded at ×2 and the talking heads at ×4.
+//! videos re-encoded at ×2, the talking heads at ×4 and the scene textures' normal maps.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ const USAGE: &str = "usage: --make-pack [--out <mod folder>] [--only pictures|vi
 
 /// The pack's parts (ADR 0089 §1), each made alone by `--only`, and whether this version makes it (rows 571–573
 /// add the others).
-const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", true), ("heads", true), ("font", true), ("maps", false)];
+const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", true), ("heads", true), ("font", true), ("maps", true)];
 
 /// The videos' factor unless `--factor` says (ADR 0089 §4); the pictures' is 4, the talking heads' always 4.
 const VIDEO_FACTOR: u8 = 2;
@@ -621,6 +621,84 @@ fn halve(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
     (0..h / 2).flat_map(|y| (0..w / 2).flat_map(move |x| (0..4).map(move |c| px(x, y, c)))).collect()
 }
 
+/// The install's scene textures under `prefix` (the models' pictures: `…/textures/…`), sorted.
+fn scene_textures<'a>(install: &'a Install, prefix: &str) -> Vec<&'a str> {
+    textures(install, prefix).into_iter().filter(|p| p.contains("textures/")).collect()
+}
+
+/// How far a luminance step tilts a normal map's normal, by the kind of surface the texture covers (ADR 0089 §6):
+/// the battle's hulls and plating most, the buildings and the research and screen models less, the planets and
+/// skies least. A step of the full range across one original texel tilts by `atan(strength)`.
+fn strength(path: &str) -> f32 {
+    match path.split("textures/").nth(1).and_then(|r| r.split('/').next()) {
+        Some("spacewar" | "design") => 0.6,
+        Some("colony" | "talalmanyok" | "info" | "diplomac" | "spy" | "trade" | "main" | "messages") => 0.5,
+        _ => 0.25,
+    }
+}
+
+/// A normal map from a picture (ADR 0089 §6): height from luminance, its slope by the Sobel operator (the picture's
+/// opposite edge read past a side it wraps, else the edge texel), the normal `(−s·∂h/∂x, −s·∂h/∂y, 1)` normalised
+/// with `s` the strength per texel of the original (`f` the picture's scale), stored `n·0.5 + 0.5` with alpha 255.
+/// x grows with u, y with v (the picture's rows downward). Transparent texels add no height and stay flat.
+pub fn normal_map(rgba: &[u8], w: usize, h: usize, wrap: (bool, bool), strength: f32, f: f32) -> Vec<u8> {
+    let lum = |p: &[u8]| if p[3] == 0 { 0.0 } else { (0.299 * p[0] as f32 + 0.587 * p[1] as f32 + 0.114 * p[2] as f32) / 255.0 };
+    let height: Vec<f32> = rgba.chunks_exact(4).map(lum).collect();
+    let pick = |v: isize, n: usize, wraps: bool| if wraps { v.rem_euclid(n as isize) as usize } else { v.clamp(0, n as isize - 1) as usize };
+    let at = |x: isize, y: isize| height[pick(y, h, wrap.1) * w + pick(x, w, wrap.0)];
+    let s = strength * f;
+    let mut out = Vec::with_capacity(w * h * 4);
+    for y in 0..h as isize {
+        for x in 0..w as isize {
+            let k = |dx: isize, dy: isize| at(x + dx, y + dy);
+            let gx = (k(1, -1) + 2.0 * k(1, 0) + k(1, 1) - k(-1, -1) - 2.0 * k(-1, 0) - k(-1, 1)) / 8.0;
+            let gy = (k(-1, 1) + 2.0 * k(0, 1) + k(1, 1) - k(-1, -1) - 2.0 * k(0, -1) - k(1, -1)) / 8.0;
+            let flat = rgba[(y as usize * w + x as usize) * 4 + 3] == 0;
+            let (nx, ny) = if flat { (0.0, 0.0) } else { (-s * gx, -s * gy) };
+            let l = (nx * nx + ny * ny + 1.0).sqrt();
+            let enc = |c: f32| ((c / l * 0.5 + 0.5) * 255.0).round() as u8;
+            out.extend([enc(nx), enc(ny), enc(1.0), 255]);
+        }
+    }
+    out
+}
+
+/// The maps stage (ADR 0089 §6): each scene texture's normal map, `hires/<path>_n.png` beside its picture, from the
+/// pack's upscaled picture when the pictures stage made it, else from the original. Returns (written, kept, failed).
+pub fn make_maps(install: &Install, out: &Path, prefix: &str, force: bool) -> Result<(usize, usize, usize), String> {
+    prepare(out)?;
+    let stem = |p: &str| p.rsplit_once('.').map_or(p, |(s, _)| s).to_owned();
+    let (list, made): (Vec<&str>, Vec<&str>) =
+        scene_textures(install, prefix).into_iter().partition(|p| force || !out.join(upscale::normal_file(&stem(p))).is_file());
+    // A map's PNG takes about half its RGBA; the pictures are at most 4× the originals a side.
+    let size = |p: &str| install.read(p).ok().and_then(|b| Pvr::parse(&b).ok().map(|v| v.width as u64 * v.height as u64 * 16));
+    check_space(out, list.iter().filter_map(|p| size(p)).sum::<u64>() * 2)?;
+    let wrap = wrapped(install);
+    let (mut written, mut failed) = (0, 0);
+    for (i, path) in list.iter().enumerate() {
+        let result = Image::load_original(install, path).and_then(|img| {
+            let picture = std::fs::read(out.join(pack_file(path))).ok().and_then(|b| upscale::decode_png(&b).ok());
+            let (w, h, rgba) = match picture {
+                Some(p) if p.width % img.width == 0 && p.width * img.height == p.height * img.width => (p.width, p.height, p.rgba),
+                _ => (img.width, img.height, img.rgba),
+            };
+            let map = normal_map(&rgba, w as usize, h as usize, wrap_of(&wrap, path), strength(path), w as f32 / img.width as f32);
+            write_whole(&out.join(upscale::normal_file(&stem(path))), |p| crate::assets::write_png(p, w, h, &map))
+        });
+        match result {
+            Ok(()) => written += 1,
+            Err(e) => {
+                failed += 1;
+                eprintln!("{path}: {e}");
+            }
+        }
+        if (i + 1) % 50 == 0 || i + 1 == list.len() {
+            println!("{}/{} normal maps", i + 1, list.len());
+        }
+    }
+    Ok((written, made.len(), failed))
+}
+
 /// `openIG2 --make-pack …`.
 pub fn main(args: &[String], install: &Install) -> Result<(), String> {
     let a = parse(args)?;
@@ -641,6 +719,7 @@ pub fn main(args: &[String], install: &Install) -> Result<(), String> {
                 let gpu = if a.filters_only { None } else { learned_model(a.fast) };
                 make_heads(install, &out, &a.prefix, a.force, gpu.as_deref())?
             }
+            "maps" => make_maps(install, &out, &a.prefix, a.force)?,
             _ => {
                 let gpu = if a.filters_only { None } else { learned_model(a.fast) };
                 make(install, &out, a.factor.unwrap_or(4), &a.prefix, a.force, gpu.as_deref())?
@@ -678,6 +757,44 @@ mod tests {
         assert_eq!(wrap_of(&map, "dataraw/textures/colony/sand_bmp.pvr"), (false, false));
         assert!(free_bytes(&std::env::temp_dir()).is_some_and(|b| b > 0));
         assert!(check_space(&std::env::temp_dir(), u64::MAX).is_err());
+    }
+
+    /// A normal map from a synthetic picture: flat where the picture is even, tilted against a brightening ramp
+    /// (x towards −u, y untouched), steeper with the strength and the scale alike, flat on transparent texels; a
+    /// wrapped side reads the opposite edge (a seamless tile has no seam in its map).
+    #[test]
+    fn normal_maps_from_luminance() {
+        let (w, h) = (8, 4);
+        let pic = |f: &dyn Fn(usize) -> u8, a: u8| -> Vec<u8> {
+            (0..w * h).flat_map(|i| {
+                let v = f(i % w);
+                [v, v, v, a]
+            }).collect()
+        };
+        let flat = normal_map(&pic(&|_| 90, 255), w, h, (false, false), 2.0, 1.0);
+        assert!(flat.chunks_exact(4).all(|p| p == [128, 128, 255, 255]));
+        // Luminance rising 20 levels a texel along x.
+        let ramp = pic(&|x| (x * 20) as u8, 255);
+        let n = normal_map(&ramp, w, h, (false, false), 1.0, 1.0);
+        let mid = &n[(w + 3) * 4..][..4];
+        let slope = 20.0f32 / 255.0;
+        let expect = ((-slope / (slope * slope + 1.0).sqrt() * 0.5 + 0.5) * 255.0).round() as u8;
+        assert_eq!((mid[0], mid[1]), (expect, 128));
+        assert!(mid[2] > 250);
+        let steeper = normal_map(&ramp, w, h, (false, false), 2.0, 1.0);
+        let scaled = normal_map(&ramp, w, h, (false, false), 1.0, 2.0);
+        assert!(steeper[(w + 3) * 4] < mid[0]);
+        assert_eq!(steeper[(w + 3) * 4..][..4], scaled[(w + 3) * 4..][..4]);
+        assert!(normal_map(&pic(&|x| (x * 20) as u8, 0), w, h, (false, false), 1.0, 1.0).chunks_exact(4).all(|p| p == [128, 128, 255, 255]));
+        // One sine period across the tile: wrapped, the edge column rises like the middle one falls.
+        let wave = pic(&|x| (128.0 + 100.0 * (x as f32 * std::f32::consts::TAU / w as f32).sin()) as u8, 255);
+        let wrapped = normal_map(&wave, w, h, (true, false), 1.0, 1.0);
+        let clamped = normal_map(&wave, w, h, (false, false), 1.0, 1.0);
+        assert!(wrapped[0] < 128 && wrapped[4 * 4] > 128, "{} {}", wrapped[0], wrapped[16]);
+        assert!(wrapped[0] < clamped[0]);
+        let s = |p: &str| strength(&format!("dataraw/textures/{p}/a_bmp.pvr"));
+        assert_eq!((s("spacewar"), s("colony"), s("starmap")), (0.6, 0.5, 0.25));
+        assert_eq!(upscale::normal_file("dataraw/textures/colony/foo_bmp"), "hires/dataraw/textures/colony/foo_bmp_n.png");
     }
 
     /// The lock: a result whose colours drifted (a shift over half the picture, noise everywhere) is brought back

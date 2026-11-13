@@ -159,7 +159,7 @@ fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::
             // copy (a texture pack's or the upscaling row's picture first).
             if let (true, None, Some(f)) = (crate::render::smooth_glows(), &t.hires, crate::upscale::fit(t.width, t.height, 4)) {
                 let rgba = crate::upscale::cubic(&t.rgba, t.width as usize, t.height as usize, f as usize);
-                t.hires = Some(std::sync::Arc::new(crate::upscale::Hires { width: t.width * f as u32, height: t.height * f as u32, rgba, upscaled: true }));
+                t.hires = Some(std::sync::Arc::new(crate::upscale::Hires { width: t.width * f as u32, height: t.height * f as u32, rgba, upscaled: true, normal: None }));
             }
             let tex = r.add_texture(&t);
             let verts = p
@@ -170,6 +170,7 @@ fn sky_sphere(r: &mut Renderer, install: &Install) -> Vec<(Vec<crate::render3d::
                     normal: crate::scene::normalise(crate::scene::apply(&xf.matrix, v.normal)),
                     uv: v.uv,
                     color: [1.0, 1.0, 1.0, 0.0],
+                    tangent: [0.0; 4],
                 })
                 .collect();
             Some((verts, tex))

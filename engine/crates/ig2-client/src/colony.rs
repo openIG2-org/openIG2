@@ -525,7 +525,7 @@ fn blob_shadow(um: &ig2_rules::UnitModels, u: &UnitView) -> [MeshVertex; 6] {
     };
     let k = dc as f32 / 255.0;
     let h = u.pos[0] - 2.0;
-    let v = |x: f32, y: f32, q: f64| MeshVertex { pos: [h, x, y], normal: [0.0; 3], uv: uv(q), color: [k, k, k, 1.0] };
+    let v = |x: f32, y: f32, q: f64| MeshVertex { pos: [h, x, y], normal: [0.0; 3], uv: uv(q), color: [k, k, k, 1.0], tangent: [0.0; 4] };
     [v(cx - s, cy + s, 2.0), v(cx + s, cy + s, 1.0), v(cx + s, cy - s, 0.0), v(cx - s, cy + s, 2.0), v(cx - s, cy - s, 3.0), v(cx + s, cy - s, 0.0)]
 }
 
@@ -586,7 +586,7 @@ fn landing_square(gm: &GroundMap, x: i32, y: i32) -> [MeshVertex; 6] {
     let h = |fx: f32, fy: f32| if fx > 200.0 || fy > 200.0 { 0.0 } else { gm.height(fx.clamp(0.0, 48.99), fy.clamp(0.0, 48.99)) };
     let (x0, x1, y0, y1) = (x as f32 * 0.25, (x + 1) as f32 * 0.25, y as f32 * 0.25, (y + 1) as f32 * 0.25);
     let c = [1.0, 0.0, 0.0, 128.0 / 255.0];
-    let v = |hh: f32, px: f32, py: f32, u: f32, w: f32| MeshVertex { pos: [hh - 3.0, px, py], normal: [-1.0, 0.0, 0.0], uv: [u, w], color: c };
+    let v = |hh: f32, px: f32, py: f32, u: f32, w: f32| MeshVertex { pos: [hh - 3.0, px, py], normal: [-1.0, 0.0, 0.0], uv: [u, w], color: c, tangent: [0.0; 4] };
     let (lo, hi) = (0.015, 0.985);
     let p0 = v(h(x1, y0), rx - 20.89, ry - 20.89, lo, lo);
     let p1 = v(h(x0, y0), rx + 20.89, ry - 20.89, hi, lo);
@@ -957,6 +957,7 @@ fn clip_below(tris: &[MeshVertex], cut: f32, out: &mut Vec<MeshVertex>) {
             normal: std::array::from_fn(|k| l(a.normal[k], b.normal[k])),
             uv: std::array::from_fn(|k| l(a.uv[k], b.uv[k])),
             color: std::array::from_fn(|k| l(a.color[k], b.color[k])),
+            tangent: [0.0; 4],
         }
     };
     for t in tris.chunks_exact(3) {
@@ -1133,6 +1134,7 @@ fn billboard_cell(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3], c: [f32; 4])
         normal: [0.0; 3],
         uv: [u, v],
         color: [rgb[0], rgb[1], rgb[2], 1.0],
+        tangent: [0.0; 4],
     };
     let ([u0, v0], [u1, v1]) = ([c[0], c[1]], [c[2], c[3]]);
     [q(-1.0, 1.0, u0, v0), q(1.0, 1.0, u1, v0), q(1.0, -1.0, u1, v1), q(-1.0, 1.0, u0, v0), q(1.0, -1.0, u1, v1), q(-1.0, -1.0, u0, v1)]
@@ -1144,7 +1146,7 @@ fn billboard_cell(basis: &ViewBasis, at: V3, h: f32, rgb: [f32; 3], c: [f32; 4])
 fn ribbon(eye: V3, a: V3, b: V3, hw: f32, v0: f32, v1: f32, ca: [f32; 4], cb: [f32; 4]) -> [MeshVertex; 6] {
     let mid: V3 = std::array::from_fn(|k| (a[k] + b[k]) / 2.0);
     let side = scene::normalise(cross(std::array::from_fn(|k| b[k] - a[k]), std::array::from_fn(|k| eye[k] - mid[k])));
-    let q = |p: V3, s: f32, v: f32, c: [f32; 4]| MeshVertex { pos: std::array::from_fn(|k| p[k] + side[k] * hw * s), normal: [0.0; 3], uv: [(s + 1.0) / 2.0, v], color: c };
+    let q = |p: V3, s: f32, v: f32, c: [f32; 4]| MeshVertex { pos: std::array::from_fn(|k| p[k] + side[k] * hw * s), normal: [0.0; 3], uv: [(s + 1.0) / 2.0, v], color: c, tangent: [0.0; 4] };
     [q(a, -1.0, v0, ca), q(b, -1.0, v1, cb), q(b, 1.0, v1, cb), q(a, -1.0, v0, ca), q(b, 1.0, v1, cb), q(a, 1.0, v0, ca)]
 }
 
@@ -1266,6 +1268,7 @@ fn bake(model: &Model, xf: &Transform, tint: [f32; 3], fog: f32, out: &mut Vec<M
                 normal: scene::normalise(scene::apply(&nm, v.normal)),
                 uv: v.uv,
                 color: [tint[0], tint[1], tint[2], alpha],
+                tangent: crate::mesh_detail::turn(&nm, v.tangent),
             });
         }
         ranges.push((start..out.len() as u32, pi, p.look));
@@ -1523,7 +1526,7 @@ impl ColonyScene {
             let (hx, hy) = ((w * 41 / 2) as f32, (h * 41 / 2) as f32);
             let z = gm.height(b.x / 4.0, b.y / 4.0) - 3.0;
             let c = [1.0, 0.0, 0.0, 0.5];
-            let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [z, cx + x, cy + y], normal: [-0.57735, -0.57735, 0.57735], uv: [u, vv], color: c };
+            let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [z, cx + x, cy + y], normal: [-0.57735, -0.57735, 0.57735], uv: [u, vv], color: c, tangent: [0.0; 4] };
             v.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
         }
         if !v.is_empty() {
@@ -1814,7 +1817,7 @@ impl ColonyScene {
             for v in &p.verts {
                 let q = scene::apply(&m, v.pos);
                 let (n, c) = lights.vertex(crate::lighting::normal(&m, v.lnormal), [0.0; 3]);
-                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], 1.0] });
+                dynamic.push(MeshVertex { pos: [q[0] + at[0], q[1] + at[1], q[2] + at[2]], normal: n, uv: v.uv, color: [c[0], c[1], c[2], 1.0], tangent: crate::lighting::tangent(&m, v.ltangent) });
             }
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: texs.get(pi).copied().unwrap_or(self.white), glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
@@ -2347,7 +2350,7 @@ impl View {
                     let (h, x, y) = (m.at[0] - 2.0, m.at[1], m.at[2]);
                     let (ha, hb) = (m.size.0 / 2.0, m.size.1 / 2.0);
                     let c = (255 - m.n) as f32 / 255.0;
-                    let q = |px: f32, py: f32, u: f32, v: f32| MeshVertex { pos: [h, px, py], normal: [0.0; 3], uv: [u, v], color: [c, c, c, 1.0] };
+                    let q = |px: f32, py: f32, u: f32, v: f32| MeshVertex { pos: [h, px, py], normal: [0.0; 3], uv: [u, v], color: [c, c, c, 1.0], tangent: [0.0; 4] };
                     dynamic.extend([q(x - ha, y + hb, 0.0, 1.0), q(x + ha, y + hb, 1.0, 1.0), q(x + ha, y - hb, 1.0, 0.0)]);
                     dynamic.extend([q(x - ha, y + hb, 0.0, 1.0), q(x - ha, y - hb, 0.0, 0.0), q(x + ha, y - hb, 1.0, 0.0)]);
                 }
@@ -2714,7 +2717,7 @@ impl View {
                     let side = scene::normalise(cross(std::array::from_fn(|k| b[k] - a[k]), to_eye));
                     let w = dist * px / 2.0;
                     let off: V3 = side.map(|s| s * w);
-                    let q = |p: V3, s: f32| MeshVertex { pos: std::array::from_fn(|k| p[k] + off[k] * s), normal: [0.0; 3], uv: [0.0; 2], color: c };
+                    let q = |p: V3, s: f32| MeshVertex { pos: std::array::from_fn(|k| p[k] + off[k] * s), normal: [0.0; 3], uv: [0.0; 2], color: c, tangent: [0.0; 4] };
                     dynamic.extend([q(a, -1.0), q(b, -1.0), q(b, 1.0), q(a, -1.0), q(b, 1.0), q(a, 1.0)]);
                 }
             }
@@ -2735,7 +2738,7 @@ impl View {
         // marker's too (`DrawBuildingSelection`).
         let mut square = |tex: TexId, at: V3, hx: f32, hy: f32, alpha: i32, additive: bool| {
             let c = [1.0, 1.0, 1.0, alpha.clamp(0, 255) as f32 / 255.0];
-            let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c };
+            let q = |x: f32, y: f32, u: f32, vv: f32| MeshVertex { pos: [at[0], at[1] + x, at[2] + y], normal: [-1.0, 0.0, 0.0], uv: [u, vv], color: c, tangent: [0.0; 4] };
             let base = dynamic.len() as u32;
             dynamic.extend([q(-hx, hy, 0.0, 1.0), q(hx, hy, 1.0, 1.0), q(hx, -hy, 1.0, 0.0), q(-hx, hy, 0.0, 1.0), q(-hx, -hy, 0.0, 0.0), q(hx, -hy, 1.0, 0.0)]);
             draws.push(MeshDraw { mesh: None, range: base..base + 6, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });

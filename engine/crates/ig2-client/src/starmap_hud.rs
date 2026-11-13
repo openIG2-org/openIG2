@@ -251,6 +251,7 @@ impl Console {
                     normal: scene::normalise(scene::apply(&place.matrix, v.normal)),
                     uv: v.uv,
                     color: [1.0, 1.0, 1.0, 0.0],
+                    tangent: [0.0; 4],
                 });
             }
             // Drawn opaque: the window in the texture's middle is black where the exe draws it (no alpha test).

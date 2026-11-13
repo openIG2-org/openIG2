@@ -437,7 +437,7 @@ fn bake(p: &scene::Part, t: &scene::Transform, lights: &lighting::Lights, tex: T
         let n = scene::normalise(scene::apply(&t.matrix, v.normal));
         let (n, c) = lights.vertex(lighting::normal(&t.matrix, v.lnormal), n);
         // The colour bytes multiply the texture in the gamma pass (re/screens/render.md §2).
-        out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], a] });
+        out.push(MeshVertex { pos: t.point(v.pos), normal: n, uv: v.uv, color: [c[0], c[1], c[2], a], tangent: lighting::tangent(&t.matrix, v.ltangent) });
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
 }

@@ -92,6 +92,7 @@ mod trade_modern;
 mod info_screen;
 mod kit;
 mod lighting;
+mod mesh_detail;
 mod mainscr;
 mod custom_game;
 mod mainscr_modern;

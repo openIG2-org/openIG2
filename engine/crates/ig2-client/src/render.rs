@@ -694,6 +694,8 @@ pub struct Renderer {
     /// The raw views with the mesh sampler (`TXNV` 11: repeat, trilinear with anisotropy): the remaster's gamma-space
     /// mesh pass (re/screens/render.md).
     textures_raw_rep: Vec<wgpu::BindGroup>,
+    /// The textures' normal maps (a pack's, ADR 0089 §6), by texture id; the mesh pass's group 3.
+    normals: Vec<Option<wgpu::BindGroup>>,
     instances: Option<(wgpu::Buffer, u64)>,
     pipe3d: crate::render3d::Pipe3d,
     /// The colour format the pipelines draw into.
@@ -791,7 +793,7 @@ impl Renderer {
             lod_max_clamp: 0.0,
             ..Default::default()
         });
-        let pipe3d = crate::render3d::Pipe3d::new(d, format, &tex_layout);
+        let pipe3d = crate::render3d::Pipe3d::new(d, &queue, format, &tex_layout);
         Self {
             quads,
             shader,
@@ -804,6 +806,7 @@ impl Renderer {
             tex_layout,
             sampler,
             textures: Vec::new(),
+            normals: Vec::new(),
             textures_rep: Vec::new(),
             sampler_rep,
             textures_raw: Vec::new(),
@@ -865,7 +868,39 @@ impl Renderer {
         self.textures_rep.push(b);
         self.textures_raw.push(c);
         self.textures_raw_rep.push(e);
+        let normal = img.hires.as_ref().and_then(|h| h.normal.as_deref()).filter(|n| n.width.max(n.height) <= max).map(|n| self.normal_map(n));
+        self.normals.push(normal);
         TexId(self.textures.len() - 1)
+    }
+
+    /// A pack's normal map (ADR 0089 §6) as the mesh pass's group 3: stored values (no sRGB), repeating.
+    fn normal_map(&self, n: &crate::upscale::Hires) -> wgpu::BindGroup {
+        let img = Image { width: n.width, height: n.height, rgba: n.rgba.clone(), mips: Vec::new(), hires: None };
+        let ((width, height), mips) = mip_chain(&img, None);
+        let tex = self.device.create_texture_with_data(
+            &self.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("normal map"),
+                size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: mips.len() as u32,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &mips.concat(),
+        );
+        let view = tex.create_view(&Default::default());
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.tex_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler_rep) },
+            ],
+        })
     }
 
     /// The bind groups of `tex`: its sRGB view with the clamping and the repeating sampler, its raw view with the
@@ -928,6 +963,7 @@ impl Renderer {
         self.textures_rep.push(b);
         self.textures_raw.push(c);
         self.textures_raw_rep.push(e);
+        self.normals.push(None);
         let id = TexId(self.textures.len() - 1);
         self.videos.push((id, tex));
         id
@@ -1022,7 +1058,7 @@ impl Renderer {
             let h = hdr.get_or_insert_with(|| HdrScene {
                 // The picture holds gamma-space values: the linear blends encode theirs (texels decoded by their views).
                 quads: Quads::new(&self.device, &self.shader, &self.layout, crate::hdr::FORMAT, if self.format.is_srgb() { "fs_enc" } else { "fs_srgb" }),
-                pipe3d: crate::render3d::Pipe3d::new(&self.device, crate::hdr::FORMAT, &self.tex_layout),
+                pipe3d: crate::render3d::Pipe3d::new(&self.device, &self.queue, crate::hdr::FORMAT, &self.tex_layout),
                 post: crate::hdr::Hdr::new(&self.device, self.format.remove_srgb_suffix()),
             });
             h.pipe3d.share_meshes(&self.pipe3d);
@@ -1034,8 +1070,8 @@ impl Renderer {
         macro_rules! meshes {
             ($first:expr, $clear:expr, $scene:expr, $draws:expr) => {
                 match (&float, hdr.as_mut()) {
-                    (Some((f, ..)), Some(h)) => h.pipe3d.encode(&self.device, &self.queue, &mut enc, (f, f), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep)),
-                    _ => self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep)),
+                    (Some((f, ..)), Some(h)) => h.pipe3d.encode(&self.device, &self.queue, &mut enc, (f, f), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep, &self.normals)),
+                    _ => self.pipe3d.encode(&self.device, &self.queue, &mut enc, (&view, &raw), size, ($first, $clear), ($scene, frame.battle.as_ref()), $draws, (&self.textures_rep, &self.textures_raw_rep, &self.normals)),
                 }
             };
         }
@@ -1155,6 +1191,7 @@ impl Renderer {
         let id = match free {
             Some(k) => {
                 (self.textures[k], self.textures_rep[k], self.textures_raw[k], self.textures_raw_rep[k]) = (a, b, c, e);
+                self.normals[k] = None;
                 k
             }
             None => {
@@ -1162,6 +1199,7 @@ impl Renderer {
                 self.textures_rep.push(b);
                 self.textures_raw.push(c);
                 self.textures_raw_rep.push(e);
+                self.normals.push(None);
                 self.textures.len() - 1
             }
         };
@@ -2804,12 +2842,12 @@ mod tests {
         let img = Image { width: 8, height: 4, rgba: vec![7; 8 * 4 * 4], mips: vec![vec![9; 4 * 2 * 4]], hires: None };
         let (size, plain) = mip_chain(&img, None);
         assert_eq!((size, plain.len(), plain[1][0]), ((8, 4), 4, 9));
-        let up = crate::upscale::Hires { width: 32, height: 16, rgba: vec![1; 32 * 16 * 4], upscaled: true };
+        let up = crate::upscale::Hires { width: 32, height: 16, rgba: vec![1; 32 * 16 * 4], upscaled: true, normal: None };
         let (size, levels) = mip_chain(&img, Some(&up));
         assert_eq!(size, (32, 16));
         assert_eq!(levels.iter().map(|l| l.len() / 4).collect::<Vec<_>>(), [512, 128, 32, 8, 2, 1]);
         assert_eq!((levels[2][0], levels[3][0]), (7, 9));
-        let pack = crate::upscale::Hires { width: 30, height: 12, rgba: vec![200; 30 * 12 * 4], upscaled: false };
+        let pack = crate::upscale::Hires { width: 30, height: 12, rgba: vec![200; 30 * 12 * 4], upscaled: false, normal: None };
         let (size, levels) = mip_chain(&img, Some(&pack));
         assert_eq!((size, levels.len()), ((30, 12), 5));
         assert!(levels.iter().all(|l| l[0] == 200));

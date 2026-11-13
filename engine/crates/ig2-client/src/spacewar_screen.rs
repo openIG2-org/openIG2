@@ -418,7 +418,7 @@ impl Mesh {
                     Some((q, w)) => std::array::from_fn(|k| v.pos[k] + (q[j].pos[k] - v.pos[k]) * w),
                     None => v.pos,
                 };
-                scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(pos), normal: [0.0; 3], uv: v.uv, color });
+                scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(pos), normal: [0.0; 3], uv: v.uv, color, tangent: [0.0; 4] });
             }
             let range = start..scene.dynamic.len() as u32;
             late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: color[3] < 1.0 || additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive, depth_write: false });
@@ -643,6 +643,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
                     normal: [0.0; 3],
                     uv: v.uv,
                     color: if it.additive { [c[0] * it.opacity, c[1] * it.opacity, c[2] * it.opacity, 1.0] } else { [c[0], c[1], c[2], it.opacity] },
+                    tangent: [0.0; 4],
                 });
             }
             draws.push(crate::render3d::MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: *tex, glass: it.opacity < 1.0 || it.additive, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: it.additive, depth_write: false });
@@ -747,7 +748,7 @@ impl<'a> Scene<'a> {
         let crate::render::Frame { scene, late, .. } = f;
         let Some(scene) = scene.as_mut() else { return };
         let start = scene.dynamic.len() as u32;
-        let vert = |pos: [f32; 3], c: [f32; 4]| crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv: [0.5, 0.5], color: c };
+        let vert = |pos: [f32; 3], c: [f32; 4]| crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv: [0.5, 0.5], color: c, tangent: [0.0; 4] };
         let quad = [vert(add(ea, na, -1.0), ca), vert(add(ea, na, 1.0), ca), vert(add(eb, nb, 1.0), cb), vert(add(eb, nb, -1.0), cb)];
         for k in [0, 1, 2, 0, 2, 3] {
             scene.dynamic.push(quad[k]);
@@ -853,7 +854,7 @@ impl<'a> Scene<'a> {
                 let start = scene.dynamic.len() as u32;
                 for v in verts {
                     let n = crate::scene::normalise(crate::scene::apply(&m, v.normal));
-                    scene.dynamic.push(ship_vertex(xf.point(v.pos), n, light, v.uv, alpha));
+                    scene.dynamic.push(ship_vertex(xf.point(v.pos), (n, crate::mesh_detail::turn(&m, v.tangent)), light, v.uv, alpha));
                 }
                 let range = start..scene.dynamic.len() as u32;
                 late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: alpha < 1.0, cloud: false, shadow, video: false, additive: false, depth_write: false });
@@ -996,7 +997,7 @@ impl<'a> Scene<'a> {
                     let uv = if swap { [u.0 + bb * (u.1 - u.0), 1.0 - a] } else { [u.0 + a * (u.1 - u.0), bb] };
                     let (dx, dy) = ((cx - x) * unit, (cy - y) * unit);
                     let pos = std::array::from_fn(|j| w[j] + m[0][j] * dx + m[1][j] * dy);
-                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: col }
+                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: col, tangent: [0.0; 4] }
                 };
                 for (cx, cy) in [(lx, ly), (hx, ly), (hx, hy), (lx, ly), (hx, hy), (lx, hy)] {
                     depth.push(corner(cx, cy));
@@ -1174,7 +1175,7 @@ impl<'a> Scene<'a> {
                 let corner = |sx: f32, sy: f32| -> crate::render3d::MeshVertex {
                     let pos = std::array::from_fn(|i| w[i] + (m[0][i] * sx + m[1][i] * sy) * half);
                     let u = [uv[0] + (sx + 1.0) / 2.0 * uv[2], uv[1] + (sy + 1.0) / 2.0 * uv[3]];
-                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv: u, color }
+                    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv: u, color, tangent: [0.0; 4] }
                 };
                 for (sx, sy) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
                     scene.dynamic.push(corner(sx, sy));
@@ -1223,7 +1224,7 @@ impl<'a> Scene<'a> {
                 let c = crate::starmap::particle_color(word).map(|k| k * 0.5);
                 let w = self.world([s.pos.x, s.pos.y, s.pos.z]);
                 let h = (size * 3.0).max(4.0) / SCENE_SCALE;
-                let q = |sx: f32, sy: f32| crate::render3d::MeshVertex { pos: std::array::from_fn(|k| w[k] + (m[0][k] * sx + m[1][k] * sy) * h), normal: [0.0; 3], uv: [(sx + 1.0) / 2.0, (sy + 1.0) / 2.0], color: [c[0], c[1], c[2], 1.0] };
+                let q = |sx: f32, sy: f32| crate::render3d::MeshVertex { pos: std::array::from_fn(|k| w[k] + (m[0][k] * sx + m[1][k] * sy) * h), normal: [0.0; 3], uv: [(sx + 1.0) / 2.0, (sy + 1.0) / 2.0], color: [c[0], c[1], c[2], 1.0], tangent: [0.0; 4] };
                 v.extend([q(-1.0, -1.0), q(1.0, -1.0), q(1.0, 1.0), q(-1.0, -1.0), q(1.0, 1.0), q(-1.0, 1.0)]);
             }
         }
@@ -1338,7 +1339,7 @@ impl<'a> Scene<'a> {
                 let start = scene.dynamic.len() as u32;
                 for v in verts {
                     let n = crate::scene::normalise(crate::scene::apply(&d.turn, v.normal));
-                    scene.dynamic.push(ship_vertex(xf.point(v.pos), n, light, v.uv, alpha));
+                    scene.dynamic.push(ship_vertex(xf.point(v.pos), (n, crate::mesh_detail::turn(&d.turn, v.tangent)), light, v.uv, alpha));
                 }
                 let range = start..scene.dynamic.len() as u32;
                 late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
@@ -1395,7 +1396,7 @@ impl<'a> Scene<'a> {
                 for (verts, tex) in &mesh.parts {
                     let start = scene.dynamic.len() as u32;
                     for v in verts {
-                        scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [1.0, 1.0, 1.0, a] });
+                        scene.dynamic.push(crate::render3d::MeshVertex { pos: xf.point(v.pos), normal: [0.0; 3], uv: v.uv, color: [1.0, 1.0, 1.0, a], tangent: [0.0; 4] });
                     }
                     let range = start..scene.dynamic.len() as u32;
                     late.push(crate::render3d::MeshDraw { mesh: None, range, tex: *tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: true, depth_write: false });
@@ -1513,13 +1514,14 @@ fn mesh_reach(mesh: &Mesh) -> [f32; 3] {
 
 /// A ship's or piece's vertex lit per vertex by ambient 0x40 and the planet's parallel light 0x80, or (ADR 0055,
 /// "Per-pixel lighting") keeping its normal, four long, for the same two lights per fragment: the starmap scene's
-/// ambient 0x40 and parallel 0x80 from (−1, −1, 1) (its sky's, `starmap::sky`) are the battle's.
-fn ship_vertex(pos: [f32; 3], n: [f32; 3], light: [f32; 3], uv: [f32; 2], alpha: f32) -> crate::render3d::MeshVertex {
+/// ambient 0x40 and parallel 0x80 from (−1, −1, 1) (its sky's, `starmap::sky`) are the battle's. Lit per fragment
+/// it carries its tangent (a pack's normal map, ADR 0089 §6).
+fn ship_vertex(pos: [f32; 3], (n, tangent): ([f32; 3], [f32; 4]), light: [f32; 3], uv: [f32; 2], alpha: f32) -> crate::render3d::MeshVertex {
     if crate::render3d::lighting().per_pixel {
-        return crate::render3d::MeshVertex { pos, normal: n.map(|x| x * 4.0), uv, color: [1.0, 1.0, 1.0, alpha] };
+        return crate::render3d::MeshVertex { pos, normal: n.map(|x| x * 4.0), uv, color: [1.0, 1.0, 1.0, alpha], tangent };
     }
     let lit = (0x40 as f32 / 255.0 + 0x80 as f32 / 255.0 * (n[0] * light[0] + n[1] * light[1] + n[2] * light[2]).max(0.0)).min(1.0);
-    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: [lit, lit, lit, alpha] }
+    crate::render3d::MeshVertex { pos, normal: [0.0; 3], uv, color: [lit, lit, lit, alpha], tangent: [0.0; 4] }
 }
 
 fn planet_light() -> [f32; 3] {

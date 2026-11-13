@@ -2301,7 +2301,7 @@ fn bake_part(p: &scene::Part, m: &M3, at: V3, tex: TexId, alpha: f32, lights: &l
             // (property 8: the colour lit, the opacity in alpha). The colour bytes multiply the texture in the gamma
             // pass (re/screens/render.md §2).
             let (n, rgb) = lights.vertex(lighting::normal(m, x.lnormal), n);
-            out.push(MeshVertex { pos: q, normal: n, uv: x.uv, color: [rgb[0], rgb[1], rgb[2], a] });
+            out.push(MeshVertex { pos: q, normal: n, uv: x.uv, color: [rgb[0], rgb[1], rgb[2], a], tangent: lighting::tangent(m, x.ltangent) });
         }
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: a < 1.0, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: p.material_glass(alpha) });
@@ -2321,7 +2321,7 @@ fn bake_glass(p: &scene::Part, m: &M3, at: V3, tex: TexId, a: f32, out: &mut Vec
             [q[0] + at[0], q[1] + at[1], q[2] + at[2]]
         });
         for (x, q) in tri.iter().zip(w) {
-            out.push(MeshVertex { pos: q, normal, uv: x.uv, color: [tint[0], tint[1], tint[2], a] });
+            out.push(MeshVertex { pos: q, normal, uv: x.uv, color: [tint[0], tint[1], tint[2], a], tangent: [0.0; 4] });
         }
     }
     draws.push(MeshDraw { mesh: None, range: start..out.len() as u32, tex, glass: true, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });

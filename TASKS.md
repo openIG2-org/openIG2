@@ -94,7 +94,7 @@ The plan and its rules: ADR 0088. Each part is engine work that does nothing unt
 - [x] **HD videos and talking heads** (571, ADR 0089 §4): `--only videos` and `--only heads`; the client plays the pack's versions.
 - [ ] **In-between frames for the HD videos and heads** (`--smooth`, RIFE, ADR 0089 §4), the rest of row 571.
 - [x] **A sharp font from the original's glyphs** (572, ADR 0089 §5): `--only font` and `[text] sdf_font`.
-- [ ] **Model detail: smoothed meshes and normal maps** (573).
+- [x] **Model detail: smoothed meshes and normal maps** (573, ADR 0089 §6): `[models] smooth` and `normal_maps`, `--only maps`.
 - [ ] **Publish the remaster mods in the mod index** (needs the index repository, 549).
 
 ## After 1.0

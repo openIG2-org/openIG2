@@ -44,6 +44,9 @@ struct S {
 @group(2) @binding(2) var shadow_smp: sampler;
 @group(2) @binding(3) var hull_map: texture_depth_2d;
 @group(2) @binding(4) var hull_cmp: sampler_comparison;
+// A pack's normal map (ADR 0089 §6) for the drawn texture; alpha 0 where there is none.
+@group(3) @binding(0) var nmap: texture_2d<f32>;
+@group(3) @binding(1) var nsmp: sampler;
 
 struct VO {
     @builtin(position) pos: vec4<f32>,
@@ -56,6 +59,8 @@ struct VO {
     // A vertex lit per fragment by a light set: the set (−1: none) and its lighting normal's length.
     @location(6) lset: vec2<f32>,
     @location(7) w: vec3<f32>,
+    // The tangent beside `n` (xyz) and the side of growing v (w); zero: none.
+    @location(8) t: vec4<f32>,
 };
 
 // `Kockarecshadow` (ELF 0x5fcae0): a receiver vertex's shadow texcoords `(rows·p·shadowzoom + shadowkp)/256`; the
@@ -66,7 +71,7 @@ fn shadow_uv(p: vec3<f32>) -> vec2<f32> {
 }
 
 @vertex
-fn vs(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) c: vec4<f32>) -> VO {
+fn vs(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec2<f32>, @location(3) c: vec4<f32>, @location(4) tg: vec4<f32>) -> VO {
     var o: VO;
     o.pos = u.view * vec4(p, 1.0);
     o.n = n;
@@ -82,6 +87,7 @@ fn vs(@location(0) p: vec3<f32>, @location(1) n: vec3<f32>, @location(2) uv: vec
     let k = round(log2(l / 16.0) * 0.5);
     o.lset = select(vec2(-1.0, 1.0), vec2(k, l / (16.0 * exp2(2.0 * k))), l > 6.0);
     o.w = p;
+    o.t = tg;
     return o;
 }
 
@@ -129,6 +135,22 @@ fn shadow_pcf(uv: vec2<f32>) -> f32 {
     return s / 16.0;
 }
 
+// The normal map (ADR 0089 §6) on a vertex lit per fragment with a tangent: `n` turned towards the map's normal in
+// the tangent frame (t, cross(n, t)·w, n), its length (the light set's code) kept. Without a map or a tangent, as is.
+fn bumped(i: VO) -> VO {
+    let m = textureSample(nmap, nsmp, i.uv);
+    var j = i;
+    let l = length(i.n);
+    if (m.a > 0.5 && l > 1e-4 && dot(i.t.xyz, i.t.xyz) > 1e-8) {
+        let n = i.n / l;
+        let t = normalize(i.t.xyz - n * dot(n, i.t.xyz));
+        let b = cross(n, t) * i.t.w;
+        let d = m.xyz * 2.0 - vec3(1.0);
+        j.n = normalize(t * d.x + b * d.y + n * d.z) * l;
+    }
+    return j;
+}
+
 fn shade(i: VO, srgb: bool) -> vec4<f32> {
     return shade_cap(i, 1.3, false, 1.0, srgb);
 }
@@ -154,7 +176,11 @@ fn set_light(n: vec3<f32>, k: i32) -> vec3<f32> {
 }
 
 // `srgb`: the texel decoded from sRGB here (a frame without sRGB views: `fs_opaque_e`, `fs_glass_e`).
-fn shade_cap(i: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32> {
+fn shade_cap(i0: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32> {
+    return shade_n(bumped(i0), cap, engine, shadow, srgb);
+}
+
+fn shade_n(i: VO, cap: f32, engine: bool, shadow: f32, srgb: bool) -> vec4<f32> {
     var t = textureSample(tex, smp, i.uv);
     if srgb {
         t = vec4(select(pow((t.rgb + 0.055) / 1.055, vec3(2.4)), t.rgb / 12.92, t.rgb <= vec3(0.04045)), t.a);
@@ -316,8 +342,9 @@ fn hull_vis(p: vec3<f32>) -> f32 {
 // A battle receiver (ADR 0088 §11): the classic colour with the parallel light's share taken by the shadow,
 // `(a + s·d·v)/(a + s·d)`, plus the blasts' light on the texel. The normal: a hull's own (per-pixel lighting), else
 // its face's turned towards the eye.
-fn battle_shade(i: VO) -> vec4<f32> {
-    let c = shade_cap(i, 1.0, true, 1.0, false);
+fn battle_shade(i0: VO) -> vec4<f32> {
+    let i = bumped(i0);
+    let c = shade_n(i, 1.0, true, 1.0, false);
     let t = textureSample(tex, smp, i.uv);
     var f = normalize(cross(dpdx(i.w), dpdy(i.w)));
     f = select(f, -f, dot(f, sh.beye.xyz - i.w) < 0.0);
@@ -409,6 +436,8 @@ pub struct MeshVertex {
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     pub color: [f32; 4],
+    /// The tangent beside `normal` and the side of growing v (`w`), for a pack's normal map (ADR 0089 §6); zero: none.
+    pub tangent: [f32; 4],
 }
 
 /// The per-frame scene constants.
@@ -652,8 +681,8 @@ struct Pipes {
     glass_gb: wgpu::RenderPipeline,
 }
 
-fn attrs() -> [wgpu::VertexAttribute; 4] {
-    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4]
+fn attrs() -> [wgpu::VertexAttribute; 5] {
+    wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Float32x4, 4 => Float32x4]
 }
 
 /// A mesh pipeline: `depth` = (write, compare), none for the glow.
@@ -848,6 +877,8 @@ pub(crate) struct Pipe3d {
     sbl: wgpu::BindGroupLayout,
     shadow_smp: wgpu::Sampler,
     hull_cmp: wgpu::Sampler,
+    /// Group 3 without a normal map (one transparent texel).
+    no_map: wgpu::BindGroup,
     meshes: Vec<wgpu::Buffer>,
     dynamic: Option<(wgpu::Buffer, u64)>,
     /// The depth buffers by target size, the last used first (a frame draws targets of a few sizes: the window, a
@@ -894,7 +925,7 @@ fn group2(d: &wgpu::Device, layout: &wgpu::BindGroupLayout, uniform: &wgpu::Buff
 }
 
 impl Pipe3d {
-    pub(crate) fn new(d: &wgpu::Device, format: wgpu::TextureFormat, tex_layout: &wgpu::BindGroupLayout) -> Self {
+    pub(crate) fn new(d: &wgpu::Device, q: &wgpu::Queue, format: wgpu::TextureFormat, tex_layout: &wgpu::BindGroupLayout) -> Self {
         let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ig2-client meshes"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let ubl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: None,
@@ -916,7 +947,7 @@ impl Pipe3d {
                 entry(4, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)),
             ],
         });
-        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&ubl, tex_layout, &sbl], push_constant_ranges: &[] });
+        let layout = d.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: None, bind_group_layouts: &[&ubl, tex_layout, &sbl, tex_layout], push_constant_ranges: &[] });
         let attrs = attrs();
         let pipes = Pipes::new(d, &shader, &layout, format, 1);
         let shadow = d.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1031,10 +1062,34 @@ impl Pipe3d {
             layout: &ubl,
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform.as_entire_binding() }],
         });
+        let none = d.create_texture_with_data(
+            q,
+            &wgpu::TextureDescriptor {
+                label: Some("no normal map"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::MipMajor,
+            &[0; 4],
+        );
+        let no_map = d.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: tex_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&none.create_view(&Default::default())) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&d.create_sampler(&Default::default())) },
+            ],
+        });
         Self {
             pipes,
             msaa: None,
             post: Post::new(d, &shader, &layout, format),
+            no_map,
             shader,
             layout,
             format,
@@ -1138,7 +1193,7 @@ impl Pipe3d {
         (first, clear): (bool, Option<[f64; 4]>),
         (scene, battle): (&Scene3d, Option<&BattleLight>),
         draws: &[MeshDraw],
-        (textures, textures_raw): (&[wgpu::BindGroup], &[wgpu::BindGroup]),
+        (textures, textures_raw, normals): (&[wgpu::BindGroup], &[wgpu::BindGroup], &[Option<wgpu::BindGroup>]),
     ) {
         let l = lighting();
         let glows = |m: &&MeshDraw| m.additive && m.glass && m.shadow != Shadow::Blob && !m.cloud && !m.video && !m.range.is_empty();
@@ -1218,6 +1273,7 @@ impl Pipe3d {
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_bind_group(1, &textures[0], &[]);
             pass.set_bind_group(2, &self.shadow_pass_bg, &[]);
+            pass.set_bind_group(3, &self.no_map, &[]);
             for m in draws.iter().filter(|m| m.shadow == Shadow::Hull && !m.range.is_empty()) {
                 pass.set_vertex_buffer(0, match m.mesh {
                     Some(MeshId(i)) => self.meshes[i].slice(..),
@@ -1243,6 +1299,7 @@ impl Pipe3d {
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_bind_group(1, &textures[0], &[]);
             pass.set_bind_group(2, &self.shadow_pass_bg, &[]);
+            pass.set_bind_group(3, &self.no_map, &[]);
             for m in draws.iter().filter(|m| matches!(m.shadow, Shadow::Cast | Shadow::CastOnly) && !m.range.is_empty()) {
                 pass.set_vertex_buffer(0, match m.mesh {
                     Some(MeshId(i)) => self.meshes[i].slice(..),
@@ -1276,6 +1333,7 @@ impl Pipe3d {
         });
         pass.set_bind_group(0, &self.uniform_bg, &[]);
         pass.set_bind_group(2, &self.shadow_bg, &[]);
+        pass.set_bind_group(3, &self.no_map, &[]);
         // `renderscene`: `Kocka` (the opaque objects, then the translucent ones) before `Lines` (re/screens/spacewar.md
         // §3 step 11; the colony's alike): the engine's lines (additive, not glass) come last, so a translucent object
         // behind one isn't cut by the depth it writes (the shield rings under the battle's grid).
@@ -1306,6 +1364,7 @@ impl Pipe3d {
                 };
                 pass.set_vertex_buffer(0, buf.slice(..));
                 pass.set_bind_group(1, &textures[m.tex.0], &[]);
+                pass.set_bind_group(3, normals.get(m.tex.0).and_then(Option::as_ref).unwrap_or(&self.no_map), &[]);
                 pass.draw(m.range.clone(), 0..1);
             }
         }
@@ -1325,6 +1384,7 @@ impl Pipe3d {
             pass.set_pipeline(&self.post.glow);
             pass.set_bind_group(0, &self.uniform_bg, &[]);
             pass.set_bind_group(2, &self.shadow_bg, &[]);
+            pass.set_bind_group(3, &self.no_map, &[]);
             for m in draws.iter().filter(glows) {
                 pass.set_vertex_buffer(0, match m.mesh {
                     Some(MeshId(i)) => self.meshes[i].slice(..),
@@ -1354,6 +1414,7 @@ impl Pipe3d {
         });
         pass.set_bind_group(0, &self.uniform_bg, &[]);
         pass.set_bind_group(2, &self.shadow_bg, &[]);
+        pass.set_bind_group(3, &self.no_map, &[]);
         pass.set_pipeline(&self.cloud);
         pass.set_vertex_buffer(0, dynbuf.slice(..));
         for m in draws.iter().filter(|m| m.cloud && m.mesh.is_none() && !m.range.is_empty()) {
