@@ -854,13 +854,25 @@ fn request(path: &str, body: Vec<u8>) -> Option<Http> {
     parts.next().is_none().then_some(what)
 }
 
+/// The address a request comes from: behind a local TLS proxy (a page served over HTTPS, docs/RENDEZVOUS.md) the
+/// proxy's `X-Real-IP` or last `X-Forwarded-For` entry, so the per-address limits count players, not the proxy.
+/// A public peer's headers are ignored: anyone could write them.
+fn client(peer: Ipv4Addr, head: &str) -> Ipv4Addr {
+    if !(peer.is_loopback() || peer.is_private()) {
+        return peer;
+    }
+    let header = |name: &str| head.split("\r\n").filter_map(|l| l.split_once(':')).find(|(k, _)| k.trim().eq_ignore_ascii_case(name)).map(|(_, v)| v);
+    let real = header("x-real-ip").and_then(|v| v.trim().parse().ok());
+    real.or_else(|| header("x-forwarded-for")?.rsplit(',').next()?.trim().parse().ok()).unwrap_or(peer)
+}
+
 /// How long a client has to send its whole request (not each read: a trickle can't hold a connection).
 const HTTP_REQUEST_TIME: Duration = Duration::from_secs(5);
 
 fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpRequest>) -> std::io::Result<()> {
     use std::io::Read;
     s.set_write_timeout(Some(HTTP_REQUEST_TIME))?;
-    let std::net::IpAddr::V4(from) = s.peer_addr()?.ip() else { return Ok(()) };
+    let std::net::IpAddr::V4(peer) = s.peer_addr()?.ip() else { return Ok(()) };
     let deadline = std::time::Instant::now() + HTTP_REQUEST_TIME;
     let read = |s: &mut std::net::TcpStream, chunk: &mut [u8]| -> std::io::Result<usize> {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -886,6 +898,7 @@ fn http_one(mut s: std::net::TcpStream, tx: &std::sync::mpsc::Sender<HttpRequest
         }
     };
     let text = String::from_utf8_lossy(&b[..head]).into_owned();
+    let from = client(peer, &text);
     let mut lines = text.split("\r\n");
     let mut first = lines.next().unwrap_or("").split(' ');
     let (method, path) = (first.next().unwrap_or(""), first.next().unwrap_or(""));
@@ -934,6 +947,16 @@ mod tests {
 
     fn decoded(out: &[(SocketAddrV4, Vec<u8>)]) -> Vec<(SocketAddrV4, Packet<'_>)> {
         out.iter().map(|(to, b)| (*to, Packet::decode(b).unwrap())).collect()
+    }
+
+    #[test]
+    fn only_a_local_proxy_names_the_client() {
+        let ip = |s: &str| s.parse::<Ipv4Addr>().unwrap();
+        let head = "POST /offer/x HTTP/1.1\r\nX-Forwarded-For: 10.0.0.9, 203.0.113.7\r\n\r\n";
+        assert_eq!(client(ip("172.17.0.1"), head), ip("203.0.113.7"));
+        assert_eq!(client(ip("127.0.0.1"), "x-real-ip: 198.51.100.2\r\n"), ip("198.51.100.2"));
+        assert_eq!(client(ip("198.51.100.1"), head), ip("198.51.100.1"));
+        assert_eq!(client(ip("172.17.0.1"), "POST / HTTP/1.1\r\n\r\n"), ip("172.17.0.1"));
     }
 
     #[test]

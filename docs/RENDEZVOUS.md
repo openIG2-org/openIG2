@@ -64,8 +64,14 @@ channel between the two machines, not through the service. A page hosts too: it 
 by polling `http://<relay>/host/<session>/<pin>/<key>` and answers its joiners' offers through
 `/answer/<session>/<key>/<id>`; its join code carries no address, and desktop players reach it through the same
 signalling. The service also answers STUN on its UDP port, so every WebRTC end learns its public address from it
-(ADR 0047 part 4). A page served over HTTPS can only
-reach an HTTPS service, which this one isn't yet: run the page from `http://127.0.0.1` (or the LAN) for now.
+(ADR 0047 part 4).
+
+A page served over HTTPS may only fetch HTTPS, so it signals through `https://<relay host>` (port 443, the relay's
+port dropped) and keeps STUN on the relay's UDP port. Put a TLS reverse proxy for the relay's host name on port 443
+in front of the service's TCP port (nginx, Caddy, Nginx Proxy Manager: a proxy host `relay.example.org` -> `http://
+<docker host>:29172` with a certificate). A peer on a loopback or private address is taken as that proxy: the
+service counts its limits by the proxy's `X-Real-IP` (or last `X-Forwarded-For`) header, and ignores both from
+anyone else. A page served over plain HTTP still uses `http://<relay host>:<port>`.
 
 ## The public game list
 The same service keeps a list of open games (ADR 0060); nothing extra to run or configure. A host lists its room by

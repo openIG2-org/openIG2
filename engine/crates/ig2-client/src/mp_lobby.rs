@@ -414,7 +414,7 @@ impl Net for WebNet {
         let (session, pin) = (code.session, code.pin);
         wasm_bindgen_futures::spawn_local(async move {
             // The relay is fixed and named, not resolved: the browser looks the host name up (a DDNS name).
-            let r = ig2_net::webrtc::connect(&format!("http://{DEFAULT_RELAY}"), session, &pin).await;
+            let r = ig2_net::webrtc::connect(DEFAULT_RELAY, session, &pin).await;
             let _ = tx.send(r.map(|l| Box::new(l) as Box<dyn Transport + Send>).map_err(|e| e.to_string()));
         });
         rx
@@ -445,7 +445,7 @@ impl Listener for WebListener {
 
     fn register(&mut self, session: u64) {
         let pin = self.fingerprint[..ig2_net::joincode::PIN_BYTES].try_into().expect("a pin");
-        let host = ig2_net::webrtc::PageHost::open(&format!("http://{DEFAULT_RELAY}"), session, pin, self.key);
+        let host = ig2_net::webrtc::PageHost::open(DEFAULT_RELAY, session, pin, self.key);
         host.set_listing(self.listing.clone());
         self.host = Some(host);
     }

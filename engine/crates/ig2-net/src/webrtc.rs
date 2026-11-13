@@ -73,6 +73,16 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The service's HTTP side for a page reached over HTTPS or not: an HTTPS page may only fetch HTTPS, so it signals
+/// through a TLS proxy on port 443 of the relay's host (docs/RENDEZVOUS.md); STUN stays on the relay's UDP port.
+pub fn signal_base(relay: &str, https: bool) -> String {
+    if https {
+        format!("https://{}", relay.rsplit_once(':').map_or(relay, |r| r.0))
+    } else {
+        format!("http://{relay}")
+    }
+}
+
 /// The HTTP path the page posts its offer to: the join code's session and pin in hex.
 pub fn offer_path(session: u64, pin: &[u8]) -> String {
     format!("/offer/{session:016x}/{}", hex(pin))
@@ -452,11 +462,11 @@ mod web {
         let _ = JsFuture::from(p).await;
     }
 
-    /// A connection that learns its public address from the relay server's STUN answers (its UDP port is `base`'s
-    /// host and port; ADR 0047 part 4).
-    fn peer(base: &str) -> Result<RtcPeerConnection, Error> {
+    /// A connection that learns its public address from the relay server's STUN answers (its UDP port is `relay`;
+    /// ADR 0047 part 4).
+    fn peer(relay: &str) -> Result<RtcPeerConnection, Error> {
         let server = RtcIceServer::new();
-        server.set_urls_str(&format!("stun:{}", base.split_once("://").map_or(base, |b| b.1)));
+        server.set_urls_str(&format!("stun:{relay}"));
         let cfg = RtcConfiguration::new();
         cfg.set_ice_servers(&js_sys::Array::of1(&server));
         RtcPeerConnection::new_with_configuration(&cfg).map_err(js)
@@ -527,10 +537,16 @@ mod web {
         false
     }
 
-    /// Join the room of a join code's `session` and `pin` through the rendezvous service whose HTTP side is `base`
-    /// (`http://host:port`): the offer goes there, the host's answer comes back, then the channel opens.
-    pub async fn connect(base: &str, session: u64, pin: &[u8]) -> Result<Link, Error> {
-        let pc = peer(base)?;
+    /// The relay's HTTP side as this page may reach it ([`super::signal_base`]).
+    fn base(relay: &str) -> String {
+        let https = web_sys::window().and_then(|w| w.location().protocol().ok()).is_some_and(|p| p == "https:");
+        super::signal_base(relay, https)
+    }
+
+    /// Join the room of a join code's `session` and `pin` through the rendezvous service `relay` (`host:port`): the
+    /// offer goes to its HTTP side, the host's answer comes back, then the channel opens.
+    pub async fn connect(relay: &str, session: u64, pin: &[u8]) -> Result<Link, Error> {
+        let (pc, base) = (peer(relay)?, base(relay));
         let dc = pc.create_data_channel(LABEL);
         let offer = JsFuture::from(pc.create_offer()).await.map_err(js)?;
         JsFuture::from(pc.set_local_description(&offer.unchecked_into())).await.map_err(js)?;
@@ -574,11 +590,11 @@ mod web {
     pub struct PageHost(Rc<RefCell<HostState>>);
 
     impl PageHost {
-        /// Open the room of `session` (the join code's `pin`; `key` only this page knows) at the service whose HTTP
-        /// side is `base`.
-        pub fn open(base: &str, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES]) -> Self {
+        /// Open the room of `session` (the join code's `pin`; `key` only this page knows) at the service `relay`
+        /// (`host:port`).
+        pub fn open(relay: &str, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES]) -> Self {
             let st = Rc::new(RefCell::new(HostState { rendezvous: Rendezvous::Asking, listing: Vec::new(), links: Vec::new(), gone: false }));
-            wasm_bindgen_futures::spawn_local(poll(base.to_owned(), session, pin, key, st.clone()));
+            wasm_bindgen_futures::spawn_local(poll(relay.to_owned(), session, pin, key, st.clone()));
             Self(st)
         }
 
@@ -606,17 +622,17 @@ mod web {
         }
     }
 
-    async fn poll(base: String, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES], st: Rc<RefCell<HostState>>) {
-        let url = format!("{base}{}", super::host_path(session, &pin, &key));
+    async fn poll(relay: String, session: u64, pin: [u8; PIN_BYTES], key: [u8; KEY_BYTES], st: Rc<RefCell<HostState>>) {
+        let url = format!("{}{}", base(&relay), super::host_path(session, &pin, &key));
         while !st.borrow().gone {
             let listing = st.borrow().listing.clone();
             let r = post(&url, &listing).await;
             let state = match r.as_ref().map(|(code, b)| (*code, crate::rendezvous::poll_parts(b))) {
                 Ok((200, Some((seen, offer)))) => {
                     if let Some((id, sdp)) = offer {
-                        let (base, st) = (base.clone(), st.clone());
+                        let (relay, st) = (relay.clone(), st.clone());
                         wasm_bindgen_futures::spawn_local(async move {
-                            if let Err(e) = answer(&base, session, key, id, &sdp, &st).await {
+                            if let Err(e) = answer(&relay, session, key, id, &sdp, &st).await {
                                 web_sys::console::log_1(&format!("ig2-net: a joiner's offer: {e}").into());
                             }
                         });
@@ -635,8 +651,8 @@ mod web {
     }
 
     /// Answer a joiner's `offer` (its id `id`) with a connection of its own; its channel goes to `st` once open.
-    async fn answer(base: &str, session: u64, key: [u8; KEY_BYTES], id: u32, offer: &str, st: &Rc<RefCell<HostState>>) -> Result<(), Error> {
-        let pc = peer(base)?;
+    async fn answer(relay: &str, session: u64, key: [u8; KEY_BYTES], id: u32, offer: &str, st: &Rc<RefCell<HostState>>) -> Result<(), Error> {
+        let (pc, base) = (peer(relay)?, base(relay));
         let desc = RtcSessionDescriptionInit::new(RtcSdpType::Offer);
         desc.set_sdp(offer);
         JsFuture::from(pc.set_remote_description(&desc)).await.map_err(js)?;
@@ -697,5 +713,7 @@ mod tests {
         assert_ne!(binding(offer, answer), binding(offer, "a=fingerprint:sha-256 CC:DE\r\n"));
         assert_ne!(binding(offer, answer), binding(answer, offer));
         assert_eq!(offer_path(0x5eed, &[1, 0xab]), "/offer/0000000000005eed/01ab");
+        assert_eq!(signal_base("relay.example:30000", false), "http://relay.example:30000");
+        assert_eq!(signal_base("relay.example:30000", true), "https://relay.example");
     }
 }
