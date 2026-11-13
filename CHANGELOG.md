@@ -73,6 +73,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Fleet splitting, single clicks on the production buttons, the messages screen's list and the credits video work again.
 - A mod deleted from the mods folder is dropped from the enabled list at start instead of leaving the Mods page stuck.
 - The browser version no longer freezes on the Mods page's Browse tab; its multiplayer offers only internet games through the fixed relay server, without the relay field and port mapping.
+- The automatic updater installs releases again (it stopped at the bundle's `models` folder). In the browser version Ctrl+V pastes a join code and the copy button copies it; hosting there now says it needs the desktop version instead of opening a room without a join code.
 - The quit and exit confirmations are no longer dimmed along with the screen behind them.
 
 ## 0.6 — Fixes against the original

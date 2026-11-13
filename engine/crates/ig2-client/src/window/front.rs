@@ -24,6 +24,11 @@ impl App {
             }
             due += 1;
         }
+        // The browser's clipboard text, read after its Ctrl+V.
+        #[cfg(target_arch = "wasm32")]
+        if let (Some(t), Some(mp)) = (crate::web::take_pasted(), &mut fr.mp) {
+            mp.paste(&t);
+        }
         for o in outs {
             self.front_mp_out(o);
         }

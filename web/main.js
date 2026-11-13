@@ -102,6 +102,9 @@ window.ig2_video_close = (dec) => {
 };
 
 // The game quit (the menu's Exit): the page starts over once the last writes are stored.
+// The clipboard for the join code (Ctrl+C, Ctrl+V); a refused read pastes nothing.
+window.ig2_copy = (text) => navigator.clipboard?.writeText(text).catch((e) => console.warn("clipboard:", e));
+window.ig2_paste = () => (navigator.clipboard?.readText() ?? Promise.resolve("")).catch((e) => (console.warn("clipboard:", e), ""));
 window.ig2_exited = () => writes.then(() => location.reload());
 
 async function storeDir(create = false) {

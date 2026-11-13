@@ -100,20 +100,46 @@ extern "C" {
     fn user_file(path: &str, data: Option<Box<[u8]>>);
 }
 
-/// No clipboard in the browser build yet: `navigator.clipboard` comes with ADR 0047 part 3.
+#[wasm_bindgen]
+extern "C" {
+    /// `navigator.clipboard.writeText` (web/main.js).
+    #[wasm_bindgen(js_name = ig2_copy)]
+    fn copy(text: &str);
+
+    /// `navigator.clipboard.readText` (web/main.js): the text, or an empty one when the page may not read it.
+    #[wasm_bindgen(js_name = ig2_paste)]
+    fn paste() -> js_sys::Promise;
+}
+
+/// The clipboard text read since the last [`take_pasted`] (the browser reads it asynchronously).
+static PASTED: Mutex<Option<String>> = Mutex::new(None);
+
+/// The text [`arboard::Clipboard::get_text`] asked for, once the page read it.
+pub fn take_pasted() -> Option<String> {
+    PASTED.lock().unwrap().take()
+}
+
+/// The page's clipboard (`navigator.clipboard`) as `arboard`'s: a read starts here and arrives through
+/// [`take_pasted`], so `get_text` itself gives an empty text.
 pub mod arboard {
     pub struct Clipboard;
 
     impl Clipboard {
         pub fn new() -> Result<Self, &'static str> {
-            Err("no clipboard in the browser build yet")
+            Ok(Self)
         }
 
-        pub fn set_text(&mut self, _: String) -> Result<(), &'static str> {
+        pub fn set_text(&mut self, s: String) -> Result<(), &'static str> {
+            super::copy(&s);
             Ok(())
         }
 
         pub fn get_text(&mut self) -> Result<String, &'static str> {
+            wasm_bindgen_futures::spawn_local(async {
+                if let Some(s) = wasm_bindgen_futures::JsFuture::from(super::paste()).await.ok().and_then(|v| v.as_string()) {
+                    *super::PASTED.lock().unwrap() = Some(s);
+                }
+            });
             Ok(String::new())
         }
     }

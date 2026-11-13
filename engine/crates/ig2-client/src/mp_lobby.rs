@@ -383,7 +383,9 @@ pub struct WebNet;
 #[cfg(target_arch = "wasm32")]
 impl Net for WebNet {
     fn listen(&mut self) -> Result<Box<dyn Listener>, String> {
-        Ok(Box::new(Unreached))
+        // shortcut: a page can't take connections yet (ADR 0047 part 4); browser hosting needs the relay to signal
+        // offers to a page over HTTP. Until then say so instead of opening a room nobody reaches.
+        Err("the browser version can't host yet: host from the desktop version and join its code here".into())
     }
 
     fn sessions(&mut self) -> Vec<Found> {
@@ -392,7 +394,7 @@ impl Net for WebNet {
 
     fn connect(&mut self, _addr: &str, _pin: Option<[u8; 32]>) -> Connecting {
         let (tx, rx) = mpsc::channel();
-        let _ = tx.send(Err("in the browser, join with a join code and a relay server".into()));
+        let _ = tx.send(Err("in the browser, join with a join code".into()));
         rx
     }
 

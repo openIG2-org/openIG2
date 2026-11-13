@@ -95,9 +95,10 @@ pub fn parse(json: &[u8], current: &str, suffix: Option<&str>) -> Result<Option<
     Ok(Some(Release { version: version.into(), archive }))
 }
 
-/// A file name the updater writes beside the exe: a plain name, no folders, drives or hidden files.
+/// A file path the updater writes beside the exe: `/`-separated plain names (the bundle's `models/`), no drives,
+/// parent folders or hidden files.
 fn plain(name: &str) -> bool {
-    !name.starts_with('.') && !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_'))
+    name.split('/').all(|p| !p.starts_with('.') && !p.is_empty() && p.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'_')))
 }
 
 /// Install the release's zip `a` into `dir`, the folder of the running `exe` (its file name), downloading through
@@ -112,7 +113,8 @@ pub fn install(a: &Archive, dir: &Path, exe: &str, get: &Download) -> Result<(),
     let mut c = std::io::Cursor::new(&zip);
     let z = ig2_formats::zipfs::Zip::open(&mut c)?;
     let mut files = Vec::new();
-    for name in z.names() {
+    // Folder entries ("models/") are made with their files.
+    for name in z.names().filter(|n| !n.ends_with('/')) {
         if !plain(name) {
             return Err(format!("the release's zip has {name:?}, which the updater doesn't unpack: update by hand"));
         }
@@ -126,7 +128,7 @@ pub fn install(a: &Archive, dir: &Path, exe: &str, get: &Download) -> Result<(),
     let drop_new = || files.iter().for_each(|(n, _)| drop(std::fs::remove_file(at(n, NEW))));
     for (name, bytes) in &files {
         let new = at(name, NEW);
-        if let Err(e) = std::fs::write(&new, bytes) {
+        if let Err(e) = new.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&new, bytes)) {
             drop_new();
             return Err(io(&new, e));
         }
@@ -161,10 +163,12 @@ pub fn install(a: &Archive, dir: &Path, exe: &str, get: &Download) -> Result<(),
     Ok(())
 }
 
-/// The last update's leftovers in `dir` removed (the replaced files; the old exe was still running then).
+/// The last update's leftovers in `dir` and its folders removed (the replaced files; the old exe was still running).
 pub fn clean(dir: &Path) {
     for f in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        if f.file_name().to_str().is_some_and(|n| n.ends_with(OLD) || n.ends_with(NEW)) {
+        if f.file_type().is_ok_and(|t| t.is_dir()) {
+            clean(&f.path());
+        } else if f.file_name().to_str().is_some_and(|n| n.ends_with(OLD) || n.ends_with(NEW)) {
             let _ = std::fs::remove_file(f.path());
         }
     }
@@ -334,7 +338,7 @@ mod tests {
         let dir = tmp("update");
         std::fs::write(dir.join("openIG2.exe"), b"old game").unwrap();
         std::fs::write(dir.join("ig2.settings"), b"mine").unwrap();
-        let zip = ig2_formats::zipfs::build(&[("openig2-0.7.12-windows-x64/openIG2.exe", b"new game", true), ("openig2-0.7.12-windows-x64/README.txt", b"read", false)]);
+        let zip = ig2_formats::zipfs::build(&[("openig2-0.7.12-windows-x64/openIG2.exe", b"new game", true), ("openig2-0.7.12-windows-x64/README.txt", b"read", false), ("openig2-0.7.12-windows-x64/models/m.bin", b"model", false)]);
         let a = Archive { url: "https://x/a.zip".into(), size: zip.len() as u64, sha256: mod_repo::sha256(&zip) };
         let read = |n: &str| std::fs::read(dir.join(n)).unwrap();
         // A damaged download, another game's file name, a zip with a folder: nothing changes.
@@ -343,21 +347,24 @@ mod tests {
         assert!(install(&a, &dir, "openIG2.exe", &server(vec![(a.url.clone(), damaged)])).unwrap_err().contains("SHA-256"));
         let get = server(vec![(a.url.clone(), zip)]);
         assert!(install(&a, &dir, "ig2-client.exe", &get).unwrap_err().contains("by hand"));
-        let nested = ig2_formats::zipfs::build(&[("a/openIG2.exe", b"x", false), ("a/b/c.txt", b"x", false), ("d.txt", b"x", false)]);
+        let nested = ig2_formats::zipfs::build(&[("a/openIG2.exe", b"x", false), ("a/../c.txt", b"x", false)]);
         let n = Archive { url: "https://x/n.zip".into(), size: nested.len() as u64, sha256: mod_repo::sha256(&nested) };
         assert!(install(&n, &dir, "openIG2.exe", &server(vec![(n.url.clone(), nested)])).is_err());
         assert_eq!((read("openIG2.exe"), std::fs::read_dir(&dir).unwrap().count()), (b"old game".to_vec(), 2));
         // The update: the new files in place, the old exe beside it until the next start, the player's files untouched.
         install(&a, &dir, "openIG2.exe", &get).unwrap();
         assert_eq!((read("openIG2.exe"), read("README.txt"), read("openIG2.exe.update-old"), read("ig2.settings")), (b"new game".to_vec(), b"read".to_vec(), b"old game".to_vec(), b"mine".to_vec()));
+        // A second update replaces the folder's file too; clean takes the leftovers in folders as well.
+        install(&a, &dir, "openIG2.exe", &get).unwrap();
+        assert_eq!((read("models/m.bin"), read("models/m.bin.update-old")), (b"model".to_vec(), b"model".to_vec()));
         clean(&dir);
-        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 3);
+        assert_eq!((std::fs::read_dir(&dir).unwrap().count(), std::fs::read_dir(dir.join("models")).unwrap().count()), (4, 1));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn plain_names_only() {
-        assert!(plain("openIG2-check.exe") && plain("VERSION.txt"));
-        assert!(!plain("../x") && !plain("a/b") && !plain("c:x") && !plain(".hidden") && !plain("") && !plain("a\\b"));
+        assert!(plain("openIG2-check.exe") && plain("VERSION.txt") && plain("models/x.bin"));
+        assert!(!plain("../x") && !plain("a/../b") && !plain("/a") && !plain("a//b") && !plain("c:x") && !plain(".hidden") && !plain("") && !plain("a\\b"));
     }
 }
