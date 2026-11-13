@@ -84,14 +84,15 @@ impl Assets {
                 None
             }
         };
+        let planet_meshes = crate::starmap_planet::Planets::load(r, install);
         let mut tex = |path: &str| r.file_texture(install, path).map_err(|e| eprintln!("ig2-client: {e} (drawing a plain shape instead)")).ok();
         let select = tex("dataraw/textures/starmap/select_bmp.pvr");
-        let planets = std::array::from_fn(|s| if s > 0 { tex(&format!("dataraw/textures/starmap/p{s}_bmp.pvr")) } else { None });
+        // The surface maps as sprites only where the mesh is missing (a 1024 × 1024 map each, 16 times that upscaled).
+        let planets = std::array::from_fn(|s| if s > 0 && !planet_meshes.ready(s as u8) { tex(&format!("dataraw/textures/starmap/p{s}_bmp.pvr")) } else { None });
         let stars = std::array::from_fn(|i| tex(&format!("dataraw/textures/starmap/n{}_bmp.pvr", i + 1)));
         let clouds = [tex("dataraw/textures/starmap/felho3_bmp.pvr"), tex("dataraw/textures/starmap/felho2_bmp.pvr")];
         let radar_dot = tex("dataraw/textures/starmap/radar_bmp.pvr");
         let sky = sky_sphere(r, install);
-        let planet_meshes = crate::starmap_planet::Planets::load(r, install);
         // The disc textures are one colour (rrange2 with faint stripes): their mean.
         let mean = |path: &str, or: [f32; 3]| {
             img(path).map_or(or, |i| {

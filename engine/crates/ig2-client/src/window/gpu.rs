@@ -108,6 +108,7 @@ impl App {
         g.config.height = size.height.max(1);
         g.config.present_mode = if self.vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
         g.surface.configure(&g.renderer.device, &g.config);
+        g.renderer.forget_sizes();
         if let Some(v) = &mut self.view {
             v.resize(g.band(), g.window.scale_factor() as f32);
         }

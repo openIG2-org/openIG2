@@ -144,6 +144,10 @@ impl Hdr {
         }
     }
 
+    pub(crate) fn forget_sizes(&mut self) {
+        self.targets.clear();
+    }
+
     /// The scene picture for a frame of `size`, to draw into.
     pub(crate) fn scene(&mut self, d: &wgpu::Device, size: (u32, u32)) -> wgpu::TextureView {
         match self.targets.iter().position(|t| t.size == size) {

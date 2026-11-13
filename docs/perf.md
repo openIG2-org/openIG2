@@ -222,7 +222,7 @@ One machine, release, vsync off, the saved settings with texture upscaling x4 on
 
 | | before | after |
 |---|---|---|
-| Video memory (dedicated, the process) | 2884 MB | 1953 MB |
+| Video memory (dedicated, the process) | 2884 MB | 1870 MB |
 | Memory, private / working set | 4162 / 1506 MB | 2564 / 809 MB |
 | Start-up `assets` step | 1585 ms | 840 ms |
 | Start-up `hud` step | 281 ms | 165 ms |
@@ -247,8 +247,27 @@ One machine, release, vsync off, the saved settings with texture upscaling x4 on
   queued frame was pointer lag with vsync on).
 - **A paused colony screen** decoded the whole colony world again on every 10 ms UI tick; now only when the
   dropships stepped (`Game::colony_ui_tick` returns it).
+- The starmap loaded the planets' surface maps as fallback sprites as well as for the meshes; the sprites are now
+  loaded only for a surface whose mesh is missing (one 4096 x 4096 map less: video memory 1955 -> 1870 MB in the
+  same run).
+- A dropped render target kept its texture until another target took its slot; `Renderer::free_released` (after each
+  presented frame) gives the slot the white texture.
+- The 3D passes' targets and depth buffers are kept by size (six, four and three sizes): after a resize or a
+  fullscreen switch the old window sizes' sets stayed (about 330 MB each at 3840 x 2160 with anti-aliasing) until new
+  sizes pushed them out. `Renderer::forget_sizes` clears them when the window's size changes.
+- A minimised window slept nowhere (about 900 frames a second with vsync off); it now sleeps 16 ms a frame.
+
+Where the video memory is (3840 x 2160 window, upscaling x4, on the colony screen after the starmap):
+
+| | MB |
+|---|---|
+| Planet maps (9 x 89 MB before, 8 after) | 805 before, 716 after |
+| Six window-sized offscreen targets | 199 |
+| 4x anti-aliased colour and depth | 265 |
+| Their resolved colour and single-sample depth | 66 |
+| Every other texture | about 230 |
 
 Next candidates: what is left of the video memory with x4 on is the nine 4096 x 4096 planet maps (about 800 MB;
 stored BC1 in the install, decoded to RGBA8: uploading them compressed, or capping the planets' upscaling, would cut
 it), the window-sized offscreen targets kept per screen, the leader heads' 100 textures per race, input sampled
-before the swap-chain acquire, no pacing for a minimised window, the colony entry's ~190 ms frame.
+before the swap-chain acquire, the colony entry's ~190 ms frame.

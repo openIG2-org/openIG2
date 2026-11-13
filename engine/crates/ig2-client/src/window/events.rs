@@ -32,6 +32,10 @@ impl ApplicationHandler for App {
             }
         }
         if let Some(g) = &self.gpu {
+            // Minimised, nobody sees the frames: about 60 a second keep the game and the network going.
+            if g.window.is_minimized() == Some(true) {
+                std::thread::sleep(std::time::Duration::from_millis(16));
+            }
             g.window.request_redraw();
         }
     }

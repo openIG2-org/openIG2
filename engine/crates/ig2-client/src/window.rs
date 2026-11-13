@@ -184,6 +184,7 @@ impl Gpu {
         let _present = crate::prof::scope("present");
         self.window.pre_present_notify();
         out.present();
+        self.renderer.free_released();
         Ok(frame)
     }
 }

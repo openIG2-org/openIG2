@@ -1184,6 +1184,26 @@ impl Renderer {
         t.tex
     }
 
+    /// Free the textures of the targets dropped since: their slots hold the white texture until a new target takes
+    /// them ([`Renderer::target`]). Called after a frame is drawn (a target dropped while it was built is still in it).
+    pub fn free_released(&mut self) {
+        let white = self.white().0;
+        let released = self.released.clone();
+        for &k in released.lock().unwrap_or_else(|e| e.into_inner()).iter() {
+            (self.textures[k], self.textures_rep[k], self.textures_raw[k], self.textures_raw_rep[k]) = (self.textures[white].clone(), self.textures_rep[white].clone(), self.textures_raw[white].clone(), self.textures_raw_rep[white].clone());
+            self.normals[k] = None;
+        }
+    }
+
+    /// Forget the 3D passes' targets and depth buffers (kept by size): the window's size changed.
+    pub fn forget_sizes(&mut self) {
+        self.pipe3d.forget_sizes();
+        if let Some(h) = &mut self.hdr {
+            h.pipe3d.forget_sizes();
+            h.post.forget_sizes();
+        }
+    }
+
     /// A texture the quads can sample that frames can be drawn into again and again ([`Renderer::draw_into`]).
     pub fn target(&mut self, size: (u32, u32)) -> Target {
         let (texture, [a, b, c, e]) = self.target_texture(size);
@@ -2833,6 +2853,9 @@ mod tests {
             let t = r.target((64, 64));
             assert_ne!(t.tex, kept);
             assert_eq!(t.tex, first);
+            drop(t);
+            // Freed in between, the slot is still the next target's.
+            r.free_released();
         }
         assert_eq!(r.texture_count(), n);
     }

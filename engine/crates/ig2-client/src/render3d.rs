@@ -925,6 +925,11 @@ fn group2(d: &wgpu::Device, layout: &wgpu::BindGroupLayout, uniform: &wgpu::Buff
 }
 
 impl Pipe3d {
+    pub(crate) fn forget_sizes(&mut self) {
+        self.targets.clear();
+        self.depth.clear();
+    }
+
     pub(crate) fn new(d: &wgpu::Device, q: &wgpu::Queue, format: wgpu::TextureFormat, tex_layout: &wgpu::BindGroupLayout) -> Self {
         let shader = d.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("ig2-client meshes"), source: wgpu::ShaderSource::Wgsl(SHADER.into()) });
         let ubl = d.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
