@@ -132,7 +132,7 @@ impl DesignRules {
         }
     }
 
-    /// The original hull whose role hull `h` plays (its slots, its ground index; ADR 0069 §8).
+    /// The original hull whose role hull `h` plays (its ground index; its slots are its own, ADR 0069 §8).
     pub fn hull_role(&self, h: usize) -> usize {
         match self.hulls.get(h).map_or(0, |x| x.like) {
             0 => h,
@@ -175,7 +175,7 @@ impl DesignRules {
     /// `GetMaxPodok(table_index, hull)`: slots whose pod type is > 0.
     pub fn slot_count(&self, table_index: i16, hull: usize) -> i32 {
         let table = self.race_pod_table.get(table_index.max(0) as usize).copied().unwrap_or(0) - 1;
-        let Some(slots) = self.pod_slot_types.get(table.max(0) as usize).and_then(|t| t.get(self.hull_role(hull))) else { return 0 };
+        let Some(slots) = self.pod_slot_types.get(table.max(0) as usize).and_then(|t| t.get(hull)) else { return 0 };
         slots.iter().filter(|&&t| t > 0).count() as i32
     }
 }

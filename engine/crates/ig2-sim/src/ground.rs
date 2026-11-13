@@ -2587,6 +2587,8 @@ mod tests {
         let mut x = fx();
         x.rules.designs.hulls = vec![Default::default(); 27];
         x.rules.designs.hulls[26].like = 0x16;
+        // An added hull has its own slot row, copied from its role's (ADR 0069 §8).
+        x.rules.designs.pod_slot_types[0].resize(27, vec![1; 3]);
         x.rules.designs.tech_like = vec![0; 193];
         x.rules.designs.tech_like[176] = 0xa1;
         x.rules.hull_hp.resize(27, 0);

@@ -109,6 +109,48 @@ fn the_ship_mod_appends_a_hull_a_weapon_and_a_tank_and_fits_its_parts() {
 }
 
 #[test]
+fn an_added_hull_has_its_own_slots_and_a_mod_can_set_them() {
+    let Some(mut r) = rules() else { return };
+    let before = r.clone();
+    let tech = "[[techs.new]]
+key = \"md\"
+category = 5
+[[techs.new]]
+key = \"d2\"
+category = 5
+";
+    // The Destroyer (hull 5) without its lasers: hyperdrive, radar and two rocket slots of one launcher each.
+    r.apply_patch(&format!("{tech}[[hulls.new]]
+key = \"md\"
+like = 5
+slots = [[1, 1], [31, 1], [35, 1], [35, 1]]
+[[hulls.new]]
+key = \"d2\"
+like = 5
+")).unwrap();
+    for race in 1..=8 {
+        let slots: Vec<(i32, i32)> = r.hull_slots(race, 25).iter().map(|s| (s.pod_type, s.max_count)).collect();
+        assert_eq!(slots[..5], [(1, 1), (31, 1), (35, 1), (35, 1), (0, 0)]);
+        // Without slots, a copy of the original's for the race; nothing original moved.
+        assert_eq!(r.hull_slots(race, 26), before.hull_slots(race, 5));
+        assert_eq!(r.hull_slots(race, 5), before.hull_slots(race, 5));
+    }
+    let err = |t: &str| before.clone().apply_patch(&format!("{tech}[[hulls.new]]
+key = \"x\"
+like = 5
+tech = \"md\"
+{t}")).unwrap_err();
+    assert_eq!(err("slots = []
+"), "hulls.new \"x\".slots: expected 1 to 12 slots: [[pod type, how many], …]");
+    assert_eq!(err("slots = [[2]]
+"), "hulls.new \"x\".slots: slot 1: expected [pod type, how many]");
+    assert_eq!(err("slots = [[1, 1], [4, 1]]
+"), "hulls.new \"x\".slots: slot 2: no pod type 4");
+    assert_eq!(err("slots = [[1, 0]]
+"), "hulls.new \"x\".slots: slot 1: expected an integer 1..=255");
+}
+
+#[test]
 fn bad_items_name_what_is_wrong() {
     let Some(r) = rules() else { return };
     let err = |t: &str| r.clone().apply_patch(t).unwrap_err();

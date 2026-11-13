@@ -408,6 +408,17 @@ Once researched, the design screen offers the new hulls and the new parts in the
 tanks built from them fight like their originals with their own values, and computer empires fit them too. Fields a
 tech doesn't set start as its original's (price, time, hit points, firepower, capacity). The rest is in ADR 0069.
 
+A new hull can also get its own equipment slots: `slots` lists them in order as `[pod type, how many]`, for every
+race (pod type numbers and the parts each takes: `openIG2-check --dump-rules`). A destroyer without its lasers and
+with two rocket slots:
+
+```toml
+[[hulls.new]]
+key = "missile_destroyer"     # with a [[techs.new]] of the same key, as above
+like = 5                      # the Destroyer's hull
+slots = [[1, 1], [31, 1], [35, 1], [35, 1]]   # hyperdrive, radar, rockets, rockets
+```
+
 Races and planet types work the same way: a new race or planet type is a copy of an original (`like`) with its own
 name and values. A race brings its traits (production, research, diplomacy, the AI's shares, spy costs) and how well
 it grows on each planet type; it looks, sounds and acts like its original (heads, ships, the original's fixed race

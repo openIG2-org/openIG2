@@ -1102,12 +1102,13 @@ pub fn pod_count(rules: &ig2_rules::Rules, race: i16, hull: i32) -> usize {
 
 /// `PodFajok[table − 1][hull][0..12]` (`HanyasFajPodTablazatatHasznalja[race]`): each slot's pod class.
 fn pod_slots(rules: &ig2_rules::Rules, race: i16, hull: i32) -> Vec<i32> {
-    rules.design_screen.pod_slots(race.max(0) as usize, rules.hull_role(hull.max(0) as usize))
+    rules.hull_slots(race.max(0) as usize, hull.max(0) as usize).iter().map(|s| s.pod_type).collect()
 }
 
 /// `min(GetMaxRarakhato(race, hull, k), Talalmanyok[tech].+0x24)`: how many of `tech` pod `k` takes.
 pub(crate) fn max_fitted(rules: &ig2_rules::Rules, techs: &TechTable, race: i16, hull: i32, k: usize, tech: i32) -> i32 {
-    rules.design_screen.pod_max(race.max(0) as usize, rules.hull_role(hull.max(0) as usize), k).min(techs.byte(tech.clamp(0, 192) as usize, 0x24) as i32)
+    let max = rules.hull_slots(race.max(0) as usize, hull.max(0) as usize).get(k.wrapping_sub(1)).map_or(0, |s| s.max_count);
+    max.min(techs.byte(tech.clamp(0, 192) as usize, 0x24) as i32)
 }
 
 /// `PodTipusok[KeresPod(class)]`'s name (`NEWGAME_Design`): an empty slot's class.

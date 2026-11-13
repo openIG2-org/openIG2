@@ -143,14 +143,14 @@ fn design_screen_hull_models_line_up() {
     assert!(s.models[1..].iter().all(|m| m.to_ascii_lowercase().ends_with(".xvb")));
     assert!(s.scale[1..].iter().all(|&k| k > 0.0));
     // Every race uses one of the eight pod tables; a hull's slots are filled from the first.
-    assert!(s.pod_table[1..=8].iter().all(|t| (1..=8).contains(t)));
+    assert!(r.race_pod_table[1..=8].iter().all(|t| (1..=8).contains(t)));
     // The four 9 × 9 cells side by side on kep 0x13 (`DESIGN_X.BMP`).
     assert_eq!(s.brushes.iter().map(|b| (b.src, b.size, b.kep)).collect::<Vec<_>>(), (0..4).map(|i| ([9 * i, 0], [9, 9], 0x13)).collect::<Vec<_>>());
     for race in 1..=8 {
         for hull in 0..25 {
-            let p = s.pod_slots(race, hull);
+            let p: Vec<i32> = r.hull_slots(race, hull).iter().map(|s| s.pod_type).collect();
             let n = p.iter().filter(|&&c| c > 0).count();
-            assert!(p[..n].iter().all(|&c| c > 0), "race {race} hull {hull}: {p:?}");
+            assert!(p.len() == 12 && p[..n].iter().all(|&c| c > 0), "race {race} hull {hull}: {p:?}");
         }
     }
 }

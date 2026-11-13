@@ -154,7 +154,6 @@ pub fn tech_fits(rules: &AiRules, tech: &TechTable, debug: bool, h: usize, t: us
         return false;
     }
     let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
-    let h = rules.design.hull_role(h);
     let Some(&kind) = rules.design.pod_slot_types.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1)))
     else {
         return false;
@@ -165,7 +164,7 @@ pub fn tech_fits(rules: &AiRules, tech: &TechTable, debug: bool, h: usize, t: us
 /// `GetMaxRarakhato(pt, h, k)` (exe 0x4b42f0): how many units slot `k` of hull `h` takes.
 pub fn slot_max(rules: &AiRules, pt: i16, h: usize, k: usize) -> i32 {
     let table = rules.design.race_pod_table.get(pt.max(0) as usize).copied().unwrap_or(0) - 1;
-    rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(rules.design.hull_role(h))).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
+    rules.pod_slot_max.get(table.max(0) as usize).and_then(|x| x.get(h)).and_then(|x| x.get(k.wrapping_sub(1))).copied().unwrap_or(0)
 }
 
 /// `TervAutoDesign(e, d, variant)` (§10.3, exe 0x541920) on a record: the best tech `e` (of race `race`) has for

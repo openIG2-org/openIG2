@@ -112,12 +112,19 @@ research field.
    tech = "star_galleon"    # its tech (price, time, hp, firepower, capacity); the tech becomes `like` the hull's tech
    hp = 260                 # optional, ground hulls: a member's hit points in the ground war (`TankAlapHP`)
    flags = [0, 0, 0, 0, 0, 0]  # optional, as `[hulls.<id>]`
+   slots = [[3, 1], [33, 1], [7, 4], [20, 2]]  # optional: [pod type, how many] per slot, for every race
    ```
    Every hull-indexed table gets the original's entry at the new index: the slot layouts of all pod tables
-   (`PodFajok`), the design screen's model (`Hull.id` stays the original's model index), the ground hit points, the
+   (`PodFajok`; the hull's own row, read by index like the exe's `GetMaxPodok` ELF 0x4fb390 and `GetMaxRarakhato`
+   ELF 0x4fb4c0, not through the role), the design screen's model (`Hull.id` stays the original's model index), the ground hit points, the
    starmap's transfer model. Tables the exe indexes by the hull's tech or ground index (`TankAlapSpeed`, turning
    speeds, armour, the tank models, the battle's ship type) are read through the role (`DesignRules::hull_role`).
    A ground hull (`like` 0x13..=0x17) is a new tank. The design screen lists every hull whose tech the empire owns.
+   `slots` replaces that row in every pod table (one layout for all races): 1 to 12 slots in order, each an existing
+   pod type (`PodTipusok` id, which lists the techs it takes; `openIG2-check --dump-rules` shows them) and how many
+   (1..=255, a design record's count byte); the slots after them stay empty. The designer, the battle's slot count
+   and the AI's fitting (`TalalmanyRarakhato`, `GetMaxRarakhato`) read the row, so two rocket slots carry two
+   independent launchers.
 9. **A new space weapon is appended** (`fegyverek` 40, 41, …) as a copy of the weapon it is `like`:
    ```toml
    [[space_weapons.new]]

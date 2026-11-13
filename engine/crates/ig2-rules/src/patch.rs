@@ -2,7 +2,7 @@
 
 use toml_edit::{DocumentMut, TableLike, Value};
 
-use crate::{layout, AddedBuilding, AddedItem, AddedPlanetType, AddedRace, AddedTech, Building, Hull, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
+use crate::{layout, AddedBuilding, AddedItem, AddedPlanetType, AddedRace, AddedTech, Building, Hull, PodSlot, ProblemCurve, Rules, ShipTypeRecord, SpaceWeapon, SpyMission, Tech};
 
 /// A field a patch can set from a TOML value.
 trait Field {
@@ -339,6 +339,9 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         }
         r.hulls.push(Hull { index: h, like: like as u8, ..r.hulls[like].clone() });
         copy_at(&mut r.ground_hull_hp, like, h);
+        for table in &mut r.pod_slots {
+            copy_at(table, like, h);
+        }
         copy_at(&mut r.unit_models.transfer, like, h);
         r.added_hulls.push(AddedItem { key: key.clone(), index: h, tech: 0 });
         items.push((true, h, like, at, *e));
@@ -458,8 +461,14 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
                 (_, "key" | "like") => continue,
                 (_, "tech") => tech = Some(tech_ref(r, v).map_err(err)? as usize),
                 (true, "hp") => r.ground_hull_hp[i].set(v).map_err(err)?,
+                (true, "slots") => {
+                    let row = hull_slots(r, v).map_err(err)?;
+                    for table in &mut r.pod_slots {
+                        table[i] = row.clone();
+                    }
+                }
                 (true, _) => {
-                    let field = r.hulls[i].field(f).filter(|_| f != "tech").ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, hp, class, flags)"))?;
+                    let field = r.hulls[i].field(f).filter(|_| f != "tech").ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, hp, slots, class, flags)"))?;
                     field.set(v).map_err(err)?;
                 }
                 (false, _) => {
@@ -524,6 +533,23 @@ fn race_ref(r: &Rules, k: &str) -> Result<usize, String> {
     }
 }
 
+/// `slots = [[pod type, how many], …]`: an added hull's slot layout for every race (ADR 0069 §8), up to twelve
+/// slots, each an existing pod type (`PodTipusok` id); the rest stay empty.
+fn hull_slots(r: &Rules, v: &Value) -> Result<Vec<PodSlot>, String> {
+    let list = v.as_array().filter(|a| (1..=12).contains(&a.len())).ok_or("expected 1 to 12 slots: [[pod type, how many], …]")?;
+    let mut row = vec![PodSlot::default(); 12];
+    for (k, s) in list.iter().enumerate() {
+        let pair = s.as_array().filter(|p| p.len() == 2).ok_or_else(|| format!("slot {}: expected [pod type, how many]", k + 1))?;
+        let pod_type = int_in(pair.get(0).unwrap(), 1..=i32::MAX as i64).map_err(|m| format!("slot {}: {m}", k + 1))? as i32;
+        if !r.pod_types.iter().any(|p| p.id == pod_type) {
+            return Err(format!("slot {}: no pod type {pod_type}", k + 1));
+        }
+        let max_count = int_in(pair.get(1).unwrap(), 1..=255).map_err(|m| format!("slot {}: {m}", k + 1))? as i32;
+        row[k] = PodSlot { pod_type, max_count };
+    }
+    Ok(row)
+}
+
 /// A planet type by its number or by the key of an added type.
 fn surface_ref(r: &Rules, k: &str) -> Result<usize, String> {
     match k.parse::<usize>() {
@@ -536,7 +562,6 @@ fn surface_ref(r: &Rules, k: &str) -> Result<usize, String> {
 /// Every race-indexed table gets race `from`'s entry at race `to` (the AI's two tables `ai`'s).
 fn copy_race(r: &mut Rules, from: usize, ai: usize, to: usize) {
     copy_at(&mut r.race_pod_table, from, to);
-    copy_at(&mut r.design_screen.pod_table, from, to);
     copy_at(&mut r.race_surface_affinity, from, to);
     copy_at(&mut r.race_production_mult, from, to);
     copy_at(&mut r.race_research_time_mult, from, to);

@@ -70,10 +70,6 @@ pub mod layout {
     /// `vector/design/alapok/`) and `AlapAranyok[m]` (the `AddToScene` scale before its ×0.5), m = `Alapok[hull]+8`.
     pub const DESIGN_HULL_MODELS: (u32, usize, usize) = (0x9028E8, 4, 25);
     pub const DESIGN_HULL_SCALE: (u32, usize, usize) = (0x8F88B0, 4, 25);
-    /// `PodFajok[table][hull][slot]` (8 tables × 27 hulls × 12 slots of (class, i32)) and
-    /// `HanyasFajPodTablazatatHasznalja[race]` (the race's table, 1-based).
-    pub const DESIGN_POD_SLOTS: (u32, usize, usize) = (0x8F9B28, 4, 8 * 0xA20 / 4);
-    pub const DESIGN_POD_TABLE_OF_RACE: (u32, usize, usize) = (0x902F10, 4, 19);
     /// `DesignBrushok[1..=4]` (`AktBrushok` on the screen): the pod rows' minus, plus and their greyed twins.
     pub const DESIGN_BRUSHES: (u32, usize, usize) = (0x902988, 0x38, 4);
     pub const RESEARCH_ORBIT_X: (u32, usize, usize) = (0x9190F8, 4, 17);
@@ -441,35 +437,11 @@ pub struct DesignScreen {
     pub models: Vec<String>,
     /// `AlapAranyok[m]`.
     pub scale: Vec<f32>,
-    /// `PodFajok` as dwords (`[table − 1]·0x288 + hull·0x18 + slot·2`: the class, then a second word).
-    pub pod_slots: Vec<i32>,
-    /// `HanyasFajPodTablazatatHasznalja[race]`.
-    pub pod_table: Vec<i32>,
     /// `DesignBrushok[1..=4]`.
     pub brushes: Vec<Brush>,
 }
 
 impl DesignScreen {
-    /// The pod classes of `hull`'s twelve slots for `race` (`PodFajok[HanyasFaj…[race] − 1][hull][k]`, 0 = none).
-    pub fn pod_slots(&self, race: usize, hull: usize) -> Vec<i32> {
-        let t = self.pod_table.get(race).copied().unwrap_or(0);
-        if t < 1 || hull >= 27 {
-            return vec![0; 12];
-        }
-        let at = (t as usize - 1) * 0x288 + hull * 0x18;
-        (0..12).map(|k| self.pod_slots.get(at + 2 * k).copied().unwrap_or(0)).collect()
-    }
-
-    /// `GetMaxRarakhato(race, hull, k)` (ELF 0x4fb4c0): how many of a tech slot `k` (1-based) takes, the slot's second
-    /// word.
-    pub fn pod_max(&self, race: usize, hull: usize, k: usize) -> i32 {
-        let t = self.pod_table.get(race).copied().unwrap_or(0);
-        if t < 1 || hull >= 27 || !(1..=12).contains(&k) {
-            return 0;
-        }
-        self.pod_slots.get((t as usize - 1) * 0x288 + hull * 0x18 + 2 * (k - 1) + 1).copied().unwrap_or(0)
-    }
-
     /// The text naming pod class `c` (`NEWGAME_Design` ELF 0x508210: `GetString(0x13, 1, c)` below 0x33, else
     /// `GetString(0x13, 2, c − 0x32)`; cut to 14 characters).
     pub fn pod_type_text(&self, c: i32) -> Option<(u16, u16)> {
@@ -596,7 +568,7 @@ pub struct PodType {
 }
 
 /// One design slot: pod type ID and maximum count (`PodFajok`, `GetMaxRarakhato`).
-#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 pub struct PodSlot {
     pub pod_type: i32,
     pub max_count: i32,
@@ -685,7 +657,8 @@ pub struct Rules {
     pub added_races: Vec<AddedRace>,
     pub added_planet_types: Vec<AddedPlanetType>,
     pub pod_types: Vec<PodType>,
-    /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots.
+    /// `[pod_table][hull][slot]`: 14 tables × 27 hulls × 12 slots; a mod's added hull has its own row in every table
+    /// (ADR 0069 §8).
     pub pod_slots: Vec<Vec<Vec<PodSlot>>>,
     /// Race → pod table (1-based index into `pod_slots`).
     pub race_pod_table: Vec<i32>,
@@ -889,6 +862,13 @@ impl Rules {
             0 => t,
             l => l as usize,
         }
+    }
+
+    /// `PodFajok[HanyasFajPodTablazatatHasznalja[race] − 1][hull]`: the hull's twelve slots for the race (`GetMaxPodok`
+    /// ELF 0x4fb390 counts those with a pod type, `GetMaxRarakhato` ELF 0x4fb4c0 reads `max_count`); empty if none.
+    pub fn hull_slots(&self, race: usize, hull: usize) -> &[PodSlot] {
+        let t = self.race_pod_table.get(race).copied().unwrap_or(0) - 1;
+        self.pod_slots.get(t.max(0) as usize).and_then(|x| x.get(hull)).map_or(&[], Vec::as_slice)
     }
 
     /// The original hull whose role hull `h` plays (ADR 0069 §8).
@@ -1169,8 +1149,6 @@ impl Rules {
                     })
                     .collect::<Result<Vec<_>>>()?,
                 scale: floats(layout::DESIGN_HULL_SCALE)?,
-                pod_slots: ints(layout::DESIGN_POD_SLOTS)?,
-                pod_table: ints(layout::DESIGN_POD_TABLE_OF_RACE)?,
                 brushes: records(layout::DESIGN_BRUSHES)?.map(Brush::from_record).collect(),
             },
             research_screen: {
