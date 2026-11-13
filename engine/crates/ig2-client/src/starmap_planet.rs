@@ -58,6 +58,9 @@ impl Planets {
 
     /// Load the battle screen's planet meshes `b{k}2.xvb`.
     pub fn load_battle(&mut self, r: &mut Renderer, install: &Install) {
+        if !self.battle.is_empty() {
+            return;
+        }
         self.battle = (0..8).map(|k| Mesh::load(r, install, &format!("b{k}2.xvb"))).collect();
         self.shell = Mesh::load_in(r, install, "vector/spacewar/", "textures/spacewar/", "bolygo3.xvb");
     }
@@ -208,8 +211,7 @@ impl Mesh {
             .into_iter()
             .filter_map(|p| {
                 let path = p.texture.as_deref()?;
-                let t = Image::load(install, path).ok()?;
-                Some(Part { uv_mul: Image::uv_mul(install, path), verts: p.verts, tex: r.add_texture(&t) })
+                Some(Part { uv_mul: Image::uv_mul(install, path), verts: p.verts, tex: r.file_texture(install, path).ok()? })
             })
             .collect();
         Some(Self { origin: root.origin, parts })

@@ -551,7 +551,7 @@ pub struct Pictures {
 
 /// The eight races' heads (`textures/main/fejek3/<race>a.bmp`, 64 × 64; [`Assets::race_pictures`]), race 1 first.
 pub fn race_heads(r: &mut crate::render::Renderer, install: &Install) -> Vec<Option<TexId>> {
-    (1..=8).map(|k| install.resolve_texture("textures/main/fejek3/", &format!("{k}a.bmp")).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img))).collect()
+    (1..=8).map(|k| install.resolve_texture("textures/main/fejek3/", &format!("{k}a.bmp")).and_then(|p| r.file_texture(install, &p).ok())).collect()
 }
 
 /// What the list draws from, read once: the entries, the settings' tables, the pictures.

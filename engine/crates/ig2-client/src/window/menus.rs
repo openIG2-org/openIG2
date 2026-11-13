@@ -51,7 +51,7 @@ impl App {
             screen.modern = Some(crate::options::modern::Modern::in_game(&screen, name, self.bindings.clone()));
         }
         let glow = self.gpu.as_mut().and_then(|g| {
-            self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
+            self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| g.renderer.file_texture(&self.install, &p).ok())
         });
         // `SetIdoPause` (exe 0x541300) changes nothing in MP: neither the pause here nor `Options_Kilep`'s restore.
         let was_paused = self.world.paused() || mp;
@@ -207,7 +207,7 @@ impl App {
         let (index, read) = crate::help::install_files(&self.install);
         let s = crate::help::HelpScreen::enter(&index, read, &self.help_memory, true, crate::help::char_y(font));
         let glow = self.gpu.as_mut().and_then(|g| {
-            self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&self.install, &p).ok()).map(|img| g.renderer.add_texture(&img))
+            self.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| g.renderer.file_texture(&self.install, &p).ok())
         });
         self.help = Some(HelpUp { s, ui_ms: self.now_ms(), glow, pics: Default::default(), page: Default::default() });
     }

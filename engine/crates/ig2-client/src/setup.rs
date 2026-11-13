@@ -114,7 +114,7 @@ impl Setup {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::AutoVsync,
-            desired_maximum_frame_latency: 2,
+            desired_maximum_frame_latency: 1,
             alpha_mode: caps.alpha_modes[0],
             view_formats: Renderer::view_formats(format),
         };

@@ -26,8 +26,8 @@ pub fn texture(r: &mut crate::render::Renderer, install: &ig2_formats::Install, 
     if let Some(&t) = textures.get(path) {
         return t;
     }
-    let t = match crate::assets::Image::load(install, path) {
-        Ok(img) => r.add_texture(&img),
+    let t = match r.file_texture(install, path) {
+        Ok(t) => t,
         Err(e) => {
             eprintln!("ig2-client: {e}");
             white

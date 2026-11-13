@@ -172,8 +172,10 @@ fn decode_generic(src: &[u8], w: u32, h: u32, channels: [u8; 4], bits: [u8; 4]) 
     // Packed formats (565, 4444) put the first channel in the most significant bits of an LE word.
     // Byte-aligned formats (8 bits per channel) store channels in byte order.
     let byte_order = bits[..n].iter().all(|&b| b == 8);
-    let mut out = Vec::with_capacity(w as usize * h as usize * 4);
-    for px in src.chunks_exact(bytes_pp).take(w as usize * h as usize) {
+    // Each channel's values expanded once (at most 8 bits a channel in the packed formats).
+    let lut: Vec<Vec<u8>> = bits[..n].iter().map(|&b| if byte_order || b > 8 { Vec::new() } else { (0..1u32 << b).map(|v| expand(v, b)).collect() }).collect();
+    let mut out = vec![0u8; w as usize * h as usize * 4];
+    for (px, o) in src.chunks_exact(bytes_pp).zip(out.chunks_exact_mut(4)) {
         let mut rgba = [0u8, 0, 0, 255];
         let word = px.iter().rev().fold(0u32, |acc, &b| (acc << 8) | b as u32);
         let mut shift = total;
@@ -184,7 +186,10 @@ fn decode_generic(src: &[u8], w: u32, h: u32, channels: [u8; 4], bits: [u8; 4]) 
                 shift -= b as u32;
                 ((word as u64 >> shift) & mask(b)) as u32
             };
-            let v = expand(v, b);
+            let v = match lut[i].get(v as usize) {
+                Some(&e) => e,
+                None => expand(v, b),
+            };
             match ch {
                 b'r' => rgba[0] = v,
                 b'g' => rgba[1] = v,
@@ -194,7 +199,7 @@ fn decode_generic(src: &[u8], w: u32, h: u32, channels: [u8; 4], bits: [u8; 4]) 
                 _ => {}
             }
         }
-        out.extend_from_slice(&rgba);
+        o.copy_from_slice(&rgba);
     }
     Ok(out)
 }

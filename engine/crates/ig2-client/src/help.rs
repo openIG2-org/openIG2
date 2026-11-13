@@ -839,7 +839,7 @@ pub fn snapshot(o: &crate::Options, out: &std::path::Path) -> Result<(), String>
     let world = crate::start_world(o, &l.install, l.save.as_ref(), &l.rules, &l.tech_defaults, &l.volatile)?;
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let mut hud = crate::ui::Hud::load(&mut r, &l.install, &l.tables);
-    let glow = l.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(&l.install, &p).ok()).map_or(hud.white, |img| r.add_texture(&img));
+    let glow = l.install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| r.file_texture(&l.install, &p).ok()).unwrap_or(hud.white);
     let (index, read) = install_files(&l.install);
     let mut s = {
         let font = hud.font.as_ref().ok_or("no font")?;

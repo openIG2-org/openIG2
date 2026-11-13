@@ -1473,7 +1473,7 @@ impl PanelBuilding {
         if let Some(&t) = self.textures.get(path) {
             return t;
         }
-        let t = crate::assets::Image::load(install, path).map(|img| r.add_texture(&img)).unwrap_or(white);
+        let t = r.file_texture(install, path).unwrap_or(white);
         self.textures.insert(path.to_owned(), t);
         t
     }

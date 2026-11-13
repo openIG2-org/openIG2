@@ -35,7 +35,7 @@ info globes), and some read pixels (hit masks, the charset).
    then to none, so that no side exceeds 4096 texels. The font atlas is never filtered (`Image::load_original`, ADR
    0046 sharpens it in the shader).
 4. **Cache**: the filtered pictures are kept in memory per (path, factor) and shared between screens; the cache is
-   emptied when it passes 1 GiB. Nothing is written to disk: the filter runs on load only for pictures a screen
+   emptied when it passes 256 MiB. Nothing is written to disk: the filter runs on load only for pictures a screen
    draws, and the cache never reaches the repository or the install.
 5. **Texture packs**: an enabled mod's `hires/` folder holds pictures by game path, at any size:
    `mods/<name>/hires/dataraw/textures/colony/foo_bmp.png` (or the same name with `.pvr`) replaces how

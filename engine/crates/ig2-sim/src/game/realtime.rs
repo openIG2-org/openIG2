@@ -947,15 +947,17 @@ impl Game<'_> {
 
     /// `Frissit2_Colony`'s battlefield part in single player (exe 0x477dc0, called by `Fake_FRISSITES` at 0x4de8e8 on
     /// every 100 Hz UI tick while `AktKep ≤ 0xD`, paused or not; spec §11.16): `ColonyCounter += 1`, and on every fifth
-    /// count the dropships of every battlefield. Canonical MP steps them with the sim instead.
-    pub fn colony_ui_tick(&mut self) {
+    /// count the dropships of every battlefield. Canonical MP steps them with the sim instead. True when they stepped.
+    pub fn colony_ui_tick(&mut self) -> bool {
         if self.view != ViewMode::Classic || self.globals().multiplayer || !self.sp_battles.live {
-            return;
+            return false;
         }
         self.sp_battles.colony_counter = self.sp_battles.colony_counter.wrapping_add(1);
-        if self.sp_battles.colony_counter % 5 == 0 {
+        let step = self.sp_battles.colony_counter % 5 == 0;
+        if step {
             self.dropships_mp();
         }
+        step
     }
 
     /// The dropships of every battlefield (`WF::Refresh2`'s pass, exe 0x48ce10), once per tick in canonical MP:

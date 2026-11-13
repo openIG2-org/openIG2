@@ -61,6 +61,8 @@ frame budget is a hitch 20 times a second (the 20 Hz tick).
 - Offscreen passes draw into render targets kept in `Gfx` (`Renderer::draw_into`), never new targets per frame.
 - Models and their `.pvr` data are cached, not re-read per frame (`FrameModels::globes_scaled`, `Rc<Model>`).
 - The depth buffer is cached per target size (`render3d::Pipe3d::depth`).
+- Install pictures drawn as they are go through `Renderer::file_texture` (one upload per path a run), not
+  `Image::load` + `add_texture`.
 
 ## Measurements (part 1, 2026-11-01)
 
@@ -212,3 +214,41 @@ movement and the 0.02 ms AI work) are below the noise.
 
 Next candidates: the views still decoded and stored whole by each system (production 0.06, the AI 0.17 per day,
 the diplomacy 0.05 per tick): a view kept decoded across a tick's systems.
+
+## Measurements (part 4, memory and the start, 2026-11-13)
+
+One machine, release, vsync off, the saved settings with texture upscaling x4 on, `--save quick-2.sav`,
+`IG2_PROFILE_TOUR=-,F3,-,F1,-` with a 3 s step, memory read 11 s after the start on the colony screen; warm runs.
+
+| | before | after |
+|---|---|---|
+| Video memory (dedicated, the process) | 2884 MB | 1953 MB |
+| Memory, private / working set | 4162 / 1506 MB | 2564 / 809 MB |
+| Start-up `assets` step | 1585 ms | 840 ms |
+| Start-up `hud` step | 281 ms | 165 ms |
+| Frame (starmap / colony / help) | 1.8 / 1.4 / 0.9 ms | unchanged |
+
+- **Install pictures uploaded more than once**: the starmap's planet sprites and the planet meshes each uploaded
+  their own copy of `p1..p9` (89 MB each at x4), the battle screen loaded its planet meshes and their textures again
+  at every battle (never freed), the starmap console uploaded `starpan` once per mesh part, Options and Help uploaded
+  the laser glow at each opening, and the screens' own texture maps (kit, colony UI, spy, research, diplomacy, main
+  menu) each uploaded their copy. They now go through `Renderer::file_texture` (one upload per path a run);
+  `Planets::load_battle` loads once.
+- **The levels of an upscaled picture** (`render::mip_chain`): the top level was copied (64 MB for a 4096 x 4096
+  picture) and the box filter ran on one core. The levels are borrowed and `halve` fills row bands on every core
+  (`upscale::par_rows`; test `halved_levels_average_the_four_texels_clamped`).
+- **The upscaled pictures' cache** (`upscale::CACHE_LIMIT`) held up to 1 GiB of pixels already on the GPU; now
+  256 MiB (ADR 0054 section 4). The design, trade and diplomacy scenes kept each texture's levels and upscaled copy
+  beside the pixels they sample; they keep the pixels only.
+- **PVR decode** (`pvr::decode_generic`, nearly every texture is RGB565 or RGBA4444): a table per channel instead of
+  a 64-bit division per value.
+- **The modern pointer set** (183 distance-field pictures at start) is drawn on every core.
+- **Present queue**: `desired_maximum_frame_latency` 1 instead of 2 (the pointer is drawn in the frame, so each
+  queued frame was pointer lag with vsync on).
+- **A paused colony screen** decoded the whole colony world again on every 10 ms UI tick; now only when the
+  dropships stepped (`Game::colony_ui_tick` returns it).
+
+Next candidates: what is left of the video memory with x4 on is the nine 4096 x 4096 planet maps (about 800 MB;
+stored BC1 in the install, decoded to RGBA8: uploading them compressed, or capping the planets' upscaling, would cut
+it), the window-sized offscreen targets kept per screen, the leader heads' 100 textures per race, input sampled
+before the swap-chain acquire, no pacing for a minimised window, the colony entry's ~190 ms frame.

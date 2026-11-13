@@ -1370,7 +1370,7 @@ pub struct Headless {
 impl Headless {
     pub fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, tables: &ig2_rules::Rules) -> Self {
         let hud = crate::ui::Hud::load(r, install, tables);
-        let glow = install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok()).map_or(hud.white, |img| r.add_texture(&img));
+        let glow = install.resolve_texture("textures/starmap/", "laservago.bmp").and_then(|p| r.file_texture(install, &p).ok()).unwrap_or(hud.white);
         Self { hud, glow }
     }
 

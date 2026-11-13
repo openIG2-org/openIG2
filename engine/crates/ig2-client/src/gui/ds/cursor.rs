@@ -338,7 +338,12 @@ impl Set {
     pub fn load(r: &mut crate::render::Renderer) -> Self {
         let k = Tokens::DEEP_SPACE;
         let n = Self::PIXELS;
-        Self(Cursor::ALL.iter().map(|c| (0..c.frames()).map(|i| r.add_texture_linear(&crate::assets::Image { width: n as u32, height: n as u32, rgba: c.rgba(i, n, &k), mips: Vec::new(), hires: None })).collect()).collect())
+        // 183 pictures of distance fields: drawn in bands on the machine's cores, then uploaded in order.
+        let jobs: Vec<(Cursor, usize)> = Cursor::ALL.iter().flat_map(|&c| (0..c.frames()).map(move |i| (c, i))).collect();
+        let mut pics: Vec<Vec<u8>> = vec![Vec::new(); jobs.len()];
+        crate::upscale::par_rows(&mut pics, 1, |first, band| band.iter_mut().zip(&jobs[first..]).for_each(|(o, &(c, i))| *o = c.rgba(i, n, &k)));
+        let mut pics = pics.into_iter();
+        Self(Cursor::ALL.iter().map(|c| pics.by_ref().take(c.frames()).map(|rgba| r.add_texture_linear(&crate::assets::Image { width: n as u32, height: n as u32, rgba, mips: Vec::new(), hires: None })).collect()).collect())
     }
 
     /// Pointer type `kind` ([`Cursor::from_kind`]) at phase `phase`, its hot point at `at` (pixels), `scale` pixels a

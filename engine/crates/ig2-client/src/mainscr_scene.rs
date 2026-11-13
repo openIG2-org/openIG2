@@ -199,9 +199,8 @@ impl MainScene {
         if let Some(t) = self.textures.get(path) {
             return Some(*t);
         }
-        match Image::load(install, path) {
-            Ok(img) => {
-                let id = r.add_texture(&img);
+        match r.file_texture(install, path) {
+            Ok(id) => {
                 self.textures.insert(path.to_owned(), id);
                 Some(id)
             }

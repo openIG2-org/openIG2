@@ -1808,7 +1808,7 @@ impl ResearchModels {
     pub fn new(r: &mut Renderer, install: &Install) -> Self {
         let white = r.add_texture(&crate::assets::Image::white());
         let mask = Self::mask(install);
-        let mut load = |name| install.resolve_texture("textures/starmap/", name).and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
+        let mut load = |name| install.resolve_texture("textures/starmap/", name).and_then(|p| r.file_texture(install, &p).ok());
         let (glow, arrow) = (load("laservago.bmp"), load("nyilhegy.bmp"));
         Self { frames: HashMap::new(), ball: None, techs: HashMap::new(), textures: HashMap::new(), white, target: None, mask, centres: Vec::new(), glow, arrow, modern: false }
     }

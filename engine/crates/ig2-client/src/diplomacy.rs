@@ -1627,7 +1627,7 @@ pub struct Open {
 impl Open {
     pub fn new(r: &mut crate::render::Renderer, install: &Install, rules: &ig2_rules::Rules, ui: &UiTexts, state: &SaveState) -> Self {
         let v = View::read(state);
-        let design = install.resolve_texture("textures/design/screen/", "dt.bmp").and_then(|p| crate::assets::Image::load(install, &p).ok()).map(|img| r.add_texture(&img));
+        let design = install.resolve_texture("textures/design/screen/", "dt.bmp").and_then(|p| r.file_texture(install, &p).ok());
         Self { screen: Screen::new(rules, ui, &v), texts: Texts::load(install, ui), scene: crate::diplomacy_scene::DiplomacyScene::load(r, install, rules), design, last3d: None }
     }
 

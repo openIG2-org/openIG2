@@ -84,7 +84,7 @@ impl Assets {
                 None
             }
         };
-        let mut tex = |path: &str| img(path).map(|i| r.add_texture(&i));
+        let mut tex = |path: &str| r.file_texture(install, path).map_err(|e| eprintln!("ig2-client: {e} (drawing a plain shape instead)")).ok();
         let select = tex("dataraw/textures/starmap/select_bmp.pvr");
         let planets = std::array::from_fn(|s| if s > 0 { tex(&format!("dataraw/textures/starmap/p{s}_bmp.pvr")) } else { None });
         let stars = std::array::from_fn(|i| tex(&format!("dataraw/textures/starmap/n{}_bmp.pvr", i + 1)));

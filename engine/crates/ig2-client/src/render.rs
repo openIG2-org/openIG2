@@ -1322,10 +1322,11 @@ fn raw_view(tex: &wgpu::Texture) -> wgpu::TextureView {
 
 /// The image (or `hires`, drawn in its place) and its box-filtered mips down to 1×1 (in sRGB space; good enough for
 /// these assets), with the top level's size.
-fn mip_chain(img: &Image, hires: Option<&crate::upscale::Hires>) -> ((u32, u32), Vec<Vec<u8>>) {
+fn mip_chain<'a>(img: &'a Image, hires: Option<&'a crate::upscale::Hires>) -> ((u32, u32), Vec<std::borrow::Cow<'a, [u8]>>) {
+    use std::borrow::Cow;
     let (mut out, mut w, mut h) = match hires {
-        Some(hi) => (vec![hi.rgba.clone()], hi.width as usize, hi.height as usize),
-        None => (vec![img.rgba.clone()], img.width as usize, img.height as usize),
+        Some(hi) => (vec![Cow::Borrowed(&hi.rgba[..])], hi.width as usize, hi.height as usize),
+        None => (vec![Cow::Borrowed(&img.rgba[..])], img.width as usize, img.height as usize),
     };
     let size = (w as u32, h as u32);
     // An upscaled level halves down to the image's own size, where the image itself takes over (ADR 0054 §2).
@@ -1333,7 +1334,7 @@ fn mip_chain(img: &Image, hires: Option<&crate::upscale::Hires>) -> ((u32, u32),
         while w > img.width as usize {
             (w, h) = halve(&mut out, w, h);
         }
-        *out.last_mut().unwrap() = img.rgba.clone();
+        *out.last_mut().unwrap() = Cow::Borrowed(&img.rgba[..]);
     } else if hires.is_some() {
         while w > 1 || h > 1 {
             (w, h) = halve(&mut out, w, h);
@@ -1347,7 +1348,7 @@ fn mip_chain(img: &Image, hires: Option<&crate::upscale::Hires>) -> ((u32, u32),
         if m.len() != nw * nh * 4 {
             break;
         }
-        out.push(m.clone());
+        out.push(Cow::Borrowed(&m[..]));
         (w, h) = (nw, nh);
     }
     while w > 1 || h > 1 {
@@ -1357,23 +1358,24 @@ fn mip_chain(img: &Image, hires: Option<&crate::upscale::Hires>) -> ((u32, u32),
 }
 
 /// `out`'s last level (`w` × `h`) box-filtered to half its size, pushed; the new size.
-fn halve(out: &mut Vec<Vec<u8>>, w: usize, h: usize) -> (usize, usize) {
+fn halve(out: &mut Vec<std::borrow::Cow<[u8]>>, w: usize, h: usize) -> (usize, usize) {
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-    let src = out.last().unwrap();
+    let src = &out.last().unwrap()[..];
     let mut dst = vec![0u8; nw * nh * 4];
-    for y in 0..nh {
-        for x in 0..nw {
-            for c in 0..4 {
-                let mut sum = 0u32;
-                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
-                    sum += src[(sy * w + sx) * 4 + c] as u32;
+    // A 4096-wide picture's levels are most of its load: rows in bands on every core.
+    crate::upscale::par_rows(&mut dst, nw * 4, |y0, band| {
+        for (y, row) in band.chunks_exact_mut(nw * 4).enumerate() {
+            let y = y0 + y;
+            let (r0, r1) = (&src[(2 * y).min(h - 1) * w * 4..][..w * 4], &src[(2 * y + 1).min(h - 1) * w * 4..][..w * 4]);
+            for (x, o) in row.chunks_exact_mut(4).enumerate() {
+                let (a, b) = ((2 * x).min(w - 1) * 4, (2 * x + 1).min(w - 1) * 4);
+                for c in 0..4 {
+                    o[c] = ((r0[a + c] as u32 + r0[b + c] as u32 + r1[a + c] as u32 + r1[b + c] as u32) / 4) as u8;
                 }
-                dst[(y * nw + x) * 4 + c] = (sum / 4) as u8;
             }
         }
-    }
-    out.push(dst);
+    });
+    out.push(dst.into());
     (nw, nh)
 }
 
@@ -2833,6 +2835,17 @@ mod tests {
             assert_eq!(t.tex, first);
         }
         assert_eq!(r.texture_count(), n);
+    }
+
+    /// A level's texel is the mean of its four above, the last row and column repeated at an odd size.
+    #[test]
+    fn halved_levels_average_the_four_texels_clamped() {
+        let mut out = vec![std::borrow::Cow::Owned((0..3 * 3 * 4).map(|i| i as u8).collect::<Vec<u8>>())];
+        assert_eq!(halve(&mut out, 3, 3), (1, 1));
+        assert_eq!(&out[1][..], [8, 9, 10, 11]);
+        let mut out = vec![std::borrow::Cow::Owned(vec![10u8, 0, 0, 0, 20, 0, 0, 0])];
+        assert_eq!(halve(&mut out, 1, 2), (1, 1));
+        assert_eq!(out[1][0], 15);
     }
 
     /// ADR 0054 §2: an upscaled picture is the top level and halves down to the image's own pixels, then the PVR's

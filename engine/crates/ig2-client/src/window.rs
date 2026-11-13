@@ -1227,12 +1227,13 @@ impl App {
         self.ui_frames = now as u64 / 10;
         // `Frissit2_Colony` (exe 0x4de8e8, before the tutorial's part) on a game screen: the dropships.
         if self.front.is_none() && self.shown_kep() <= 0xd {
+            let mut moved = false;
             for _ in 0..due_ui {
-                self.world.game.colony_ui_tick();
+                moved |= self.world.game.colony_ui_tick();
             }
             // Paused (`StartGrWar` pauses single player) no sim tick reads the colony again: the dropships coming down
             // are shown as they move (re/rules/ground-combat.md §11.16).
-            if due_ui > 0 && self.world.paused() && self.world.colony.is_some() {
+            if moved && self.world.paused() && self.world.colony.is_some() {
                 self.world.show_colony(self.world.colony);
             }
         }

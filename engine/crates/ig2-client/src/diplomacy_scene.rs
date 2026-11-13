@@ -116,7 +116,8 @@ impl DiplomacyScene {
             match Image::load(install, path) {
                 Ok(img) => {
                     let id = r.add_texture(&img);
-                    self.textures.insert(path.to_owned(), Tex { id, img });
+                    // Only `rgba` is sampled again (the wire colours): the levels and the upscaled copy are on the GPU.
+                    self.textures.insert(path.to_owned(), Tex { id, img: Image { mips: Vec::new(), hires: None, ..img } });
                 }
                 Err(e) => {
                     eprintln!("ig2-client: {e}");

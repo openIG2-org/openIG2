@@ -241,6 +241,7 @@ impl Console {
         let model = Self::model(install, None)?;
         let place = Placement::add_to_scene(model.origin, 0.17).world((0.0, 0.0, 0.0), [0.0, 170.0, -600.0]);
         let mut dynamic = Vec::new();
+        let mut opaque = std::collections::HashMap::new();
         let mut draws = Vec::new();
         let white = r.white();
         for p in &model.parts {
@@ -255,13 +256,13 @@ impl Console {
                 });
             }
             // Drawn opaque: the window in the texture's middle is black where the exe draws it (no alpha test).
-            let tex = match p.texture.as_deref().map(|t| crate::assets::Image::load(install, t)) {
+            let tex = *opaque.entry(p.texture.clone()).or_insert_with(|| match p.texture.as_deref().map(|t| crate::assets::Image::load(install, t)) {
                 Some(Ok(mut img)) => {
                     img.rgba.chunks_exact_mut(4).for_each(|px| px[3] = 255);
                     r.add_texture(&img)
                 }
                 _ => white,
-            };
+            });
             draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex, glass: false, cloud: false, shadow: crate::render3d::Shadow::None, video: false, additive: false, depth_write: false });
         }
         let [x0, y0, x1, y1] = CONSOLE_RECT;

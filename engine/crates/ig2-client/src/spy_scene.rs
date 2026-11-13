@@ -132,7 +132,7 @@ fn texture(r: &mut Renderer, install: &Install, name: &str, cache: &mut std::col
     if let Some(&t) = cache.get(&path) {
         return t;
     }
-    let t = crate::assets::Image::load(install, &path).map(|img| r.add_texture(&img)).unwrap_or(white);
+    let t = r.file_texture(install, &path).unwrap_or(white);
     cache.insert(path, t);
     t
 }
@@ -143,7 +143,7 @@ fn pieces(r: &mut Renderer, install: &Install, parts: &[&Part], cache: &mut std:
         .map(|p| {
             let tex = p.texture.as_ref().map_or(white, |t| {
                 // Decoded once per path: the 51 poses share the frame's textures.
-                *cache.entry(t.clone()).or_insert_with(|| crate::assets::Image::load(install, t).map_or(white, |img| r.add_texture(&img)))
+                *cache.entry(t.clone()).or_insert_with(|| r.file_texture(install, t).unwrap_or(white))
             });
             Piece { verts: p.verts.clone(), tex }
         })

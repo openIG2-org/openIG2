@@ -337,7 +337,7 @@ impl App {
         }
         let Some((renderer, size, _)) = gfx(&mut self.gpu, &mut self.headless) else { return };
         if h.interlace.is_none() {
-            h.interlace = crate::assets::Image::load(&self.install, "dataraw/textures/messages/finalinter_bmp.pvr").ok().map(|i| renderer.add_texture(&i));
+            h.interlace = renderer.file_texture(&self.install, "dataraw/textures/messages/finalinter_bmp.pvr").ok();
         }
         h.clip = None;
         let fresh = std::mem::take(&mut self.head.fresh);

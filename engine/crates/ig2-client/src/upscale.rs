@@ -28,7 +28,7 @@ pub const PACK_DIR: &str = "hires/";
 /// The largest side a filter makes (§3).
 const MAX_SIDE: u32 = 4096;
 /// The cache is emptied past this many bytes (§4).
-const CACHE_LIMIT: usize = 1 << 30;
+const CACHE_LIMIT: usize = 1 << 28;
 
 static FACTOR: AtomicU8 = AtomicU8::new(1);
 
@@ -206,7 +206,7 @@ pub(crate) fn xbrz(rgba: &[u8], w: usize, h: usize, f: usize) -> Vec<u8> {
 }
 
 /// Fills `out` (rows of `row_len` items) by `fill(first row, rows)` in bands on the machine's cores.
-fn par_rows<T: Send>(out: &mut [T], row_len: usize, fill: impl Fn(usize, &mut [T]) + Sync) {
+pub(crate) fn par_rows<T: Send>(out: &mut [T], row_len: usize, fill: impl Fn(usize, &mut [T]) + Sync) {
     let rows = out.len() / row_len.max(1);
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
     let bands = cores.min(rows / 16).max(1);
