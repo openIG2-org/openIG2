@@ -187,3 +187,39 @@ fn a_page_host_answers_a_joiner_through_its_polls() {
     // A page's room is not for QUIC joiners.
     assert!(ig2_net::quic::connect_via(relay.addr, session, pin, ig2_net::quic::Via::RelayOnly).is_err());
 }
+
+/// The link's own latency (the browser↔desktop stutter): a message goes out at once, not on the driver's next socket
+/// timeout (Windows rounds 4 ms up to ~16 ms, a round trip took ~100 ms), a burst loses no packet to a full socket
+/// buffer (SCTP's 1 s retransmit), and both ends know the round trip (the input delay adapts to it).
+#[test]
+fn a_data_channel_is_quick() {
+    let relay = Relay::start();
+    let (host, pin) = host_on(&relay, 0x77);
+    let (mut joiner, mut there) = join(&relay, &host, 0x77, pin);
+    let (mut sum, mut worst) = (Duration::ZERO, Duration::ZERO);
+    for i in 0..200 {
+        let t = Instant::now();
+        joiner.send(&Msg::Hash { turn: i, hash: 7 });
+        while there.recv().unwrap().is_none() {
+            std::thread::yield_now();
+        }
+        there.send(&Msg::Hash { turn: i, hash: 8 });
+        while joiner.recv().unwrap().is_none() {
+            std::thread::yield_now();
+        }
+        sum += t.elapsed();
+        worst = worst.max(t.elapsed());
+    }
+    eprintln!("round trip: mean {:?}, worst {worst:?}", sum / 200);
+    assert!(sum / 200 < Duration::from_millis(5) && worst < Duration::from_millis(200), "mean {:?}, worst {worst:?}", sum / 200);
+    for _ in 0..3 {
+        let big = Msg::Input { turn: 3, commands: vec![Command::Buy { delivery: vec![0xab; 4 << 20] }] };
+        let t = Instant::now();
+        there.send(&big);
+        assert_eq!(wait(|| joiner.recv().unwrap()), big);
+        eprintln!("4 MiB: {:?}", t.elapsed());
+        assert!(t.elapsed() < Duration::from_millis(900), "{:?}", t.elapsed());
+    }
+    let rtt = wait(|| joiner.rtt().zip(there.rtt()));
+    assert!(rtt.0 < Duration::from_millis(100) && rtt.1 < Duration::from_millis(100), "{rtt:?}");
+}

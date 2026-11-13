@@ -94,7 +94,14 @@ that target), blocking sockets, `openh264`'s C code, `arboard`, QUIC over UDP.
   `str0m` with its pure-Rust crypto drives the channel on a UDP socket of its own (host candidates for 127.0.0.1 and
   the LAN address); in the browser it is the page's `RTCPeerConnection`. The password binding (ADR 0008 §3.1) is a
   SHA-256 over both ends' DTLS fingerprints as the offer and the answer carry them, so a signalling server that
-  swapped them fails the password check.
+  swapped them fails the password check. Each end probes the round trip every 500 ms (lead bytes 2 and its echo 3,
+  answered where the channel lives, between a message's pieces) for `Transport::rtt`, so the input delay adapts as
+  over QUIC (ADR 0063). The native driver is woken by an empty datagram to its own socket for each message (a socket
+  timeout of 4 ms waits ~16 ms on Windows: a round trip took ~100 ms) and its socket takes 4 MiB (a big message's
+  burst overflowed Windows' 64 KiB default and a lost packet waited out SCTP's 1 s retransmit).
+- **A window that draws nothing** (minimized, a hidden or covered browser tab: no animation frames) still runs a
+  multiplayer game on from the event loop's idle callback once 100 ms passed without a frame, as under a video;
+  otherwise every other player waits for its input behind the "Slow connection!" overlay.
 - **Signalling** goes through the rendezvous service (ADR 0018), which grows two packets (15 Offer, 16 Answer: an offer
   id and an SDP of at most 4000 bytes) and an HTTP side on the same port number over TCP: the page POSTs its offer
   (no trickling: it waits for its candidates) to `/offer/{session}/{pin}` with the join code's session and pin; the

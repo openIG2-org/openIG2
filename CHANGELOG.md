@@ -66,6 +66,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - The game finds GOG and Steam installs by itself, checks them, and accepts a game folder dropped onto its window when it finds none.
 - Builds for Windows, 64-bit Linux and Apple Silicon Macs; the game is now `openIG2.exe` (`./openIG2` elsewhere) with its own icons.
 - Browser version: hosting a multiplayer game works too: the room shows a join code, and browser and desktop players join it through the relay server, which now also tells every player its internet address, so games across different homes connect more often.
+- Browser and desktop players in the same multiplayer game now play smoothly: messages no longer wait, the input delay adapts to the connection, a minimized or hidden window keeps the game running so the others don't get "Slow connection!", and the browser joins faster.
 - Browser version: single player with saves, multiplayer through a relay server, and videos; a server can host it with the game files, which download only for the chosen language, and the website has a "Play online" button.
 - The game checks for a newer openIG2 at start; on Windows "Update and restart" installs it, keeping settings, saves and mods (Options, Game turns the check off).
 - The game starts about three times faster, shows no white window or console window while loading, and keeps a log with crash details for bug reports.

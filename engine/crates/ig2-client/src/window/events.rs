@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// A window that drew no frame for this long runs a multiplayer game on from `about_to_wait` (two sim ticks).
+const UNDRAWN_MS: u32 = 100;
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, el: &ActiveEventLoop) {
         #[cfg(target_arch = "wasm32")]
@@ -37,6 +40,12 @@ impl ApplicationHandler for App {
                 std::thread::sleep(std::time::Duration::from_millis(16));
             }
             g.window.request_redraw();
+        }
+        // Ours: a window that draws no frames (minimized, a hidden or covered browser tab gets no animation frames)
+        // still runs a multiplayer game on, as under a video; else every other player's game stands still waiting
+        // for its input (the wait overlay's "Slow connection!").
+        if self.headless.is_none() && self.now_ms().wrapping_sub(self.drawn_ms) > UNDRAWN_MS {
+            self.mp_run_on();
         }
     }
 
@@ -178,6 +187,7 @@ impl ApplicationHandler for App {
             }
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.reconfigure(),
             WindowEvent::RedrawRequested => {
+                self.drawn_ms = self.now_ms();
                 if let Some(due) = self.tour.as_mut().and_then(|t| t.due()) {
                     match due {
                         Some(k) => self.tour_key(&k),

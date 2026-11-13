@@ -6,7 +6,8 @@
 //! Every end asks the relay server's STUN answers for its public address.
 //!
 //! Messages larger than one data-channel message travel in [`CHUNK`]-byte pieces, each led by a byte that says whether
-//! more follow. The password binding (ADR 0008 §3.1) is a hash of both ends' DTLS fingerprints from the offer and
+//! more follow. Between them each end probes the round trip every [`PING_EVERY`] (lead bytes [`PING`] and its echo
+//! [`PONG`]) for [`Transport::rtt`], so a room's input delay adapts to the link as it does over QUIC (ADR 0063). The password binding (ADR 0008 §3.1) is a hash of both ends' DTLS fingerprints from the offer and
 //! the answer: the same on both ends, different across a service that swapped them.
 
 use crate::lockstep::Msg;
@@ -19,6 +20,13 @@ pub const CHUNK: usize = 16 << 10;
 use crate::transport::MAX_MESSAGE;
 /// The data channel's label.
 pub const LABEL: &str = "ig2";
+
+/// A round-trip probe's lead byte; 8 bytes follow (the sender's clock, its own to read).
+pub const PING: u8 = 2;
+/// A probe's echo: the probe's bytes come back behind it.
+pub const PONG: u8 = 3;
+/// How often each end probes the round trip.
+pub const PING_EVERY: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// `b` in data-channel pieces: a byte 1 (more follow) or 0 (the last), then up to [`CHUNK`] - 1 bytes.
 pub fn pieces(b: &[u8]) -> Vec<Vec<u8>> {
@@ -111,11 +119,60 @@ pub enum Error {
 }
 
 /// What a link's driver shares with its [`Link`].
-#[derive(Default)]
 struct Shared {
     open: std::sync::atomic::AtomicBool,
     closed: std::sync::atomic::AtomicBool,
     remote: std::sync::Mutex<Option<std::net::IpAddr>>,
+    /// The probes' clock.
+    epoch: web_time::Instant,
+    /// The last probe went out at (µs on `epoch`; `u64::MAX`: none yet).
+    pinged: std::sync::atomic::AtomicU64,
+    /// The last probe's round trip in µs (0: none came back yet).
+    rtt: std::sync::atomic::AtomicU64,
+}
+
+impl Default for Shared {
+    fn default() -> Self {
+        Self { open: Default::default(), closed: Default::default(), remote: Default::default(), epoch: web_time::Instant::now(), pinged: u64::MAX.into(), rtt: 0.into() }
+    }
+}
+
+/// A received piece: a message's, a probe (its echo to send back) or an echo (its round trip noted).
+#[derive(Debug, PartialEq, Eq)]
+enum Piece {
+    Message,
+    Echo(Vec<u8>),
+    Probe,
+}
+
+impl Shared {
+    fn now(&self) -> u64 {
+        self.epoch.elapsed().as_micros() as u64
+    }
+
+    /// A probe when one is due (the channel open).
+    fn ping_due(&self) -> Option<Vec<u8>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let (now, last) = (self.now(), self.pinged.load(SeqCst));
+        if !self.open.load(SeqCst) || (last != u64::MAX && now.saturating_sub(last) < PING_EVERY.as_micros() as u64) {
+            return None;
+        }
+        self.pinged.store(now, SeqCst);
+        Some([&[PING][..], &now.to_le_bytes()].concat())
+    }
+
+    fn take(&self, piece: &[u8]) -> Piece {
+        match piece.split_first() {
+            Some((&PING, b)) => Piece::Echo([&[PONG][..], b].concat()),
+            Some((&PONG, b)) => {
+                if let Ok(b) = b.try_into() {
+                    self.rtt.store(self.now().saturating_sub(u64::from_le_bytes(b)).max(1), std::sync::atomic::Ordering::SeqCst);
+                }
+                Piece::Probe
+            }
+            _ => Piece::Message,
+        }
+    }
 }
 
 /// One end of a data channel as a [`Transport`] (`Send`: the channel itself lives on the driver's thread natively,
@@ -123,6 +180,9 @@ struct Shared {
 pub struct Link {
     #[cfg(not(target_arch = "wasm32"))]
     out: std::sync::mpsc::Sender<Vec<u8>>,
+    /// The driver's socket and port: an empty datagram to itself wakes it for a message to send at once.
+    #[cfg(not(target_arch = "wasm32"))]
+    wake: Option<(std::net::UdpSocket, u16)>,
     inc: std::sync::mpsc::Receiver<Vec<u8>>,
     shared: std::sync::Arc<Shared>,
     binding: [u8; 32],
@@ -143,10 +203,19 @@ impl Transport for Link {
         #[cfg(target_arch = "wasm32")]
         self._page.send(&b);
         #[cfg(not(target_arch = "wasm32"))]
-        let _ = self.out.send(b);
+        if self.out.send(b).is_ok() {
+            if let Some((s, port)) = &self.wake {
+                let _ = s.send_to(&[], (std::net::Ipv4Addr::LOCALHOST, *port));
+            }
+        }
     }
 
     fn recv(&mut self) -> Result<Option<Msg>, wire::Error> {
+        // The page has no driver of its own: the game's polls send the probes.
+        #[cfg(target_arch = "wasm32")]
+        if let Some(p) = self.shared.ping_due() {
+            self._page.send_piece(&p);
+        }
         match self.inc.try_recv() {
             Ok(b) => wire::from_slice(&b).map(Some),
             Err(_) => Ok(None),
@@ -163,6 +232,11 @@ impl Transport for Link {
 
     fn remote(&self) -> Option<std::net::IpAddr> {
         *self.shared.remote.lock().unwrap()
+    }
+
+    fn rtt(&self) -> Option<std::time::Duration> {
+        let us = self.shared.rtt.load(std::sync::atomic::Ordering::SeqCst);
+        (us > 0).then(|| std::time::Duration::from_micros(us))
     }
 }
 
@@ -183,13 +257,15 @@ mod native {
     use str0m::net::{Protocol, Receive};
     use str0m::{Candidate, Event, IceConnectionState, Input, Output, Rtc};
 
-    use super::{binding, pieces, Error, Joiner, Link, Shared, LABEL};
+    use super::{binding, pieces, Error, Joiner, Link, Piece, Shared, LABEL};
     use crate::transport::Transport;
 
     /// How long a link may take to open.
     const OPENING: Duration = Duration::from_secs(15);
     /// The driver's longest sleep (queued sends wait at most this long).
     const TICK: Duration = Duration::from_millis(4);
+    /// The socket's receive buffer.
+    const RECV_BUFFER: usize = 4 << 20;
 
     fn rtc_err(e: impl std::fmt::Display) -> Error {
         Error::Rtc(e.to_string())
@@ -199,6 +275,8 @@ mod native {
     /// relay server) the public address it sees (ADR 0047 part 4).
     fn bind(rtc: &mut Rtc, stun: Option<SocketAddrV4>) -> Result<(UdpSocket, u16, Option<Ipv4Addr>), Error> {
         let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
+        // A big message's burst overflows Windows' 64 KiB default, and a lost packet waits out SCTP's 1 s retransmit.
+        let _ = socket2::SockRef::from(&socket).set_recv_buffer_size(RECV_BUFFER);
         let port = socket.local_addr()?.port();
         let lan = crate::portmap::local_ipv4(Ipv4Addr::new(192, 0, 2, 1)).ok().filter(|ip| !ip.is_loopback());
         for ip in [Some(Ipv4Addr::LOCALHOST), lan].into_iter().flatten() {
@@ -233,10 +311,11 @@ mod native {
         Rtc::builder().build(Instant::now())
     }
 
-    fn link(shared: Arc<Shared>, offer: &str, answer: &str) -> (Link, Receiver<Vec<u8>>, Sender<Vec<u8>>) {
+    fn link(shared: Arc<Shared>, offer: &str, answer: &str, socket: &UdpSocket, port: u16) -> (Link, Receiver<Vec<u8>>, Sender<Vec<u8>>) {
         let (out, out_rx) = mpsc::channel();
         let (inc_tx, inc) = mpsc::channel();
-        (Link { out, inc, shared, binding: binding(offer, answer) }, out_rx, inc_tx)
+        let wake = socket.try_clone().ok().map(|s| (s, port));
+        (Link { out, wake, inc, shared, binding: binding(offer, answer) }, out_rx, inc_tx)
     }
 
     /// Answer a browser's `offer` (its SDP): the answer's SDP for the service, and the link, open once the browser
@@ -247,7 +326,7 @@ mod native {
         let parsed = SdpOffer::from_sdp_string(offer).map_err(rtc_err)?;
         let answer = rtc.sdp_api().accept_offer(parsed).map_err(rtc_err)?.to_sdp_string();
         let shared = Arc::new(Shared::default());
-        let (l, out_rx, inc_tx) = link(shared.clone(), offer, &answer);
+        let (l, out_rx, inc_tx) = link(shared.clone(), offer, &answer, &socket, port);
         std::thread::spawn(move || drive(rtc, socket, port, lan, None, shared, out_rx, inc_tx));
         Ok((answer, l))
     }
@@ -264,7 +343,7 @@ mod native {
         let answer = post(service, &super::offer_path(session, pin), &offer)?;
         rtc.sdp_api().accept_answer(pending, SdpAnswer::from_sdp_string(&answer).map_err(rtc_err)?).map_err(rtc_err)?;
         let shared = Arc::new(Shared::default());
-        let (l, out_rx, inc_tx) = link(shared.clone(), &offer, &answer);
+        let (l, out_rx, inc_tx) = link(shared.clone(), &offer, &answer, &socket, port);
         std::thread::spawn(move || drive(rtc, socket, port, lan, Some(cid), shared, out_rx, inc_tx));
         let start = Instant::now();
         while !l.is_open() {
@@ -325,6 +404,10 @@ mod native {
                     }
                 }
             }
+            // A probe goes ahead of the queue (the other end takes it between a message's pieces).
+            if let Some(p) = shared.ping_due() {
+                queued.push_front(p);
+            }
             if let Some(mut ch) = cid.filter(|_| open).and_then(|c| rtc.channel(c)) {
                 while let Some(p) = queued.front() {
                     if !ch.write(true, p).map_err(rtc_err)? {
@@ -346,12 +429,16 @@ mod native {
                             open = true;
                             shared.open.store(true, Ordering::SeqCst);
                         }
-                        Event::ChannelData(d) => match joiner.push(&d.data) {
-                            Ok(Some(m)) => {
-                                let _ = inc.send(m);
-                            }
-                            Ok(None) => {}
-                            Err(e) => return Err(rtc_err(e)),
+                        Event::ChannelData(d) => match shared.take(&d.data) {
+                            Piece::Echo(p) => queued.push_front(p),
+                            Piece::Probe => {}
+                            Piece::Message => match joiner.push(&d.data) {
+                                Ok(Some(m)) => {
+                                    let _ = inc.send(m);
+                                }
+                                Ok(None) => {}
+                                Err(e) => return Err(rtc_err(e)),
+                            },
                         },
                         Event::ChannelClose(_) | Event::Closed | Event::IceConnectionStateChange(IceConnectionState::Disconnected) => return Ok(()),
                         _ => {}
@@ -370,6 +457,8 @@ mod native {
             }
             socket.set_read_timeout(Some(wait))?;
             match socket.recv_from(&mut buf) {
+                // A wake-up from the link (a message to send).
+                Ok((0, _)) => {}
                 Ok((n, source)) => {
                     // The address it came to: loopback from this machine's loopback, else the LAN candidate.
                     let ip = if source.ip().is_loopback() { Ipv4Addr::LOCALHOST } else { lan.unwrap_or(Ipv4Addr::LOCALHOST) };
@@ -409,7 +498,7 @@ mod web {
     use wasm_bindgen_futures::JsFuture;
     use web_sys::{MessageEvent, RtcConfiguration, RtcDataChannel, RtcDataChannelEvent, RtcDataChannelState, RtcDataChannelType, RtcIceServer, RtcPeerConnection, RtcSdpType, RtcSessionDescriptionInit};
 
-    use super::{binding, pieces, Error, Joiner, Link, Shared, LABEL};
+    use super::{binding, pieces, Error, Joiner, Link, Piece, Shared, LABEL};
     use crate::joincode::PIN_BYTES;
     use crate::rendezvous::{Refusal, Rendezvous, KEY_BYTES};
 
@@ -449,6 +538,15 @@ mod web {
                 }
             });
         }
+
+        /// One piece as it is (a probe).
+        pub fn send_piece(&self, b: &[u8]) {
+            PAGES.with(|m| {
+                if let Some(p) = m.borrow().get(&self.0) {
+                    let _ = p.dc.send_with_u8_array(b);
+                }
+            });
+        }
     }
 
     fn js(e: JsValue) -> Error {
@@ -472,13 +570,15 @@ mod web {
         RtcPeerConnection::new_with_configuration(&cfg).map_err(js)
     }
 
-    /// The whole local description once its candidates are in (no trickling): two seconds at most.
+    /// The local description once its candidates are in (no trickling): when gathering completes or the relay
+    /// server's STUN answer (the public candidate) is in, two seconds at most. Gathering can wait out a STUN request
+    /// on every other interface (IPv6, a VPN) first.
     async fn gathered(pc: &RtcPeerConnection) -> Result<String, Error> {
-        for _ in 0..40 {
-            if pc.ice_gathering_state() == web_sys::RtcIceGatheringState::Complete {
+        for _ in 0..100 {
+            if pc.ice_gathering_state() == web_sys::RtcIceGatheringState::Complete || pc.local_description().is_some_and(|d| d.sdp().contains(" typ srflx")) {
                 break;
             }
-            sleep(50).await;
+            sleep(20).await;
         }
         Ok(pc.local_description().ok_or_else(|| Error::Rtc("no description".into()))?.sdp())
     }
@@ -501,9 +601,17 @@ mod web {
         shared.open.store(dc.ready_state() == RtcDataChannelState::Open, Ordering::SeqCst);
         let (inc_tx, inc) = mpsc::channel();
         let mut joiner = Joiner::default();
-        let s = shared.clone();
+        let (s, echo) = (shared.clone(), dc.clone());
         let on_message = Closure::<dyn FnMut(MessageEvent)>::new(move |e: MessageEvent| {
             let b = js_sys::Uint8Array::new(&e.data()).to_vec();
+            match s.take(&b) {
+                Piece::Echo(p) => {
+                    let _ = echo.send_with_u8_array(&p);
+                    return;
+                }
+                Piece::Probe => return,
+                Piece::Message => {}
+            }
             match joiner.push(&b) {
                 Ok(Some(m)) => {
                     let _ = inc_tx.send(m);
@@ -703,6 +811,21 @@ mod tests {
             assert_eq!(got, vec![b]);
         }
         assert!(Joiner::default().push(&[]).is_err());
+    }
+
+    #[test]
+    fn a_probe_comes_back_as_its_echo_and_gives_the_round_trip() {
+        let (a, b) = (Shared::default(), Shared::default());
+        assert_eq!(a.ping_due(), None, "not before the channel is open");
+        a.open.store(true, std::sync::atomic::Ordering::SeqCst);
+        let ping = a.ping_due().unwrap();
+        assert_eq!(a.ping_due(), None, "one per PING_EVERY");
+        let Piece::Echo(pong) = b.take(&ping) else { panic!() };
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert_eq!(a.take(&pong), Piece::Probe);
+        let rtt = a.rtt.load(std::sync::atomic::Ordering::SeqCst);
+        assert!((5_000..1_000_000).contains(&rtt), "{rtt}");
+        assert_eq!(b.take(&pieces(b"x")[0]), Piece::Message);
     }
 
     #[test]

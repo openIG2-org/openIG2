@@ -73,6 +73,19 @@ in front of the service's TCP port (nginx, Caddy, Nginx Proxy Manager: a proxy h
 service counts its limits by the proxy's `X-Real-IP` (or last `X-Forwarded-For`) header, and ignores both from
 anyone else. A page served over plain HTTP still uses `http://<relay host>:<port>`.
 
+What travels where:
+
+| Players | Finding each other | The game itself |
+|---|---|---|
+| desktop and desktop | the service's room (UDP) | QUIC, directly (hole punched); through the service's relay when punching fails |
+| browser and desktop | the service's HTTP signalling, its STUN answers | a WebRTC data channel, directly between the two machines |
+| browser and browser | the same | the same |
+
+The service never carries a WebRTC game: when the two machines can't reach each other directly (both behind
+strict NATs), the browser player's connection doesn't come up ("no connection came up"); there is no relay for it
+yet. A browser game's speed is the direct path's: each end measures the round trip every half second and the input
+delay follows it, as over QUIC.
+
 ## The public game list
 The same service keeps a list of open games (ADR 0060); nothing extra to run or configure. A host lists its room by
 switching **Public list: yes** in the room (shown when a relay server is set; off by default, a private room is
@@ -98,4 +111,6 @@ certificate pin) nobody can look a room up.
 ## Testing locally
 `cargo test --release -p ig2-net --features quic --test relay` runs a service on 127.0.0.1 and plays a short
 lockstep game through it, relay-only. `ig2-client`'s `a_room_is_joined_through_the_relay` does the same through
-the MP screens; `a_public_room_is_browsed_and_joined_with_a_click` the public list.
+the MP screens; `a_public_room_is_browsed_and_joined_with_a_click` the public list. `cargo test --release -p
+ig2-net --features quic,webrtc --test webrtc` joins over WebRTC through a local service and checks the data channel's
+round trip, a 4 MiB message and the measured round trip (`a_data_channel_is_quick`).

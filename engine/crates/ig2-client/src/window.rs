@@ -299,6 +299,8 @@ struct App {
     quake_rand: crate::audio::Rand,
     /// The multiplayer wait overlay (`crate::mp_wait`).
     mp_wait: crate::mp_wait::Wait,
+    /// When the last frame was drawn (`now_ms`): a window that stopped drawing still runs a multiplayer game on.
+    drawn_ms: u32,
     /// The button whose press the top bar took (`top_bar`): its release is the bar's too.
     bar_held: Option<MouseButton>,
     /// The left button went down on the message line (spot 7) and is still held.
@@ -890,6 +892,7 @@ impl App {
             quake: None,
             quake_rand: crate::audio::Rand::seeded(),
             mp_wait: Default::default(),
+            drawn_ms: 0,
             bar_held: None,
             bar_line_held: false,
             bar_free_hold: false,
