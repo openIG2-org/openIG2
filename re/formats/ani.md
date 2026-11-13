@@ -69,5 +69,9 @@ it. Pixels never written are transparent in our decoder (the game starts from an
   the two lengths at +4/+6, and `OneFrame` (0x45da70) decodes from +10 or `Decode(packed_len)`; neither
   touches +8. Readers can ignore both fields.
 
+## Client status
+A pack's `hires/anim/fejek/<name>/<frame>.png` (`--make-pack --only heads`, ×4, ADR 0089 §4) is drawn by the
+diplomacy and spy screens in place of the decoded frames when the pack is enabled.
+
 ## Open
 - Playback rate: `InitAnim` takes `MaxFps` per call; the diplomacy and spy screens pass their own values (Phase 2).

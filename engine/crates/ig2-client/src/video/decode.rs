@@ -156,7 +156,7 @@ pub fn rgba(y: &DecodedYUV) -> Image {
 
 /// One pixel of `video_fragment.shader` from the sampled planes (0..=1 each).
 #[cfg(not(target_arch = "wasm32"))]
-fn shade(y: f32, cb: f32, cr: f32) -> [u8; 3] {
+pub(crate) fn shade(y: f32, cb: f32, cr: f32) -> [u8; 3] {
     let l = 1.1643 * (y - 0.0625);
     let (cb, cr) = (cb - 0.5, cr - 0.5);
     [l + 1.596 * cr, l - 0.391 * cb - 0.813 * cr, l + 2.018 * cb].map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)

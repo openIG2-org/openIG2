@@ -189,3 +189,5 @@ Captures: `tools/trace/run_video.py` (`video.js`: the title
 with `SDL_GetTicks` driven by the frame limiter, grabs at video times; `--open NAME [--at X,Y] [--once]` plays a clip
 in the screen) against `ig2-client --snapshot --screen video:NAME --video-ms T [--video-at X,Y] [--video-loop]`.
 In multiplayer the session keeps running under a video (`World::run_on`; multiplayer.md §7.2, deviations 412).
+A pack's `hires/<game path>.mp4` (`--make-pack --only videos`, ADR 0089 §4) plays in the original's place with the same
+frame count, timing and sound; the in-between frames (`--smooth`) are not built.

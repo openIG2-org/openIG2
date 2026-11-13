@@ -81,6 +81,37 @@ fn pack(install: &Install, path: &str) -> Option<Arc<Hires>> {
     })
 }
 
+/// The pack's picture of frame `i` of the talking head `path` (`anim/fejek/<name>.ani`): `hires/anim/fejek/<name>/<i>.png`
+/// (ADR 0089 §4).
+pub fn head_file(path: &str, i: usize) -> String {
+    format!("{PACK_DIR}{}/{i}.png", path.strip_suffix(".ani").unwrap_or(path))
+}
+
+/// A talking head's frames (`anim/fejek/<name>.ani`, re/formats/ani.md), each carrying an enabled pack's picture of it
+/// to draw in its place ([`head_file`]); `opaque` makes the pixels no frame wrote yet black. `None` when the file is
+/// missing or does not decode.
+pub fn head_frames(install: &Install, path: &str, opaque: bool) -> Option<Vec<Image>> {
+    let bytes = install.read(path).ok()?;
+    let ani = ig2_formats::ani::Ani::parse(&bytes).ok()?;
+    let (w, h) = (ani.width as u32, ani.height as u32);
+    let fix = |mut rgba: Vec<u8>| {
+        if opaque {
+            rgba.chunks_exact_mut(4).for_each(|p| p[3] = 255);
+        }
+        rgba
+    };
+    let packed = !install.mods().is_empty();
+    let frames = ani.frames().ok()?.into_iter().enumerate().map(|(i, f)| {
+        let hires = packed.then(|| install.read(&head_file(path, i)).ok()).flatten().and_then(|b| decode_png(&b).ok()).map(|mut hi| {
+            hi.rgba = fix(std::mem::take(&mut hi.rgba));
+            hi.upscaled = hi.width == w * 4 && hi.height == h * 4;
+            Arc::new(hi)
+        });
+        Image { width: w, height: h, rgba: fix(f.rgba), mips: Vec::new(), hires }
+    });
+    Some(frames.collect())
+}
+
 pub(crate) fn decode_png(bytes: &[u8]) -> Result<Hires, String> {
     let mut d = png::Decoder::new(std::io::Cursor::new(bytes));
     d.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16);

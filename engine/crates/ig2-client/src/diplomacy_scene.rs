@@ -132,22 +132,18 @@ impl DiplomacyScene {
         self.anims.entry(race).or_insert_with(|| {
             let Some(name) = rules.diplomacy_screen.head_anims.get(race as usize).filter(|n| n.ends_with(".ani")) else { return Vec::new() };
             let path = format!("anim/fejek/{name}");
-            let Ok(bytes) = install.read(&path) else {
+            let Some(frames) = crate::upscale::head_frames(install, &path, false) else {
                 eprintln!("ig2-client: {path}: missing");
                 return Vec::new();
             };
-            let Ok(ani) = ig2_formats::ani::Ani::parse(&bytes) else { return Vec::new() };
-            let (w, h) = (ani.width as u32, ani.height as u32);
-            let frames = ani.frames().unwrap_or_default();
             if let Some(dir) = std::env::var_os("IG2_DIP_DUMP") {
                 for (i, f) in frames.iter().enumerate().filter(|(i, _)| i % 25 == 0) {
-                    let _ = crate::assets::write_png(&std::path::Path::new(&dir).join(format!("ani-{race}-{i}.png")), w, h, &f.rgba);
+                    let _ = crate::assets::write_png(&std::path::Path::new(&dir).join(format!("ani-{race}-{i}.png")), f.width, f.height, &f.rgba);
                 }
             }
             // `PlayAnimVector` (ELF 0x45ea70) uploads the frames as they are; the scan lines are the `VIDEO` material's
             // (re/screens/render.md §3).
-            frames.into_iter().map(|f| r.add_texture(&Image { width: w, height: h, rgba: f.rgba, mips: Vec::new(), hires: None }))
-                .collect()
+            frames.iter().map(|f| r.add_texture(f)).collect()
         })
     }
 

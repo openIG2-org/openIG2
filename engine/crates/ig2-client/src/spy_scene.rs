@@ -621,23 +621,9 @@ impl HeadVideo {
     pub fn load(install: &Install, race: u8) -> Self {
         let file = HEADS.get(if race == 0 { 16 } else { race as usize - 1 }).copied().unwrap_or("");
         let name = format!("anim/fejek/{file}");
-        let frames: Vec<crate::assets::Image> = install
-            .read(&name)
-            .ok()
-            .and_then(|b| {
-                let ani = ig2_formats::ani::Ani::parse(&b).ok()?;
-                let (w, h) = (ani.width as u32, ani.height as u32);
-                // An opaque texture: pixels no frame wrote yet are black. `PlayAnimVector` (ELF 0x45ea70) uploads the
-                // frames as they are; the stripes are the `VIDEO` material's (re/screens/render.md §3).
-                let opaque = |mut rgba: Vec<u8>| {
-                    for p in rgba.chunks_exact_mut(4) {
-                        p[3] = 255;
-                    }
-                    rgba
-                };
-                Some(ani.frames().ok()?.into_iter().map(|f| crate::assets::Image { width: w, height: h, rgba: opaque(f.rgba), mips: Vec::new(), hires: None }).collect())
-            })
-            .unwrap_or_default();
+        // An opaque texture: pixels no frame wrote yet are black. `PlayAnimVector` (ELF 0x45ea70) uploads the frames as
+        // they are; the stripes are the `VIDEO` material's (re/screens/render.md §3).
+        let frames = crate::upscale::head_frames(install, &name, true).unwrap_or_default();
         Self { frames, shown: None }
     }
 

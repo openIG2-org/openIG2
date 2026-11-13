@@ -357,6 +357,216 @@ fn esds_config(b: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
+/// One track for [`write`].
+pub struct TrackOut<'a> {
+    pub timescale: u32,
+    /// `Avc` (its `nal_length_size` is that of the samples) or `Aac`.
+    pub codec: Codec,
+    pub samples: Vec<SampleOut<'a>>,
+}
+
+/// One sample for [`write`]: its bytes (length-prefixed NAL units for video), its duration in the track's timescale,
+/// whether it is a key frame, and its place in the file (samples of both tracks are laid out by `order`, so a copy
+/// keeps its original's interleave: the player's sound start depends on it, `re/screens/video.md` §4).
+pub struct SampleOut<'a> {
+    pub data: &'a [u8],
+    pub duration: u32,
+    pub sync: bool,
+    pub order: u64,
+}
+
+fn put_box(out: &mut Vec<u8>, kind: &[u8; 4], body: impl FnOnce(&mut Vec<u8>)) {
+    let at = out.len();
+    out.extend_from_slice(&[0, 0, 0, 0]);
+    out.extend_from_slice(kind);
+    body(out);
+    let size = (out.len() - at) as u32;
+    out[at..at + 4].copy_from_slice(&size.to_be_bytes());
+}
+
+fn full_box(out: &mut Vec<u8>, kind: &[u8; 4], flags: u32, body: impl FnOnce(&mut Vec<u8>)) {
+    put_box(out, kind, |o| {
+        o.extend_from_slice(&flags.to_be_bytes());
+        body(o)
+    });
+}
+
+fn be(out: &mut Vec<u8>, words: &[u32]) {
+    out.extend(words.iter().flat_map(|w| w.to_be_bytes()));
+}
+
+/// The identity matrix of `mvhd` and `tkhd`.
+const MATRIX: [u32; 9] = [0x10000, 0, 0, 0, 0x10000, 0, 0, 0, 0x4000_0000];
+
+/// Writes an `.mp4` of the remaster's layout: one AVC track and an optional AAC track, `ftyp`, `mdat` (each sample a
+/// chunk, in `order`), then `moov` with 64-bit chunk offsets. What [`parse`] reads back sample for sample; no edit
+/// lists, no composition offsets (the samples are in display order).
+pub fn write(video: &TrackOut, audio: Option<&TrackOut>) -> Result<Vec<u8>> {
+    let tracks: Vec<&TrackOut> = std::iter::once(video).chain(audio).collect();
+    let mut out = Vec::new();
+    put_box(&mut out, b"ftyp", |o| {
+        o.extend_from_slice(b"isom");
+        be(o, &[0x200]);
+        o.extend_from_slice(b"isomiso2avc1mp41");
+    });
+    // The media data, both tracks' samples by `order`; each sample's offset kept for its `co64`.
+    let mut order: Vec<(u64, usize, usize)> =
+        tracks.iter().enumerate().flat_map(|(t, tr)| tr.samples.iter().enumerate().map(move |(i, s)| (s.order, t, i))).collect();
+    order.sort_unstable();
+    let body: u64 = tracks.iter().flat_map(|t| &t.samples).map(|s| s.data.len() as u64).sum();
+    if body + 8 > u32::MAX as u64 {
+        return Err(format_err("mp4", "media data past 4 GB"));
+    }
+    let mut offsets: Vec<Vec<u64>> = tracks.iter().map(|t| vec![0; t.samples.len()]).collect();
+    put_box(&mut out, b"mdat", |o| {
+        for &(_, t, i) in &order {
+            offsets[t][i] = o.len() as u64;
+            o.extend_from_slice(tracks[t].samples[i].data);
+        }
+    });
+    let duration = |t: &TrackOut| t.samples.iter().map(|s| s.duration as u64).sum::<u64>();
+    // Movie time in milliseconds.
+    let movie = |t: &TrackOut| (duration(t) * 1000).checked_div(t.timescale as u64).unwrap_or(0) as u32;
+    let mut err = None;
+    put_box(&mut out, b"moov", |o| {
+        full_box(o, b"mvhd", 0, |o| {
+            be(o, &[0, 0, 1000, tracks.iter().map(|t| movie(t)).max().unwrap_or(0), 0x10000]);
+            o.extend_from_slice(&[1, 0, 0, 0]); // volume 1.0, reserved
+            be(o, &[0, 0]);
+            be(o, &MATRIX);
+            be(o, &[0; 6]);
+            be(o, &[tracks.len() as u32 + 1]);
+        });
+        for (k, t) in tracks.iter().enumerate() {
+            let sound = matches!(t.codec, Codec::Aac { .. });
+            let (w, h) = match t.codec {
+                Codec::Avc { width, height, .. } => (width as u32, height as u32),
+                _ => (0, 0),
+            };
+            put_box(o, b"trak", |o| {
+                full_box(o, b"tkhd", 3, |o| {
+                    be(o, &[0, 0, k as u32 + 1, 0, movie(t), 0, 0, 0]);
+                    be(o, &[if sound { 0x0100_0000 } else { 0 }]); // alternate group 0, volume, reserved
+                    be(o, &MATRIX);
+                    be(o, &[w << 16, h << 16]);
+                });
+                put_box(o, b"mdia", |o| {
+                    full_box(o, b"mdhd", 0, |o| {
+                        be(o, &[0, 0, t.timescale, duration(t) as u32]);
+                        be(o, &[0x55c4_0000]); // "und", pre-defined
+                    });
+                    full_box(o, b"hdlr", 0, |o| {
+                        be(o, &[0]);
+                        o.extend_from_slice(if sound { b"soun" } else { b"vide" });
+                        be(o, &[0, 0, 0]);
+                        o.push(0);
+                    });
+                    put_box(o, b"minf", |o| {
+                        if sound {
+                            full_box(o, b"smhd", 0, |o| be(o, &[0]));
+                        } else {
+                            full_box(o, b"vmhd", 1, |o| be(o, &[0, 0]));
+                        }
+                        put_box(o, b"dinf", |o| full_box(o, b"dref", 0, |o| {
+                            be(o, &[1]);
+                            full_box(o, b"url ", 1, |_| ());
+                        }));
+                        put_box(o, b"stbl", |o| {
+                            if let Err(e) = write_stsd(o, &t.codec) {
+                                err = Some(e);
+                            }
+                            full_box(o, b"stts", 0, |o| {
+                                let mut runs: Vec<(u32, u32)> = Vec::new();
+                                for s in &t.samples {
+                                    match runs.last_mut() {
+                                        Some((n, d)) if *d == s.duration => *n += 1,
+                                        _ => runs.push((1, s.duration)),
+                                    }
+                                }
+                                be(o, &[runs.len() as u32]);
+                                runs.iter().for_each(|&(n, d)| be(o, &[n, d]));
+                            });
+                            if t.samples.iter().any(|s| !s.sync) {
+                                full_box(o, b"stss", 0, |o| {
+                                    let keys: Vec<u32> = (1..).zip(&t.samples).filter(|(_, s)| s.sync).map(|(i, _)| i).collect();
+                                    be(o, &[keys.len() as u32]);
+                                    be(o, &keys);
+                                });
+                            }
+                            full_box(o, b"stsz", 0, |o| {
+                                be(o, &[0, t.samples.len() as u32]);
+                                t.samples.iter().for_each(|s| be(o, &[s.data.len() as u32]));
+                            });
+                            full_box(o, b"stsc", 0, |o| be(o, &[1, 1, 1, 1]));
+                            full_box(o, b"co64", 0, |o| {
+                                be(o, &[t.samples.len() as u32]);
+                                offsets[k].iter().for_each(|&p| o.extend_from_slice(&p.to_be_bytes()));
+                            });
+                        });
+                    });
+                });
+            });
+        }
+    });
+    err.map_or(Ok(out), Err)
+}
+
+/// The sample description: `avc1` + `avcC` (from the first SPS's profile and level) or `mp4a` + `esds`.
+fn write_stsd(o: &mut Vec<u8>, codec: &Codec) -> Result<()> {
+    let mut res = Ok(());
+    full_box(o, b"stsd", 0, |o| {
+        be(o, &[1]);
+        match codec {
+            Codec::Avc { width, height, nal_length_size, sps, pps } => put_box(o, b"avc1", |o| {
+                o.extend_from_slice(&[0; 6]);
+                o.extend_from_slice(&1u16.to_be_bytes());
+                o.extend_from_slice(&[0; 16]);
+                o.extend_from_slice(&width.to_be_bytes());
+                o.extend_from_slice(&height.to_be_bytes());
+                be(o, &[0x48_0000, 0x48_0000, 0]);
+                o.extend_from_slice(&1u16.to_be_bytes());
+                o.extend_from_slice(&[0; 32]);
+                o.extend_from_slice(&[0, 0x18, 0xff, 0xff]);
+                put_box(o, b"avcC", |o| {
+                    let Some(first) = sps.first().filter(|s| s.len() >= 4) else {
+                        res = Err(format_err("mp4", "no SPS"));
+                        return;
+                    };
+                    o.extend_from_slice(&[1, first[1], first[2], first[3], 0xfc | (nal_length_size - 1), 0xe0 | sps.len() as u8]);
+                    for set in sps {
+                        o.extend_from_slice(&(set.len() as u16).to_be_bytes());
+                        o.extend_from_slice(set);
+                    }
+                    o.push(pps.len() as u8);
+                    for set in pps {
+                        o.extend_from_slice(&(set.len() as u16).to_be_bytes());
+                        o.extend_from_slice(set);
+                    }
+                });
+            }),
+            Codec::Aac { sample_rate, channels, config } => put_box(o, b"mp4a", |o| {
+                o.extend_from_slice(&[0; 6]);
+                o.extend_from_slice(&1u16.to_be_bytes());
+                o.extend_from_slice(&[0; 8]);
+                o.extend_from_slice(&channels.to_be_bytes());
+                o.extend_from_slice(&[0, 16, 0, 0, 0, 0]);
+                be(o, &[sample_rate << 16]);
+                full_box(o, b"esds", 0, |o| {
+                    // ES (3) ⊃ DecoderConfig (4: AAC, audio stream) ⊃ DecoderSpecificInfo (5), then SLConfig (6).
+                    let n = config.len() as u8;
+                    o.extend_from_slice(&[3, 23 + n, 0, 1, 0, 4, 15 + n, 0x40, 0x15, 0, 0, 0]);
+                    be(o, &[0, 0]);
+                    o.extend_from_slice(&[5, n]);
+                    o.extend_from_slice(config);
+                    o.extend_from_slice(&[6, 1, 2]);
+                });
+            }),
+            Codec::Other(k) => res = Err(format_err("mp4", format!("cannot write {:?}", String::from_utf8_lossy(k)))),
+        }
+    });
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -417,6 +627,42 @@ mod tests {
         stbl[big..big + 8].copy_from_slice(&words(&[1, u32::MAX]));
         let mdia = [bx(b"mdhd", &mdhd), bx(b"minf", &bx(b"stbl", &stbl))].concat();
         assert!(parse_trak(&bx(b"mdia", &mdia), 1000).is_err());
+    }
+
+    /// What [`write`] lays out, [`parse`] reads back: the codecs, every sample's bytes, decode time and key-frame flag,
+    /// both tracks interleaved by `order`.
+    #[test]
+    fn writer_round_trip() {
+        let frames: Vec<Vec<u8>> = (0..7u8).map(|i| vec![i; 10 + i as usize]).collect();
+        let sounds: Vec<Vec<u8>> = (0..5u8).map(|i| vec![0x80 | i; 3 + i as usize]).collect();
+        let (sps, pps) = (vec![0x67, 66, 0xc0, 31, 1, 2], vec![0x68, 9]);
+        let video = TrackOut {
+            timescale: 12800,
+            codec: Codec::Avc { width: 1280, height: 800, nal_length_size: 4, sps: vec![sps.clone()], pps: vec![pps.clone()] },
+            samples: frames.iter().enumerate().map(|(i, d)| SampleOut { data: d, duration: 512, sync: i % 3 == 0, order: i as u64 * 10 }).collect(),
+        };
+        let audio = TrackOut {
+            timescale: 44100,
+            codec: Codec::Aac { sample_rate: 44100, channels: 2, config: vec![0x12, 0x10] },
+            samples: sounds.iter().enumerate().map(|(i, d)| SampleOut { data: d, duration: 1024, sync: true, order: i as u64 * 10 + 25 }).collect(),
+        };
+        let file = write(&video, Some(&audio)).unwrap();
+        let m = parse(&file).unwrap();
+        let (v, a) = (m.video.unwrap(), m.audio.unwrap());
+        assert!(matches!(&v.codec, Codec::Avc { width: 1280, height: 800, nal_length_size: 4, sps: s, pps: p } if *s == [sps.clone()] && *p == [pps.clone()]));
+        assert!(matches!(&a.codec, Codec::Aac { sample_rate: 44100, channels: 2, config } if config == &[0x12, 0x10]));
+        assert_eq!((v.timescale, v.duration, a.timescale, a.duration), (12800, 7 * 512, 44100, 5 * 1024));
+        for (i, s) in v.samples.iter().enumerate() {
+            assert_eq!((v.data(&file, s).unwrap(), s.dts, s.cts, s.sync), (&frames[i][..], i as u64 * 512, 0, i % 3 == 0));
+        }
+        for (i, s) in a.samples.iter().enumerate() {
+            assert_eq!((a.data(&file, s).unwrap(), s.dts), (&sounds[i][..], i as u64 * 1024));
+        }
+        // Frames 0–2 come before the first sound, as their `order` says.
+        assert_eq!(v.samples.iter().filter(|s| s.offset < a.samples[0].offset).count(), 3);
+        // A track of key frames only has no `stss`; every sample still reads as one.
+        let keys = TrackOut { samples: video.samples.iter().map(|s| SampleOut { sync: true, ..*s }).collect(), ..video };
+        assert!(parse(&write(&keys, None).unwrap()).unwrap().video.unwrap().samples.iter().all(|s| s.sync));
     }
 
     /// Every video in the user's install demuxes: an AVC track, and AAC except the race-choice loops.

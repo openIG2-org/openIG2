@@ -1,11 +1,14 @@
 //! `openIG2 --make-pack`: a texture pack (ADR 0054 §5) made from the player's own install on their machine (ADR 0088
 //! §5–6, row 567). Every install texture the client draws, upscaled, as `mods/<name>/hires/<game path>.png`; the pack
 //! derives from the game's files, so it is never shared (the mod index carries none). ADR 0089 makes it the HD pack:
-//! stages (`--only`), the quality model (Real-ESRGAN x4plus), the fidelity lock, seamless wrapped textures.
+//! stages (`--only`), the quality model (Real-ESRGAN x4plus), the fidelity lock, seamless wrapped textures, the
+//! videos re-encoded at ×2 and the talking heads at ×4.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use ig2_formats::mp4::{self, Codec, SampleOut, Track, TrackOut};
 use ig2_formats::pvr::Pvr;
 use ig2_formats::vfs::{Mod, MOD_FILE};
 use ig2_formats::xv::{Archive, Material, Mesh};
@@ -13,7 +16,8 @@ use ig2_formats::Install;
 
 use crate::assets::Image;
 use crate::learned::{self, rrdb, Gpu, Model, Upscaler};
-use crate::upscale::{self, PACK_DIR};
+use crate::upscale::{self, head_file, PACK_DIR};
+use crate::video::decode::{Clip, Frames};
 
 /// The pack's folder name under the mods folder.
 pub const NAME: &str = "texture-pack";
@@ -26,16 +30,30 @@ const USAGE: &str = "usage: --make-pack [--out <mod folder>] [--only pictures|vi
 
 /// The pack's parts (ADR 0089 §1), each made alone by `--only`, and whether this version makes it (rows 571–573
 /// add the others).
-const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", false), ("heads", false), ("font", false), ("maps", false)];
+const STAGES: &[(&str, bool)] = &[("pictures", true), ("videos", true), ("heads", true), ("font", false), ("maps", false)];
+
+/// The videos' factor unless `--factor` says (ADR 0089 §4); the pictures' is 4, the talking heads' always 4.
+const VIDEO_FACTOR: u8 = 2;
+/// A pack video's bit rate over the original's per pixel. OpenH264's Baseline needs more than the original's High
+/// profile: at 1 its rate control starves fast motion (`misc/end_x.mp4` at ×2: 5.7 levels a channel off on
+/// average in its worst frame), at 2 the worst frame is 2.8 off and the file about 4.5 times the original's.
+const BITRATE: f64 = 2.0;
+/// A key frame at least this often in a pack's video (10 s at 25 fps).
+const KEY_EVERY: u32 = 250;
+/// The talking heads (re/formats/ani.md).
+const HEADS: &str = "anim/fejek/";
 
 /// Each source texel's colour must survive the upscale within this many levels a channel (ADR 0089 §2).
 const LOCK: f32 = 2.0;
+/// The lock's rounds at most: two smooth ones, the rest by blocks.
+const MAX_ROUNDS: usize = 8;
 /// Texels of the opposite side added around a texture the models tile before it is upscaled (ADR 0089 §3).
 const WRAP_PAD: usize = 16;
 
 struct Args {
     out: Option<PathBuf>,
-    factor: u8,
+    /// `--factor`: the pictures' and videos' (else 4 and [`VIDEO_FACTOR`]).
+    factor: Option<u8>,
     /// The one stage to make; every made one when `None`.
     only: Option<&'static str>,
     prefix: String,
@@ -47,13 +65,13 @@ struct Args {
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
-    let mut a = Args { out: None, factor: 4, only: None, prefix: String::new(), force: false, fast: false, filters_only: false };
+    let mut a = Args { out: None, factor: None, only: None, prefix: String::new(), force: false, fast: false, filters_only: false };
     let mut it = args.iter();
     while let Some(k) = it.next() {
         let mut val = || it.next().cloned().ok_or_else(|| format!("{k}: a value\n{USAGE}"));
         match k.as_str() {
             "--out" => a.out = Some(val()?.into()),
-            "--factor" => a.factor = val()?.parse().ok().filter(|f| matches!(f, 2 | 4)).ok_or("--factor: 2 or 4")?,
+            "--factor" => a.factor = Some(val()?.parse().ok().filter(|f| matches!(f, 2 | 4)).ok_or("--factor: 2 or 4")?),
             "--only" => {
                 let v = val()?.to_ascii_lowercase();
                 a.only = Some(STAGES.iter().map(|s| s.0).find(|s| *s == v).ok_or(format!("--only {v}: not a stage\n{USAGE}"))?);
@@ -237,8 +255,9 @@ fn picture(img: &Image, f: u8, model: Option<&dyn Upscaler>, wrap: (bool, bool))
 
 /// The fidelity lock (ADR 0089 §2): `out` (RGBA, `w·f` × `h·f`) box-downscaled by `f` must match the source `src`
 /// (RGBA, `w` × `h`) within ±[`LOCK`] levels per colour channel wherever the source shows (alpha > 0). Where it does
-/// not, the difference is added back (iterative back-projection): two rounds spread smoothly (bilinear), a third
-/// over each texel's block, which settles it. Alpha stays as the filter made it. Returns the rounds used.
+/// not, the difference is added back (iterative back-projection): two rounds spread smoothly (bilinear), then over
+/// each texel's block until it settles (more than one only where texels sit at 0 or 255 and the rest take up the
+/// difference). Alpha stays as the filter made it. Returns the rounds used.
 pub fn lock(src: &[u8], w: usize, h: usize, f: usize, out: &mut [u8]) -> usize {
     let ow = w * f;
     let mut hr: Vec<f32> = out.iter().map(|&v| v as f32).collect();
@@ -260,7 +279,7 @@ pub fn lock(src: &[u8], w: usize, h: usize, f: usize, out: &mut [u8]) -> usize {
                 }
             }
         }
-        if worst <= LOCK || rounds == 3 {
+        if worst <= LOCK || rounds == MAX_ROUNDS {
             break;
         }
         rounds += 1;
@@ -306,20 +325,264 @@ fn learned_model(fast: bool) -> Option<Box<dyn Upscaler>> {
             Err(e) => println!("{e}: the compact model instead"),
         }
     }
+    compact_model()
+}
+
+/// Real-ESRGAN's compact model on the graphics card (also the videos' model, ADR 0089 §4), else `None` (said why).
+fn compact_model() -> Option<Box<dyn Upscaler>> {
     let Some(path) = learned::default_path() else {
-        println!("no models/{} beside openIG2: the scene textures get the smooth filter", learned::MODEL_FILE);
+        println!("no models/{} beside openIG2: the smooth filter instead", learned::MODEL_FILE);
         return None;
     };
     match Model::load(&path).and_then(|m| Gpu::new(&m)) {
         Ok(g) => {
-            println!("scene textures: Real-ESRGAN compact ({}) on the graphics card", learned::MODEL_FILE);
+            println!("Real-ESRGAN compact ({}) on the graphics card", learned::MODEL_FILE);
             Some(Box::new(g))
         }
         Err(e) => {
-            println!("{e}: the scene textures get the smooth filter");
+            println!("{e}: the smooth filter instead");
             None
         }
     }
+}
+
+/// The pack's folder and, when it has none yet, its `mod.toml` (a videos or heads run before the pictures').
+fn prepare(out: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let file = out.join(MOD_FILE);
+    if file.is_file() {
+        return Ok(());
+    }
+    std::fs::write(&file, mod_toml(4)).map_err(|e| format!("{}: {e}", file.display()))
+}
+
+/// `file` made by `write` as a `.part` beside it, then renamed: a stopped run leaves no half file a later run would keep.
+fn write_whole(file: &Path, write: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+    let mut part = file.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
+    write(&part)?;
+    std::fs::rename(&part, file).map_err(|e| e.to_string())
+}
+
+/// The install's videos under `prefix`: every `anim/mpeg4/*.mp4`, sorted.
+fn videos<'a>(install: &'a Install, prefix: &str) -> Vec<&'a str> {
+    let mut v: Vec<&str> =
+        install.all_files().into_iter().filter(|p| p.starts_with("anim/mpeg4/") && p.ends_with(".mp4") && p.starts_with(prefix)).collect();
+    v.sort_unstable();
+    v
+}
+
+/// The bytes of the file at `p` (0 when there is none).
+fn size_of(p: &Path) -> u64 {
+    std::fs::metadata(p).map_or(0, |m| m.len())
+}
+
+/// The videos stage (ADR 0089 §4): every video's frames at `f` as `hires/<game path>.mp4`; returns (written, kept,
+/// failed).
+pub fn make_videos(install: &Install, out: &Path, f: u8, prefix: &str, force: bool, model: Option<&dyn Upscaler>) -> Result<(usize, usize, usize), String> {
+    prepare(out)?;
+    let file = |p: &str| out.join(PACK_DIR).join(p);
+    let (list, made): (Vec<&str>, Vec<&str>) = videos(install, prefix).into_iter().partition(|p| force || !file(p).is_file());
+    // The bit rate grows with the area (`encode_video`).
+    let size = |p: &str| install.read_raw(p).map_or(0, |b| b.len() as u64);
+    check_space(out, (list.iter().map(|p| size(p)).sum::<u64>() as f64 * (f as f64 * f as f64) * BITRATE) as u64)?;
+    let (mut written, mut failed) = (0, 0);
+    for (i, path) in list.iter().enumerate() {
+        let started = std::time::Instant::now();
+        let result = install
+            .read(path)
+            .map_err(|e| e.to_string())
+            .and_then(Clip::new)
+            .and_then(|clip| encode_video(Arc::new(clip), f, model))
+            .and_then(|(bytes, frames)| write_whole(&file(path), |p| std::fs::write(p, &bytes).map_err(|e| e.to_string())).map(|()| frames));
+        match result {
+            Ok(frames) => {
+                written += 1;
+                println!("{}/{} {path}: {frames} frames, {} kB, in {:.0} s", i + 1, list.len(), size_of(&file(path)) / 1024, started.elapsed().as_secs_f32());
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("{path}: {e}");
+            }
+        }
+    }
+    Ok((written, made.len(), failed))
+}
+
+/// One frame of a video at `f` for the pack: the learned model when there is one (its 4× halved for 2×), else
+/// Catmull-Rom; held to the original's colours (ADR 0089 §2).
+fn video_frame(img: &Image, f: u8, model: Option<&dyn Upscaler>) -> Vec<u8> {
+    let (w, h, fu) = (img.width as usize, img.height as usize, f as usize);
+    let mut out = match model {
+        Some(m) => {
+            let x4 = m.upscale(&img.rgba, w, h, &vec![255; w * h * 64]);
+            if f == 4 { x4 } else { halve(&x4, w * 4, h * 4) }
+        }
+        None => upscale::cubic(&img.rgba, w, h, fu),
+    };
+    lock(&img.rgba, w, h, fu, &mut out);
+    out
+}
+
+/// RGBA → Y′CbCr 4:2:0 (`w`, `h` even), the exact inverse of the player's `video_fragment.shader` arithmetic
+/// (`video::decode::rgba`), so a frame plays back in the colours it was given; each chroma the mean of its 2 × 2.
+fn yuv420(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
+    const KB: f32 = 0.391 / 2.018;
+    const KR: f32 = 0.813 / 1.596;
+    let px = |i: usize| {
+        let [r, g, b] = [0, 1, 2].map(|c| rgba[i * 4 + c] as f32 / 255.0);
+        let l = (g + KB * b + KR * r) / (1.0 + KB + KR);
+        [l / 1.1643 + 0.0625, (b - l) / 2.018 + 0.5, (r - l) / 1.596 + 0.5]
+    };
+    let q = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
+    let mut out = vec![0u8; w * h * 3 / 2];
+    let (luma, chroma) = out.split_at_mut(w * h);
+    let (cb, cr) = chroma.split_at_mut(w * h / 4);
+    for (i, y) in luma.iter_mut().enumerate() {
+        *y = q(px(i)[0]);
+    }
+    for cy in 0..h / 2 {
+        for cx in 0..w / 2 {
+            let sum = (0..4).map(|k| px((2 * cy + k / 2) * w + 2 * cx + k % 2)).fold([0.0; 2], |a, p| [a[0] + p[1], a[1] + p[2]]);
+            cb[cy * w / 2 + cx] = q(sum[0] / 4.0);
+            cr[cy * w / 2 + cx] = q(sum[1] / 4.0);
+        }
+    }
+    out
+}
+
+/// OpenH264's encoder with every frame kept (no skipping), the parameter sets taken out of the stream for `avcC`.
+struct H264 {
+    enc: openh264::encoder::Encoder,
+    sps: Vec<Vec<u8>>,
+    pps: Vec<Vec<u8>>,
+}
+
+impl H264 {
+    fn new(fps: f32, bps: u32) -> Result<Self, String> {
+        use openh264::encoder::{BitRate, EncoderConfig, FrameRate, IntraFramePeriod, RateControlMode};
+        let cfg = EncoderConfig::new()
+            .bitrate(BitRate::from_bps(bps))
+            .max_frame_rate(FrameRate::from_hz(fps))
+            .rate_control_mode(RateControlMode::Bitrate)
+            .skip_frames(false)
+            .intra_frame_period(IntraFramePeriod::from_num_frames(KEY_EVERY));
+        let enc = openh264::encoder::Encoder::with_api_config(openh264::OpenH264API::from_source(), cfg).map_err(|e| e.to_string())?;
+        Ok(Self { enc, sps: Vec::new(), pps: Vec::new() })
+    }
+
+    /// One frame (RGBA, `w` × `h`): its sample (4-byte length-prefixed NAL units) and whether it is a key frame.
+    fn frame(&mut self, rgba: &[u8], w: usize, h: usize) -> Result<(Vec<u8>, bool), String> {
+        let yuv = openh264::formats::YUVBuffer::from_vec(yuv420(rgba, w, h), w, h);
+        let bs = self.enc.encode(&yuv).map_err(|e| e.to_string())?;
+        let mut sample = Vec::new();
+        for layer in (0..bs.num_layers()).filter_map(|i| bs.layer(i)) {
+            for nal in (0..layer.nal_count()).filter_map(|j| layer.nal_unit(j)) {
+                // Each unit comes with its Annex B start code.
+                let nal = nal.iter().position(|&b| b != 0).filter(|&i| nal[i] == 1).map_or(nal, |i| &nal[i + 1..]);
+                match nal.first().map(|b| b & 0x1f) {
+                    Some(7) if self.sps.is_empty() => self.sps.push(nal.to_vec()),
+                    Some(8) if self.pps.is_empty() => self.pps.push(nal.to_vec()),
+                    Some(7 | 8) | None => {}
+                    Some(_) => {
+                        sample.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+                        sample.extend_from_slice(nal);
+                    }
+                }
+            }
+        }
+        if sample.is_empty() {
+            return Err("a frame came out empty".into());
+        }
+        Ok((sample, bs.frame_type() == openh264::encoder::FrameType::IDR))
+    }
+}
+
+/// Each sample's duration from the decode times, the last's from the track's length (else its predecessor's).
+fn durations(t: &Track) -> Vec<u32> {
+    let s = &t.samples;
+    let mut d: Vec<u32> = s.windows(2).map(|w| (w[1].dts - w[0].dts) as u32).collect();
+    let last = s.last().map(|l| t.duration.saturating_sub(l.dts) as u32).filter(|&v| v > 0).or(d.last().copied()).unwrap_or(1);
+    d.extend((!s.is_empty()).then_some(last));
+    d
+}
+
+/// `clip` at `f` (ADR 0089 §4): every frame upscaled and held to its colours, encoded H.264 at the original's bit rate
+/// times the area times [`BITRATE`]; the same frame count and timing, the sound's samples copied, both laid out in the original's
+/// interleave (the sound's start depends on it). Returns the file and its frame count.
+fn encode_video(clip: Arc<Clip>, f: u8, model: Option<&dyn Upscaler>) -> Result<(Vec<u8>, usize), String> {
+    let src = clip.video();
+    let (w, h) = (clip.size().0 as usize * f as usize, clip.size().1 as usize * f as usize);
+    let n = src.samples.len();
+    let secs = (n as f64 / clip.fps() as f64).max(0.04);
+    let bits = src.samples.iter().map(|s| s.size as f64 * 8.0).sum::<f64>();
+    let bps = (bits / secs * (f as f64 * f as f64) * BITRATE).clamp(200e3, 100e6) as u32;
+    let mut enc = H264::new(clip.fps(), bps)?;
+    let mut frames = Frames::new(clip.clone())?;
+    let mut coded: Vec<(Vec<u8>, bool)> = Vec::with_capacity(n);
+    while let Some(img) = frames.next_frame() {
+        coded.push(enc.frame(&video_frame(&img, f, model), w, h)?);
+    }
+    if coded.len() != n {
+        return Err(format!("{} of {n} frames decoded", coded.len()));
+    }
+    let codec = Codec::Avc { width: w as u16, height: h as u16, nal_length_size: 4, sps: enc.sps, pps: enc.pps };
+    let samples = coded.iter().zip(src.samples.iter().zip(durations(src))).map(|((data, sync), (s, duration))| SampleOut { data, duration, sync: *sync, order: s.offset });
+    let video = TrackOut { timescale: src.timescale, codec, samples: samples.collect() };
+    let audio = match &clip.mp4.audio {
+        Some(a) => {
+            let samples = a.samples.iter().zip(durations(a)).map(|(s, duration)| Ok(SampleOut { data: a.data(&clip.data, s)?, duration, sync: true, order: s.offset }));
+            Some(TrackOut { timescale: a.timescale, codec: a.codec.clone(), samples: samples.collect::<ig2_formats::Result<_>>().map_err(|e| e.to_string())? })
+        }
+        None => None,
+    };
+    Ok((mp4::write(&video, audio.as_ref()).map_err(|e| e.to_string())?, n))
+}
+
+/// The install's talking heads under `prefix`, sorted.
+fn heads<'a>(install: &'a Install, prefix: &str) -> Vec<&'a str> {
+    let mut v: Vec<&str> = install.all_files().into_iter().filter(|p| p.starts_with(HEADS) && p.ends_with(".ani") && p.starts_with(prefix)).collect();
+    v.sort_unstable();
+    v
+}
+
+/// The heads stage (ADR 0089 §4): every frame of every talking head ×4, held to its colours, as [`head_file`]s; a
+/// head counts as made once its last frame is there. Returns (written, kept, failed).
+pub fn make_heads(install: &Install, out: &Path, prefix: &str, force: bool, model: Option<&dyn Upscaler>) -> Result<(usize, usize, usize), String> {
+    prepare(out)?;
+    let decoded = |p: &str| {
+        let b = install.read(p).map_err(|e| e.to_string())?;
+        let ani = ig2_formats::ani::Ani::parse(&b).map_err(|e| e.to_string())?;
+        Ok::<_, String>((ani.width as u32, ani.height as u32, ani.frames().map_err(|e| e.to_string())?))
+    };
+    let count = |p: &str| install.read(p).ok().and_then(|b| ig2_formats::ani::Ani::parse(&b).ok().map(|a| (a.frame_count as usize, a.width as u64 * a.height as u64)));
+    let (list, made): (Vec<&str>, Vec<&str>) =
+        heads(install, prefix).into_iter().partition(|p| force || count(p).is_none_or(|(n, _)| !out.join(head_file(p, n.saturating_sub(1))).is_file()));
+    check_space(out, list.iter().filter_map(|p| count(p)).map(|(n, px)| n as u64 * px * 16 * 2).sum())?;
+    let (mut written, mut failed) = (0, 0);
+    for path in &list {
+        let result = decoded(path).and_then(|(w, h, frames)| {
+            for (i, fr) in frames.into_iter().enumerate() {
+                let img = Image { width: w, height: h, rgba: fr.rgba, mips: Vec::new(), hires: None };
+                let (rgba, _) = picture(&img, 4, model, (false, false));
+                write_whole(&out.join(head_file(path, i)), |p| crate::assets::write_png(p, w * 4, h * 4, &rgba))?;
+            }
+            Ok(())
+        });
+        match result {
+            Ok(()) => {
+                written += 1;
+                println!("{path}");
+            }
+            Err(e) => {
+                failed += 1;
+                eprintln!("{path}: {e}");
+            }
+        }
+    }
+    Ok((written, made.len(), failed))
 }
 
 /// `img` at `f`: flat-colour art by xBRZ (§3), the rest by the learned model when there is one (its 4× halved for
@@ -345,17 +608,29 @@ fn halve(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
 pub fn main(args: &[String], install: &Install) -> Result<(), String> {
     let a = parse(args)?;
     if let Some(s) = a.only.filter(|s| !STAGES.contains(&(s, true))) {
-        return Err(format!("--only {s}: not made by this version yet (ADR 0089 §4–6)"));
+        return Err(format!("--only {s}: not made by this version yet (ADR 0089 §5–6)"));
     }
     let out = a.out.or_else(|| Mod::folder().map(|d| d.join(NAME))).ok_or("no mods folder; pass --out")?;
-    println!("making a {}x HD pack in {} (a stopped run continues where it left off)", a.factor, out.display());
+    println!("making an HD pack in {} (a stopped run continues where it left off)", out.display());
     for (stage, _) in STAGES.iter().filter(|s| s.1 && a.only.is_none_or(|o| o == s.0)) {
         println!("{stage}:");
-        let gpu = if a.filters_only { None } else { learned_model(a.fast) };
-        let (written, kept, failed) = make(install, &out, a.factor, &a.prefix, a.force, gpu.as_deref())?;
+        let (written, kept, failed) = match *stage {
+            "videos" => {
+                let gpu = if a.filters_only { None } else { compact_model() };
+                make_videos(install, &out, a.factor.unwrap_or(VIDEO_FACTOR), &a.prefix, a.force, gpu.as_deref())?
+            }
+            "heads" => {
+                let gpu = if a.filters_only { None } else { learned_model(a.fast) };
+                make_heads(install, &out, &a.prefix, a.force, gpu.as_deref())?
+            }
+            _ => {
+                let gpu = if a.filters_only { None } else { learned_model(a.fast) };
+                make(install, &out, a.factor.unwrap_or(4), &a.prefix, a.force, gpu.as_deref())?
+            }
+        };
         println!("{written} written, {kept} already there, {failed} failed.");
         if failed > 0 {
-            return Err(format!("{failed} textures failed"));
+            return Err(format!("{stage}: {failed} failed"));
         }
     }
     println!("Enable \"{NAME}\" on the Mods page.");
@@ -369,7 +644,7 @@ mod tests {
     #[test]
     fn arguments_and_names() {
         let a = parse(&["--factor".into(), "2".into(), "--prefix".into(), "DataRaw/Screen/".into(), "--only".into(), "Pictures".into()]).unwrap();
-        assert_eq!((a.factor, a.prefix.as_str(), a.only, a.force, a.out, a.fast), (2, "dataraw/screen/", Some("pictures"), false, None, false));
+        assert_eq!((a.factor, a.prefix.as_str(), a.only, a.force, a.out, a.fast), (Some(2), "dataraw/screen/", Some("pictures"), false, None, false));
         assert!(parse(&["--factor".into(), "3".into()]).is_err());
         assert!(parse(&["--only".into(), "sounds".into()]).is_err());
         assert!(parse(&["--bogus".into()]).is_err());
@@ -452,6 +727,124 @@ mod tests {
         let hits = textures(&install, "").iter().filter(|p| wrap_of(&map, p) != (false, false)).count();
         assert!(hits > 0, "no install texture is wrapped");
         eprintln!("{} wrapped texture names, {hits} install textures", map.len());
+    }
+
+    /// `hi` (`w·f` × `h·f`, RGBA) box-downscaled by `f` against `lo` (`w` × `h`): the largest and the mean difference
+    /// over the colour channels.
+    fn box_diff(lo: &[u8], hi: &[u8], w: usize, h: usize, f: usize) -> (f32, f32) {
+        let d: Vec<f32> = (0..w * h * 3)
+            .map(|i| {
+                let (x, y, c) = (i / 3 % w, i / 3 / w, i % 3);
+                let sum: f32 = (0..f * f).map(|k| hi[((y * f + k / f) * w * f + x * f + k % f) * 4 + c] as f32).sum();
+                (sum / (f * f) as f32 - lo[(y * w + x) * 4 + c] as f32).abs()
+            })
+            .collect();
+        (d.iter().copied().fold(0.0, f32::max), d.iter().sum::<f32>() / d.len() as f32)
+    }
+
+    /// The encoder's conversion is the player's inverse: a colour the player can show comes back within a level.
+    #[test]
+    fn colours_survive_the_conversion() {
+        let mut n = 0;
+        for y in (16..=235).step_by(9) {
+            for cb in (40..=216).step_by(11) {
+                for cr in (40..=216).step_by(11) {
+                    let rgb = crate::video::decode::shade(y as f32 / 255.0, cb as f32 / 255.0, cr as f32 / 255.0);
+                    if rgb.iter().any(|v| !(2..=253).contains(v)) {
+                        continue;
+                    }
+                    let yuv = yuv420(&[rgb[0], rgb[1], rgb[2], 255].repeat(4), 2, 2);
+                    let back = crate::video::decode::shade(yuv[0] as f32 / 255.0, yuv[4] as f32 / 255.0, yuv[5] as f32 / 255.0);
+                    assert!(back.iter().zip(rgb).all(|(a, b)| a.abs_diff(b) <= 1), "{rgb:?} came back {back:?}");
+                    n += 1;
+                }
+            }
+        }
+        assert!(n > 1000, "{n} colours");
+    }
+
+    /// A video made for the pack: the same frame count, frame rate and sound (its samples and their place in the file,
+    /// so the sound starts as the original's), twice the size, and each frame held to the original's colours (the lock
+    /// per frame, then H.264's loss).
+    #[test]
+    fn a_video_keeps_frames_timing_sound_and_colours() {
+        let (w, h, n) = (64usize, 48usize, 8usize);
+        let frame = |k: usize| -> Vec<u8> {
+            (0..w * h).flat_map(|i| [((i % w * 4 + k * 6) % 256) as u8, (i / w * 5) as u8, ((i % w + i / w) * 2 + 40) as u8, 255]).collect()
+        };
+        let mut enc = H264::new(25.0, 2_000_000).unwrap();
+        let coded: Vec<(Vec<u8>, bool)> = (0..n).map(|k| enc.frame(&frame(k), w, h).unwrap()).collect();
+        assert!(coded[0].1 && !coded[1].1);
+        let sound: Vec<Vec<u8>> = (0..4u8).map(|i| vec![i; 20]).collect();
+        let video = TrackOut {
+            timescale: 12800,
+            codec: Codec::Avc { width: w as u16, height: h as u16, nal_length_size: 4, sps: enc.sps.clone(), pps: enc.pps.clone() },
+            samples: coded.iter().enumerate().map(|(i, (data, sync))| SampleOut { data, duration: 512, sync: *sync, order: i as u64 * 10 }).collect(),
+        };
+        let audio = TrackOut {
+            timescale: 44100,
+            codec: Codec::Aac { sample_rate: 44100, channels: 2, config: vec![0x12, 0x10] },
+            samples: sound.iter().enumerate().map(|(i, data)| SampleOut { data, duration: 1024, sync: true, order: i as u64 * 20 + 15 }).collect(),
+        };
+        let src = Arc::new(Clip::new(mp4::write(&video, Some(&audio)).unwrap()).unwrap());
+        let (bytes, frames) = encode_video(src.clone(), 2, None).unwrap();
+        assert_eq!(frames, n);
+        let hi = Arc::new(Clip::new(bytes).unwrap());
+        assert_eq!((hi.size(), hi.fps(), hi.video().samples.len(), hi.sound_wait()), ((128, 96), 25.0, n, src.sound_wait()));
+        let (a, b) = (src.mp4.audio.as_ref().unwrap(), hi.mp4.audio.as_ref().unwrap());
+        for (s, t) in a.samples.iter().zip(&b.samples) {
+            assert_eq!((a.data(&src.data, s).unwrap(), s.dts), (b.data(&hi.data, t).unwrap(), t.dts));
+        }
+        assert_eq!((a.samples.len(), a.duration), (b.samples.len(), b.duration));
+        let (mut lo, mut up) = (Frames::new(src).unwrap(), Frames::new(hi).unwrap());
+        for k in 0..n {
+            let (l, u) = (lo.next_frame().unwrap(), up.next_frame().unwrap());
+            assert_eq!((u.width, u.height), (128, 96));
+            // The lock alone holds within ±2 (`the_lock_holds_colours`); the encoder adds its loss.
+            let locked = video_frame(&l, 2, None);
+            assert!(box_diff(&l.rgba, &locked, w, h, 2).0 <= LOCK, "frame {k}: the lock");
+            let (worst, mean) = box_diff(&l.rgba, &u.rgba, w, h, 2);
+            assert!(mean <= 2.0 && worst <= 24.0, "frame {k}: {worst} worst, {mean} mean");
+        }
+        assert!(lo.next_frame().is_none() && up.next_frame().is_none());
+    }
+
+    /// The install's shortest video and the empty talking head made into a pack play from it in the client: the video
+    /// at twice the size in the original's place, every head frame with its 4× picture; a second run keeps them.
+    #[test]
+    fn a_made_video_and_head_play() {
+        use ig2_formats::text::Lang;
+        let Some(Ok(install)) = Install::from_env(Lang::En) else {
+            eprintln!("IG2_INSTALL_DIR not set; skipping");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("ig2-make-pack-av-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (video, head) = ("anim/mpeg4/misc/end_x.mp4", "anim/fejek/ures.ani");
+        assert_eq!(make_videos(&install, &dir, 2, video, false, None).unwrap(), (1, 0, 0));
+        assert_eq!(make_videos(&install, &dir, 2, video, false, None).unwrap(), (0, 1, 0));
+        assert_eq!(make_heads(&install, &dir, head, false, None).unwrap(), (1, 0, 0));
+        assert_eq!(make_heads(&install, &dir, head, false, None).unwrap(), (0, 1, 0));
+        let modded = Install::open_with_mods(install.root(), Lang::En, vec![Mod { name: NAME.into(), dir: dir.clone() }]).unwrap();
+        let (mut plain, mut packed) = (crate::video::Player::open(&install, video, false).unwrap(), crate::video::Player::open(&modded, video, false).unwrap());
+        assert_eq!(packed.size(), plain.size());
+        let (mut n, (w, h)) = (0, plain.size());
+        while let (Some(a), Some(b)) = (plain.next_blocking(), packed.next_blocking()) {
+            assert_eq!((b.width, b.height), (w * 2, h * 2));
+            let (worst, mean) = box_diff(&a.rgba, &b.rgba, w as usize, h as usize, 2);
+            assert!(mean <= 3.0, "frame {n}: {worst} worst, {mean} mean");
+            n += 1;
+        }
+        assert!(n > 0 && plain.next_blocking().is_none() && packed.next_blocking().is_none());
+        let (a, b) = (upscale::head_frames(&install, head, true).unwrap(), upscale::head_frames(&modded, head, true).unwrap());
+        assert_eq!(a.len(), b.len());
+        for (a, b) in a.iter().zip(&b) {
+            assert!(a.hires.is_none() && b.rgba == a.rgba);
+            let hi = b.hires.as_deref().unwrap();
+            assert_eq!((hi.width, hi.height, hi.upscaled), (a.width * 4, a.height * 4, true));
+            assert!(hi.rgba.chunks_exact(4).all(|p| p[3] == 255));
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A pack made from the install loads in the client: the image keeps its size and pixels, draws the pack's

@@ -91,7 +91,8 @@ The plan and its rules: ADR 0088. Each part is engine work that does nothing unt
 - [ ] **Sprite animations as smooth effects** (568).
 - [ ] **Model packs** (569).
 - [x] **HD pictures** (570, ADR 0089): every picture through the quality upscaler, held to the original's colours.
-- [ ] **HD videos and talking heads** (571), with optional in-between frames.
+- [x] **HD videos and talking heads** (571, ADR 0089 §4): `--only videos` and `--only heads`; the client plays the pack's versions.
+- [ ] **In-between frames for the HD videos and heads** (`--smooth`, RIFE, ADR 0089 §4), the rest of row 571.
 - [ ] **A sharp font from the original's glyphs** (572).
 - [ ] **Model detail: smoothed meshes and normal maps** (573).
 - [ ] **Publish the remaster mods in the mod index** (needs the index repository, 549).

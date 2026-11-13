@@ -190,7 +190,7 @@ impl Playback {
 /// `T`), for the comparison with `run_video.py`'s grabs.
 pub fn snapshot(o: &crate::Options, name: &str, out: &std::path::Path) -> Result<(), String> {
     let root = crate::install_root().map_err(|_| "no Imperium Galactica II install found; set IG2_INSTALL_DIR")?;
-    let install = ig2_formats::Install::open(&root, ig2_formats::text::Lang::En).map_err(|e| e.to_string())?;
+    let install = ig2_formats::Install::open_with_mods(&root, ig2_formats::text::Lang::En, crate::enabled_mods(o)).map_err(|e| e.to_string())?;
     let mut r = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb)?;
     let place = match o.video_at {
         Some(at) => Place::At(at),

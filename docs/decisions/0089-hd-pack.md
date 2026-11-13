@@ -1,6 +1,6 @@
 # ADR 0089: the HD pack: every picture, video, talking head, the font and the models' detail, made from the player's install
 
-Date: 2026-11-12. Status: accepted; §1–3 built (row 570). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
+Date: 2026-11-12. Status: accepted; §1–3 built (row 570), §4 but `--smooth` (row 571). Builds on ADR 0054 (texture and model packs), ADR 0088 (the remaster as mods;
 §5–6: the pack tool of row 567) and ADR 0013 (video). Rows 570–573 of `docs/ENHANCEMENTS.md`.
 
 ## Context
@@ -85,8 +85,33 @@ The goal: a sharper, more modern look that still reads as the original: same out
   texels of an overlap are dropped and the middle 16 blended linearly. The CPU runs the same operations in the tests.
   About 1 s a 256 × 256 texture on a current graphics card.
 - The lock compares RGB only where the source's alpha is above 0; two bilinear rounds, then the remaining difference
-  over each texel's 4 × 4 (or 2 × 2) block, which always settles it. Real-ESRGAN smooths the originals' dithering,
+  over each texel's 4 × 4 (or 2 × 2) block, repeated (at most 8 rounds in all) where texels sit at 0 or 255 and
+  the rest must take up the difference. Real-ESRGAN smooths the originals' dithering,
   so most pictures take a round or more.
 - Wrapped textures: every `.xv` archive's meshes, each face's UVs; the material's `texture` and `texture2` names
   (`foo.bmp` → `foo_bmp`) mark every install texture of that name, padded with 16 texels of its opposite side per
   wrapped axis before the upscale and cropped after.
+
+**Videos and talking heads (row 571)**, `ig2-client::pack_tool`, `ig2_formats::mp4::write`, `ig2-client::video`:
+- `--only videos`: every `anim/mpeg4/**.mp4` decoded (`video::decode::Frames`, display order), each frame through the
+  compact model (its 4× halved for ×2; `--filters-only`: Catmull-Rom) and the lock, then turned into Y′CbCr 4:2:0 by
+  the exact inverse of the player's `video_fragment.shader` arithmetic (so a frame plays back in the colours it was
+  given; chroma the mean of each 2 × 2) and encoded by OpenH264 (Baseline, no frame skipping, a key frame at least every
+  250 frames). Bit rate: the original's per pixel × 2 (at × 1 the rate control starved fast motion, 5.7 levels a
+  channel off in `misc/end_x.mp4`'s worst frame; at × 2 2.8), about 4.5 times the original's size at ×2; the stage's
+  space check takes the install's sizes × factor² × 2. OpenH264 ignores a QP cap in its bit-rate mode.
+- The written file: `ftyp`, `mdat`, `moov`; each sample its own chunk with 64-bit offsets; the video track keeps the
+  original's timescale and each sample's duration (no B-frames, so no `ctts`), the sound track the original's AAC
+  samples, timescale, durations and `esds`. Both tracks' samples are laid out in the original's file order (each
+  frame takes its original sample's place): the player's sound start (`Clip::sound_wait`, re/screens/video.md §4)
+  counts the frames before the first sound chunk, so it stays the original's.
+- The player opens `hires/<game path>` from an enabled mod in place of the install's file and draws it in the
+  original's rectangle (`Player::size` stays the install's); the frame rate and the clock are the file's, unchanged.
+  About 0.5 s a 640 × 400 frame at ×2 on a current graphics card.
+- `--only heads`: every frame of the 14 `anim/fejek/*.ani` (decoded with transparency where no frame wrote yet) through
+  the picture path at ×4 (x4plus, or the compact model with `--fast`) and the lock, as
+  `hires/anim/fejek/<name>/<frame>.png`, frames counted from 0; a head counts as made once its last frame is there.
+  The diplomacy and spy screens load the heads through `upscale::head_frames`, which hangs each pack frame on its
+  decoded frame as the picture the renderer uploads (the spy disc's opaque fill applied to both). About 340 MB for
+  the 14 heads, 6 s a head.
+- `--smooth` (RIFE) is not built yet.

@@ -111,6 +111,8 @@ const AHEAD: usize = 4;
 
 pub struct Player {
     clip: Arc<Clip>,
+    /// The install's frame size: a pack's sharper video (ADR 0089 §4) draws in the original's place.
+    size: (u32, u32),
     /// The stream's frame rate (`ctx+0x38`: the track's timescale over its first sample's duration, 25).
     pub fps: f32,
     rx: Receiver<Image>,
@@ -124,10 +126,19 @@ pub struct Player {
 }
 
 impl Player {
-    /// Opens `path` (an install path, see [`mp4_path`]) and starts decoding.
+    /// Opens `path` (an install path, see [`mp4_path`]) and starts decoding: an enabled pack's `hires/<path>` when it
+    /// has one (ADR 0089 §4: the same frames, timing and sound, sharper), else the install's.
     pub fn open(install: &ig2_formats::Install, path: &str, looping: bool) -> Result<Self, String> {
         let data = install.read(path).map_err(|e| format!("{path}: {e}"))?;
-        let clip = Arc::new(Clip::new(data).map_err(|e| format!("{path}: {e}"))?);
+        let mut clip = Arc::new(Clip::new(data).map_err(|e| format!("{path}: {e}"))?);
+        let size = clip.size();
+        let pack = format!("{}{path}", crate::upscale::PACK_DIR);
+        if let Some(c) = (!install.mods().is_empty()).then(|| install.read(&pack).ok()).flatten() {
+            match Clip::new(c) {
+                Ok(c) => clip = Arc::new(c),
+                Err(e) => eprintln!("ig2-client: {pack}: {e}"),
+            }
+        }
         let fps = clip.fps();
         let (tx, rx) = sync_channel(AHEAD);
         let c = clip.clone();
@@ -153,12 +164,12 @@ impl Player {
                 }
             })
             .map_err(|e| e.to_string())?;
-        Ok(Self { clip, fps, rx, next: 0, waiting: None, start_ms: None, ended: false })
+        Ok(Self { clip, size, fps, rx, next: 0, waiting: None, start_ms: None, ended: false })
     }
 
-    /// The frame size.
+    /// The install's frame size (where the picture goes; a pack's frames are larger).
     pub fn size(&self) -> (u32, u32) {
-        self.clip.size()
+        self.size
     }
 
     /// The sound as a mixer stream at `rate` (`None` for the silent clips).
