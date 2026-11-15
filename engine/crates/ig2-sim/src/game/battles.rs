@@ -511,7 +511,7 @@ impl Game<'_> {
     }
 
     /// `BolygoElfoglal(p, owner)` (`colony-side.md` §4) with its follow-ups.
-    pub(super) fn capture(&mut self, p: usize, owner: u8) {
+    pub fn capture(&mut self, p: usize, owner: u8) {
         let g = self.globals();
         let ctx = self.economy_context(&g);
         let mut w = self.state.colony();
@@ -523,6 +523,7 @@ impl Game<'_> {
                 self.recall_attackers(planet);
             }
         }
+        self.side_met(&events);
         self.events.extend(events.into_iter().map(GameEvent::Side));
         self.battlefield_hand_offs();
     }

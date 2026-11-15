@@ -18,6 +18,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Messages: an event log with filters and search; urgent messages open at once; errors and the campaign's info lines show on the message line as in the original.
 - "Campaign story: Enhanced" starts the besieging fleets of one story episode at their planet instead of the far corner of the map.
 - New games name the starting ship designs and technologies in the game's language instead of Hungarian.
+- An empire you first meet through a planet changing hands (captured, colonised or rebelling) now shows the "new empire" message and joins the diplomacy screen (#112).
 
 ### Multiplayer
 - Internet games work out of the box: the project's relay server is the default, rooms can be private with a join code or on a public list, and hosting asks your router to open the game port; you can also run your own relay server (a Docker image is published).

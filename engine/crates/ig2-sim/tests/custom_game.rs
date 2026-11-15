@@ -204,3 +204,32 @@ fn aggressiveness_normal_is_the_original() {
         assert_eq!((a[1], a[2], a[3], a[9]), (n, n, Aggressiveness::High, n), "the empire's own, the rest the original's");
     });
 }
+
+/// A planet the human sees passes to an empire it doesn't know (`BolygoElfoglal` step 8, `colony-side.md` §4): the
+/// contact flag, the diplomacy list's new slot and its "new empire" event, as when a fleet is sighted.
+#[test]
+fn a_captured_planet_introduces_its_new_owner() {
+    use ig2_sim::diplomacy::DiploEvent;
+    use ig2_sim::game::GameEvent;
+    with(|data, rules| {
+        let mut g = start(&chosen(), data, rules);
+        let p = owned(&g, 2)[0].0;
+        let mut w = g.state.colony();
+        w.knows[1][3] = 0;
+        w.knows[3][1] = 0;
+        w.planets[p].visibility[1] = 1000;
+        g.state.store_colony(&w);
+        let mut d = g.state.diplomacy();
+        d.players.retain(|s| s.empire != 3);
+        g.state.store_diplomacy(&d);
+        g.events.clear();
+        g.capture(p, 3);
+        assert_eq!(g.state.colony().knows[1][3], 1);
+        assert!(g.state.diplomacy().players.iter().any(|s| s.empire == 3), "listed on the diplomacy screen");
+        assert!(g.events.iter().any(|e| matches!(e, GameEvent::Diplomacy(DiploEvent::Discovered { empire: 3, by: 1 }))));
+        // Known already: nothing again.
+        g.events.clear();
+        g.capture(owned(&g, 2)[0].0, 3);
+        assert!(!g.events.iter().any(|e| matches!(e, GameEvent::Diplomacy(DiploEvent::Discovered { .. }))));
+    });
+}

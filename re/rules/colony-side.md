@@ -106,6 +106,9 @@ For `p > 0`, in this order (UI-only effects omitted):
    `+0x68 = 0`, morale `= 500`, `+0x114 = 0`.
 8. For `new` in 1..=8: every living empire `e ≠ new` with `vis[e] > 0` on `p` that doesn't know `new`
    now does (`BirodalomIsmeri[e][new] = 1`; for `e == EN` story special 0xb and `FelfedezBirodalom`).
+   Port: `colony_side.rs` sets the flag and raises `SideEvent::Met`; `Game::side_met` (`game.rs`) runs the
+   story special and `discover` like the radar's `EmpireMet`, from `capture`, the economy step, `spy_hooks`
+   and `starmap_pass`.
 9. `Warfare[p].+0x460 = −1`.
 10. For `new > 0`: negative visibility entries `vis[1..=18]` become 0.
 11. SP and `new != EN` and epidemic `> 0`: remove planet event 100, epidemic `= 0`, virus cleanup.

@@ -1378,6 +1378,7 @@ impl<'r> Game<'r> {
                 SideEvent::Rebelled { planet, result: r @ (2 | 3), .. } => {
                     self.story_special([if r == 2 { 0x15 } else { 0x16 }, planet as i32, 0, 0, 0, 0, 0, 0]);
                 }
+                SideEvent::Met { .. } => self.side_met(std::slice::from_ref(e)),
                 _ => {}
             }
         }
@@ -1735,6 +1736,23 @@ impl<'r> Game<'r> {
     /// The spy pass's calls into other systems, in event order (inside the pass in the exe; nothing later in it
     /// reads what they change): `Story_Special(0xb, EN, e)` + `FelfedezBirodalom(e)` for a caught spy of an unknown
     /// empire, and each report's queue entry and `Story_KemEsemeny` (`info-messages.md` §3.3).
+    /// `BolygoElfoglal`'s step 8 (`colony-side.md` §4): a planet a human sees changed hands to an empire it
+    /// didn't know: `Story_Special(0xb, EN, e)` + `FelfedezBirodalom(e)` for EN, another human's list only (canonical
+    /// multiplayer). Inside the call in the exe; nothing after it in the step reads the stories or the contact list.
+    pub(super) fn side_met(&mut self, events: &[SideEvent]) {
+        let en = self.globals().en;
+        for e in events {
+            if let SideEvent::Met { who, whom } = *e {
+                if who as usize == en {
+                    self.story_special([0x0b, en as i32, whom as i32, 0, 0, 0, 0, 0]);
+                    self.with_diplomacy(|d, w| d.discover(w, whom as usize));
+                } else {
+                    self.with_diplomacy(|d, w| d.discover_by(w, who as usize, whom as usize));
+                }
+            }
+        }
+    }
+
     fn spy_hooks(&mut self, events: Vec<SpyEvent>) {
         let en = self.globals().en as i32;
         for ev in events {
@@ -1747,6 +1765,8 @@ impl<'r> Game<'r> {
                 }
                 // Another human's (canonical multiplayer, `re/rules/multiplayer.md` §5): its own copies only.
                 SpyEvent::Discovered { empire, by } => self.with_diplomacy(|d, w| d.discover_by(w, by as usize, empire as usize)),
+                // A rebellion the spy started handed the planet to an empire a human sees for the first time.
+                SpyEvent::Colony(s @ SideEvent::Met { .. }) => self.side_met(&[s]),
                 SpyEvent::Report(r) => {
                     self.state.push_spy_report(&r);
                     self.with_story(|st, w| st.spy_event(&story_chain(), w));
@@ -2022,7 +2042,7 @@ impl<'r> Game<'r> {
         let state = &self.state;
         let vehicles = |p: usize| state.vehicle_cells(p);
         let load = || state.colony();
-        let (events, extra, side, overflow, merges) = {
+        let (mut events, extra, side, overflow, merges) = {
             let mut hooks = StarmapHooks {
                 colony: ColonyArrivals {
                     world: &mut colony, load: &load, rules: &self.rules.side, ctx: &econ, placement: &self.rules.placement, vehicles: &vehicles,
@@ -2046,7 +2066,17 @@ impl<'r> Game<'r> {
         }
         if let Some(colony) = &colony {
             self.state.store_colony(colony);
+            // `BolygoElfoglal` sets `BirodalomIsmeri` (the starmap's `met`, the same memory) inside the movement
+            // loop; the starmap's copy is stored last, so it takes the colonisations' contacts too.
+            for (m, k) in map.met.iter_mut().zip(&colony.knows) {
+                for (a, &b) in m.iter_mut().zip(k) {
+                    *a |= b;
+                }
+            }
         }
+        // The exe's radar sees a colonisation's contact as already made: no second meet for the same pair.
+        events.retain(|e| !matches!(*e, StarmapEvent::EmpireMet { by, empire }
+            if side.contains(&SideEvent::Met { who: by, whom: empire })));
         // The combat view holds the totals, ships and vehicles; the starmap's records the rest (stored last).
         self.state.store_combat(&combat);
         self.state.store_starmap(&map);
@@ -2070,6 +2100,7 @@ impl<'r> Game<'r> {
         }) {
             self.tutorial_sighting(p);
         }
+        self.side_met(&side);
         self.events.extend(side.into_iter().map(GameEvent::Side));
         (events, extra)
     }
