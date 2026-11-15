@@ -2672,9 +2672,11 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
     }
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
     // The long info's stations (re/screens/starmap.md §15.2) at `smkeringeto` 0.
+    // Kept to the end: the frame samples its target.
+    let mut stations = crate::starmap_stations::Gfx::default();
     if info && lv.starmap_mode == 1 {
         let placed = crate::starmap_stations::stations(&world.game.state, lv.planet.max(0) as usize, view.camera.zoom, 0.0);
-        crate::starmap_stations::Gfx::default().draw(&mut frame, &mut r, &l.install, &placed, 0.0, 0.0, [640.0, 480.0]);
+        stations.draw(&mut frame, &mut r, &l.install, &placed, 0.0, 0.0, [o.size.0 as f32, o.size.1 as f32]);
     }
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let mut sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };

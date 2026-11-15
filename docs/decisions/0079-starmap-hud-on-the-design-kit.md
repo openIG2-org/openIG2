@@ -62,8 +62,8 @@ because the original's hot-spot code hit-tests it there.
   right button does nothing there), so there is none.
 - The production and exit plates act on the click (the release), the original's hot-spots 9 and 11 on the press: the
   same effect a moment later, as the card's buttons already did.
-- The space stations' sale strips (hot-spots 0x65.., at the original screen's left) stay where the original has them;
-  the modern panel draws no station list.
+- The space stations (hot-spots 0x65..) are their models circling the planet under both HUDs, each hot-spot the box
+  round its model as in the original (re/screens/starmap.md §15.2); the modern panel draws no station list.
 - Only the starmap's hot-spot code sees the remap: the drawn pointer, its tooltip's place, the replay bar and the
   multiplayer wait overlay use the real pointer.
 - Classic and every capture and replay are unchanged (the option and `--modern-hud` as in ADR 0065).

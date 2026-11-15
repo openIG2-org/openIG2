@@ -89,6 +89,7 @@ pub struct Gfx {
 
 impl Gfx {
     /// Draw `placed` over the scene; each model spins `spin` about its own y (`RotateObjr(0, 0.01, 0)` a drawn frame).
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(&mut self, f: &mut crate::render::Frame, r: &mut crate::render::Renderer, install: &ig2_formats::Install, placed: &[Placed], kering: f32, spin: f32, size: [f32; 2]) {
         if placed.iter().all(|s| s.clear >= 1.0) {
             return;
