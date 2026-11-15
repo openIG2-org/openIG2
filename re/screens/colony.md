@@ -420,7 +420,8 @@ and the debris' model pick is the slot. The scorch marks fade on the 20 Hz clock
 normal speed). Debris flies and fades in the client; its sim record stays. Not drawn: the ruins' two lights (`Feny`),
 `SetFrame` of a collapsing building (the exe's building sinks through its collapse frames, the client's only fades),
 `Detonate`'s `100k` type-1 particles, and scorch marks of another planet's `Detonate`/`SelfDestruct` (the exe draws
-them on the shown planet at their place).
+them on the shown planet at their place). Enhanced battle effects draw their smoke and darkening pictures before the
+classic trails and flashes (multiplying smoke over them blacked them out); sparks, rings, glows and beam halos come after.
 
 The dropships (`WF_Hordozo`, inlined at the unit's exe `+0x264..+0x278` / ELF `+0x27c..+0x290`): `WF::LoadMesh` (exe
 0x483f70) loads `hordozo.xvb` once a planet; `WF_Tank::LoadMesh` (exe 0x4847a0) adds one per unit without flag

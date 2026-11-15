@@ -2385,6 +2385,44 @@ impl View {
             }
             draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: rcloud, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
         }
+        // The enhanced effects (ADR 0057; nothing with Classic): the layers' smoke darkens what lies below, so it goes
+        // before the classic trails and flashes, which then glow through it (drawn after them it multiplied them out
+        // within seconds of fire); their sparks, rings and glows are added after the flashes.
+        let extra = match (curr.visible, self.overlay.fx.extra.as_ref()) {
+            (true, Some(x)) => {
+                use crate::battle_fx::Sprite;
+                let ([dot, ring], mods) = scene
+                    .extra_tex
+                    .get_or_insert_with(|| {
+                        let t = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
+                        (t, crate::battle_fx::mod_textures(r, install, t[0]))
+                    })
+                    .clone();
+                let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
+                let flare = scene.colony_texture(r, install, "flare.bmp");
+                let pictures = mods.iter().enumerate().map(|(i, &(tex, darken))| (Sprite::Picture(i as u8, darken), tex));
+                let sprites: Vec<_> = [(Sprite::Smoke, rcloud), (Sprite::Spark, dot), (Sprite::Ring, ring), (Sprite::Glow, flare)].into_iter().chain(pictures).collect();
+                Some((x, dot, sprites))
+            }
+            _ => None,
+        };
+        let axes = [basis.rows[0], basis.rows[1]];
+        let extra_pass = |darkening: bool, dynamic: &mut Vec<MeshVertex>, draws: &mut Vec<MeshDraw>| {
+            let Some((x, _, sprites)) = &extra else { return };
+            for &(sprite, tex) in sprites {
+                let blob = matches!(sprite, crate::battle_fx::Sprite::Smoke | crate::battle_fx::Sprite::Picture(_, true));
+                if blob != darkening {
+                    continue;
+                }
+                let base = dynamic.len() as u32;
+                x.quads(sprite, axes, |p| p, 1.0, [0.0, 0.0, 1.0, 1.0], dynamic);
+                if dynamic.len() as u32 > base {
+                    let shadow = if blob { Shadow::Blob } else { Shadow::None };
+                    draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow, video: false, additive: !blob, depth_write: false });
+                }
+            }
+        };
+        extra_pass(true, &mut dynamic, &mut draws);
         // The trails (owner 0, `ParticleOwner::Draw`) and the flashes (type 4: `robbanas.bmp`'s 5 × 5 sheet, `Particle()`),
         // spec §5.2, §5.3.
         if curr.visible && !self.overlay.fx.puffs.is_empty() {
@@ -2406,30 +2444,9 @@ impl View {
                 draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: false });
             }
         }
-        // The enhanced effects (ADR 0057): the layers' smoke darkening what lies below, their sparks, rings and glows
-        // added, and a soft halo round each laser beam. Nothing with Classic.
-        if let (true, Some(x)) = (curr.visible, self.overlay.fx.extra.as_ref()) {
-            use crate::battle_fx::Sprite;
-            let ([dot, ring], mods) = scene
-                .extra_tex
-                .get_or_insert_with(|| {
-                    let t = crate::battle_fx::pictures().map(|i| r.add_texture(&i));
-                    (t, crate::battle_fx::mod_textures(r, install, t[0]))
-                })
-                .clone();
-            let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
-            let flare = scene.colony_texture(r, install, "flare.bmp");
-            let axes = [basis.rows[0], basis.rows[1]];
-            let pictures = mods.iter().enumerate().map(|(i, &(tex, darken))| (Sprite::Picture(i as u8, darken), tex));
-            for (sprite, tex) in [(Sprite::Smoke, rcloud), (Sprite::Spark, dot), (Sprite::Ring, ring), (Sprite::Glow, flare)].into_iter().chain(pictures) {
-                let base = dynamic.len() as u32;
-                x.quads(sprite, axes, |p| p, 1.0, [0.0, 0.0, 1.0, 1.0], &mut dynamic);
-                if dynamic.len() as u32 > base {
-                    let blob = matches!(sprite, Sprite::Smoke | Sprite::Picture(_, true));
-                    let shadow = if blob { Shadow::Blob } else { Shadow::None };
-                    draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex, glass: true, cloud: false, shadow, video: false, additive: !blob, depth_write: false });
-                }
-            }
+        // The enhanced sparks, rings and glows, and a soft halo round each laser beam.
+        extra_pass(false, &mut dynamic, &mut draws);
+        if let Some(&(_, dot, _)) = extra.as_ref() {
             let base = dynamic.len() as u32;
             for (b, _) in &self.overlay.fx.beams {
                 let c = [0.35, 0.12, 0.08, 1.0];
@@ -3418,6 +3435,34 @@ mod tests {
         let close = |a: f32, b: f32| (a - b).abs() < 2e-3;
         assert!(close(e.target[1], 375.6696) && close(e.target[2], 333.1013), "{:?}", e.target);
         assert!(close(e.eye[0], -1343.5028) && close(e.eye[1], 375.6696) && close(e.eye[2], 1676.6041), "{:?}", e.eye);
+    }
+
+    /// The enhanced smoke multiplies what lies below it: it must come before the classic flashes, or a few seconds
+    /// of fire black them out (issue 113).
+    #[test]
+    fn enhanced_smoke_goes_under_the_war_flashes() {
+        let Some(Ok(install)) = Install::from_env(ig2_formats::text::Lang::En) else { return };
+        let Some(dir) = std::env::var_os("IG2_SAVE_DIR") else { return };
+        let Ok(bytes) = std::fs::read(std::path::Path::new(&dir).join("quick-1.sav")) else { return };
+        let Ok(mut r) = Renderer::headless(wgpu::TextureFormat::Rgba8UnormSrgb) else { return };
+        let save = ig2_formats::save::SaveGame::parse(&bytes).unwrap();
+        let (rules, defaults) = crate::rules::load(&install).unwrap();
+        let snap = ColonySnap::read(&SaveState::from_save(&save, &defaults), 42, &Default::default()).unwrap();
+        let tables = ig2_rules::Rules::from_install(&install).unwrap();
+        let mut scene = ColonyScene::load(&mut r, &install, &tables, &rules.ground_maps, &snap).unwrap();
+        let mut view = View { camera: Camera::from_saved(&snap.camera, [640.0, 480.0]), scale: 1.0, overlay: Overlay::default() };
+        let at = [0.0, 500.0, -500.0];
+        view.overlay.fx.event(&ig2_sim::ground::GroundEvent::Flash { at: [0, 500, -500], size: 30 }, 0.0);
+        let mut layers = crate::battle_fx::Layers::new([1.0, 0.0, 0.0], 20.0);
+        layers.blast(at, 60.0);
+        view.overlay.fx.extra = Some(layers);
+        let f = view.build(&mut r, &install, &tables, &rules.ground_maps, &mut scene, &snap, &snap, 1.0, 0.0);
+        let flash = scene.colony_texture(&mut r, &install, "robbanas.bmp");
+        let draws = &f.scene.as_ref().unwrap().draws;
+        let smoke = draws.iter().position(|d| d.shadow == Shadow::Blob).expect("the blast's smoke");
+        let flashes = draws.iter().position(|d| d.tex == flash).expect("the flash");
+        let glows = draws.iter().rposition(|d| d.additive && d.glass && d.tex != flash).unwrap();
+        assert!(smoke < flashes && flashes < glows, "smoke {smoke}, flash {flashes}, last glow {glows}");
     }
 
     #[test]
