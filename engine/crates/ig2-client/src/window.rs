@@ -396,6 +396,8 @@ struct App {
     /// The design screen (re/screens/design.md), its 3D scene and tooltip texts (`Design_MouseInit`).
     design: Option<crate::design::Design>,
     design_scene: Option<crate::design_scene::DesignScene>,
+    /// The long info's station models (re/screens/starmap.md §15.2).
+    stations_gfx: crate::starmap_stations::Gfx,
     design_tips: Vec<Vec<u8>>,
     /// The trade screen (re/screens/trade.md), its 3D scene and tooltip texts (`Trade_MouseInit`).
     trade: Option<crate::trade::Trade>,
@@ -962,6 +964,7 @@ impl App {
             research_tips: Vec::new(),
             design: None,
             design_scene: None,
+            stations_gfx: Default::default(),
             design_tips: Vec::new(),
             trade: None,
             trade_scene: None,
@@ -1502,6 +1505,13 @@ impl App {
             }
         };
         drop(scene);
+        // The long info's stations round the player's planet (`StarmapForgatEsMozgatUrallomasok`, re/screens/starmap.md
+        // §15.2), in the 3D pass under the 2D ones; `smkeringeto` is 0.0002 a 10 ms UI tick, the spin 0.01 a drawn frame.
+        if screen == crate::ui::Screen::Starmap && self.overlay.is_none() && let Some(i) = self.menus.info {
+            let kering = now as f32 * 0.00002;
+            let placed = crate::starmap_stations::stations(&self.world.game.state, i.planet, v.camera.zoom, kering);
+            self.stations_gfx.draw(&mut frame, &mut g.renderer, &self.install, &placed, kering, t / crate::starmap_panels::PANEL_FRAME * 0.01, size);
+        }
         if self.overlay.is_some() {
             frame.backdrop = backdrop;
         }
@@ -2028,6 +2038,8 @@ impl App {
                 };
             }
             production = out == Some(true);
+            // The stations' hot-spots move onto their models every drawn frame.
+            crate::starmap_stations::update(&mut self.menus, &self.world.game.state, v.camera.zoom, now as f32 * 0.00002);
         }
         if production {
             let acts = self.panels.toggle_production(&self.world.game.state, &sel);

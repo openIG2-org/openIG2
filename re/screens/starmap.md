@@ -888,7 +888,7 @@ info with the tax, auto-build and priority settings (ELF `Starmap_Main`, `GFX_St
   `Zoom −= (600 − Zoom)/2` per frame down to the backup with the pivot moving back in proportion and the star growing
   again; then the mode ends.
 - With the mode on, hot-spots 1..=7 (the console, the minimap) and 0x35 are off; 0x5a..=0x63 are on for the player's
-  planet, 100 (the panel, it catches clicks) and 0x6f (the screen) always, 0x65..=0x64 + `+0x114` (one per station).
+  planet, 100 (the panel, it catches clicks) and 0x6f (the screen) always, 0x65..=0x64 + `+0x114` (one per station, on the player's planet while `Zoom > 580`, §15.2).
 
 ### 15.2 Pictures
 `q = (Zoom − L)/(600 − L)` with `L = (int)max(540, BackupZoom)`; nothing while `Zoom ≤ L`.
@@ -924,9 +924,26 @@ info with the tax, auto-build and priority settings (ELF `Starmap_Main`, `GFX_St
 - The name tables come from the Hungarian `txt17.txt` (`StringReadAll`): `Felszin_Nev[s]` §5 s, `Gazdagsag_Nev` §5 20,
   `FajBolygoViszony_Nev` §5 21, `AdoMertek_Nev[k]` §5 22 + k (8), `AutoBuild_Nev[k]` §5 30 + k (11),
   `BolygoPrioritas_Nev[k]` §5 41 + k (4), `RemoveSpaceBase_Nev[1]` §5 45, `StarmapRopIkon_Nev[k]` §6 k.
-- The stations (`StarmapLoadUrallomasok` 0x6d3310, `StarmapForgatEsMozgatUrallomasok` 0x6d2c00) circle the planet as
-  their designs' models; their hot-spots 0x65.. are the strips (0, 40 + 30i, 100, 20),
-  i = 0..=9 (the design's name as the tooltip).
+- The stations (ELF asm; exe `StarmapLoadUrallomasok` 0x5af8a0 / ELF 0x6d3310, `StarmapForgatEsMozgatUrallomasok`
+  0x5a7f10 / ELF 0x6d2c00; port: `ig2-client::starmap_stations`):
+  - Load (from `Init3dStarmap`): for each slot i = 0..=9 three models from `vector/talalmanyok/` (textures
+    `textures/talalmanyok/`): `ur_kurbazis.xvb`, `ur_urbazis.xvb`, `ur_nehezur.xvb` (`StarmapUrallomasIDk[i][k]`),
+    `AddToScene(mainxvb, 0.04)`, `SetRelative(false)` (camera-fixed), `RotateObj(π/2, 0, 0)`, hidden.
+  - Per drawn frame (`ShowStarmap` 0x6ef9b5, after `InfoForgatAlap`): every model hidden and hot-spots 0x65..=0x6e off;
+    then only with `StarmapMode == 1`, `StarmapPlanetInfoMod` and the planet the player's (`+0x20 == EN`), for station
+    i < n = `+0x114`: the model `k = min(Tervek[owner][+0x100 + 2i] +0x48 − 0x4d, 2)` (the design's hull tech 0x4d..0x4f;
+    a larger one takes the heavy station), `UnhideObj`, `SetObjTransparency(t)` (0 = opaque) and
+    - `r = 2` while `StarmapZoom ≤ 580`, else `(600 − Zoom)/20 · 1 + 1` (f64); `t = clamp(r − 1, 0, 1)` (f32): the
+      stations fly in from twice the radius while the long info zooms past 580 (at the pin 599: r = 1.05, t = 0.05);
+    - `a = (i/n + smkeringeto/4 + t/10) · π · 2` (f64; `smkeringeto` += 0.0002 per 100 Hz UI tick, §1):
+      `MoveObj(sin a · 150 · r − 180, cos a · 150 · r − 75, −700)` in camera space, so the ring of radius ≈ 135 px
+      sits round the screen point ≈ (166, 186), the pinned planet;
+    - `RotateObjr(0, 0.01, 0)` (a spin of 0.01 per drawn frame);
+    - only with `Zoom > 580`: the model's screen point `TransformPoint(GetObjPos)` = (sx, sy) and
+      `Mouse_Szoveg_Set(0x65 + i, 0, sx − 40, sy − 40, 80, 80, design name (record +0), false, 1)`, `Mouse_Szoveg_On`:
+      the hot-spot is the 80 × 80 box round the model, its tooltip the design's name. (An unused `sprintf` of
+      `GetString(2, 5, 1) + " %d"` with i + 1 precedes it.)
+  - So foreign planets show no stations and no station hot-spots.
 
 ### 15.3 Input → orders
 | Hot-spot | Rectangle | `Starmap_Main` |
@@ -935,7 +952,7 @@ info with the tax, auto-build and priority settings (ELF `Starmap_Main`, `GFX_St
 | 0x5b / 0x5f / 0x61 | (506, …, 30, 16) | "ALL": `0x19(planet, 5 / 6 / 7, 0)` (copy to every planet of the player it sees) |
 | 0x5c / 0x5d | (542 / 568, 289, 20, 16) | tax − / +: `0x19(planet, 1 / 2, 0)` |
 | 0x62 / 0x63 | (542 / 568, 333, 20, 16) | priority − / +: `0x19(planet, 3 / 4, 0)` |
-| 0x65 + i | (0, 40 + 30i, 100, 20) | the sale menu of station i + 1 (§16) → `0x17(planet, i + 1)` |
+| 0x65 + i | (sx − 40, sy − 40, 80, 80) round station i's model (§15.2; `Starmap_MouseInit2`'s (0, 40 + 30i, 100, 20) is only the off slot) | the sale menu of station i + 1 (§16) → `0x17(planet, i + 1)` |
 | 8 (left), 9, 11 | | leave (§15.1) |
 
 The buttons send on the press; every message carries `AktPlanet`.

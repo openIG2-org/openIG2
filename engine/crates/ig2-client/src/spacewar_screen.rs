@@ -324,13 +324,13 @@ pub fn starmap_look(v: &View, eye: [f32; 3], target: [f32; 3]) -> Look {
 }
 
 /// A model's triangles in its root space with their textures, and the root's half-extents.
-struct Mesh {
+pub(crate) struct Mesh {
     origin: [f32; 3],
     parts: Vec<(Vec<crate::scene::Vert>, crate::render::TexId)>,
 }
 
 impl Mesh {
-    fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, vector_dir: &str, name: &str, texture_dir: &str) -> Option<Self> {
+    pub(crate) fn load(r: &mut crate::render::Renderer, install: &ig2_formats::Install, vector_dir: &str, name: &str, texture_dir: &str) -> Option<Self> {
         let m = crate::scene::Model::load(install, vector_dir, name, texture_dir).map_err(|e| eprintln!("ig2-client: {e}")).ok()?;
         let parts = m
             .parts
@@ -598,23 +598,23 @@ fn word_color(w: u32) -> [f32; 4] {
 
 /// A camera-fixed model (`SetRelative(false)`): its `AddToScene` scale `size` and rotation `rot` in camera space at
 /// `at` (x right, y down, z ahead negative).
-struct Fixed<'a> {
-    mesh: &'a Mesh,
-    at: [f32; 3],
-    size: f32,
-    rot: (f32, f32, f32),
-    opacity: f32,
+pub(crate) struct Fixed<'a> {
+    pub(crate) mesh: &'a Mesh,
+    pub(crate) at: [f32; 3],
+    pub(crate) size: f32,
+    pub(crate) rot: (f32, f32, f32),
+    pub(crate) opacity: f32,
     /// The first sub-mesh's texture instead of its own (the formation phase's `final2x.bmp`).
-    tex0: Option<crate::render::TexId>,
+    pub(crate) tex0: Option<crate::render::TexId>,
     /// Property bit 8 clear (`PropertiesOff(0xf)`: `ora.xvb`, `no.xvb`): added (`ONE`/`ONE`, RGB × the opacity) over
     /// what is under it (re/screens/render.md §2.3).
-    additive: bool,
+    pub(crate) additive: bool,
 }
 
 /// Draws camera-fixed models into a texture over the virtual rectangle `rect` (the way the starmap's panel is drawn,
 /// `starmap_hud::Console`), to lay over the scene: they sit in front of everything [inf]. Lit by their own ambient
 /// light 0x808080 and a front light [inf].
-fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4], kering: f32, sides: bool, xcenter: f32) -> Option<crate::render::TexId> {
+pub(crate) fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::render::Target>, items: &[Fixed], rect: [f32; 4], kering: f32, sides: bool, xcenter: f32) -> Option<crate::render::TexId> {
     if items.is_empty() {
         return None;
     }
@@ -689,7 +689,7 @@ fn fixed_texture(r: &mut crate::render::Renderer, target: &mut Option<crate::ren
 }
 
 /// A texture of [`fixed_texture`] over its rectangle.
-fn put_fixed(f: &mut crate::render::Frame, v: &crate::font::Virtual, tex: Option<crate::render::TexId>, rect: [f32; 4], clip: Option<[f32; 4]>) {
+pub(crate) fn put_fixed(f: &mut crate::render::Frame, v: &crate::font::Virtual, tex: Option<crate::render::TexId>, rect: [f32; 4], clip: Option<[f32; 4]>) {
     let Some(tex) = tex else { return };
     let [x0, y0, x1, y1] = rect;
     let i = crate::render::Instance::new(crate::render::kind::SPRITE, v.px((x0 + x1) / 2.0, (y0 + y1) / 2.0), [(x1 - x0) * v.k / 2.0, (y1 - y0) * v.k / 2.0], [1.0; 4]);

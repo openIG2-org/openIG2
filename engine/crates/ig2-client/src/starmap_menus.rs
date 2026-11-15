@@ -341,6 +341,8 @@ pub struct Menus {
     /// The pointer (virtual) and whether a button is held (`Mouse_Gomb`).
     pub pointer: [f32; 2],
     pub held: bool,
+    /// The long info's station hot-spots 0x65 + i as the last drawn frame placed them (`None` = off; §15.2).
+    pub stations: Vec<Option<[i32; 4]>>,
     /// The last drawn-frame time the zoom loops advanced to.
     clock: Option<f32>,
     /// `StarmapHosszuInfoKiir`'s statics: the planet, `oldcounter`, `hanyadik`.
@@ -614,8 +616,7 @@ impl Menus {
     pub fn info_spot(&self, state: &SaveState, at: [f32; 2]) -> Option<u32> {
         let i = self.info?;
         let own = planet(state, i.planet)[0x20] == en(state);
-        let stations = i32_at(&planet(state, i.planet), 0x114).clamp(0, 10) as u32;
-        let station = (0..stations).find(|&k| inside([0, 40 + 30 * k as i32, 100, 20], at)).map(|k| 0x65 + k);
+        let station = self.stations.iter().position(|s| s.is_some_and(|s| inside(s, at))).map(|k| 0x65 + k as u32);
         let spot = INFO_SPOTS.iter().filter(|s| (own || s.0 == 100) && inside(s.1, at)).map(|s| s.0).min();
         [station, spot].into_iter().flatten().min()
     }

@@ -99,6 +99,11 @@ pub fn tip(c: &Ctx, at: [f32; 2]) -> Option<StarmapTip> {
         0x54 | 0x56 => 0x17,
         0x57 => 0x18,
         0x5a..=0x63 => id as u16 - 0x41,
+        // A station: its design's name (`StarmapForgatEsMozgatUrallomasok`, re/screens/starmap.md §15.2).
+        0x65..=0x6e => {
+            let text = c.menus.info.map(|i| crate::starmap_stations::name(state, i.planet, id as usize - 0x65)).unwrap_or_default();
+            return Some(StarmapTip { id, text, now: false });
+        }
         _ => return Some(StarmapTip { id, text: Vec::new(), now: false }),
     };
     Some(StarmapTip { id, text: line(n), now: false })

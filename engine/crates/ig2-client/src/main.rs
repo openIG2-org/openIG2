@@ -153,6 +153,7 @@ mod spy_screen;
 mod starmap_panels;
 mod starmap_planet;
 mod starmap_radar;
+mod starmap_stations;
 mod starmap_tip;
 mod replay_viewer;
 mod replays_modern;
@@ -862,6 +863,16 @@ fn info(o: &Options) -> Result<(), String> {
         w.tick();
         for e in w.realtime.drain(..) {
             println!("tick {}: {e:?}", w.curr.tick);
+        }
+        // DEBUG-113
+        {
+            let mut n = std::collections::BTreeMap::new();
+            for (p, e) in std::mem::take(&mut w.ground_fx) {
+                let k = format!("{e:?}");
+                *n.entry(format!("{p}:{}", &k[..k.find(|c: char| !c.is_alphanumeric()).unwrap_or(k.len())])).or_insert(0) += 1;
+            }
+            let shots: usize = colony::ColonySnap::read(&w.game.state, o.colony.unwrap_or(0), &w.game.rules.side.colony).map_or(0, |c| c.shots.len());
+            println!("DBG tick {} shots {shots} {n:?}", w.curr.tick);
         }
     }
     let s = &w.curr;

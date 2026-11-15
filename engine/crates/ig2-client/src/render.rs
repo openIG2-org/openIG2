@@ -2671,6 +2671,11 @@ fn snapshot_band(o: &crate::Options, out: &std::path::Path) -> Result<(), String
         view.camera.zoom = 590.0;
     }
     let mut frame = view.build(&assets, &world.prev, &world.curr, o.alpha, t);
+    // The long info's stations (re/screens/starmap.md §15.2) at `smkeringeto` 0.
+    if info && lv.starmap_mode == 1 {
+        let placed = crate::starmap_stations::stations(&world.game.state, lv.planet.max(0) as usize, view.camera.zoom, 0.0);
+        crate::starmap_stations::Gfx::default().draw(&mut frame, &mut r, &l.install, &placed, 0.0, 0.0, [640.0, 480.0]);
+    }
     hud.draw_starmap_names(&mut frame, &view, &assets, &world.prev, &world.curr, o.alpha, t);
     let mut sel = crate::orders::Selection { mode: lv.starmap_mode, planet: lv.planet.max(0) as usize, fleet: lv.fleet.max(0) as usize };
     // `--select-fleet`: the info box's (and with `--panel` the panels') fleet.
