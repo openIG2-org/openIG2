@@ -536,4 +536,35 @@ mod tests {
         let mut e = StatsScreen::end(game_match(5));
         assert_eq!(e.back(), Some(Act::Close));
     }
+
+    /// The modern page's panels are under the pointer as a whole (the window gives egui a press only over an area):
+    /// the graph's tabs, the table, Continue; the graph takes the height down to the plate.
+    #[test]
+    fn modern_panels_take_the_pointer() {
+        let texts = crate::ui::UiTexts { strings: Default::default(), kinds: Vec::new(), lang: ig2_formats::text::Lang::En };
+        let mut gui = crate::gui::Gui::new(wgpu::TextureFormat::Rgba8UnormSrgb);
+        let mut st = StatsScreen::end(game_match(5));
+        let style = crate::gui::style(&crate::theme::Theme::modern());
+        for _ in 0..2 {
+            gui.run((1920, 1080), &style, |ctx| {
+                st.modern(ctx, &texts, &[], &[], 1.0);
+            });
+        }
+        let rect = |id: &str| gui.ctx.memory(|m| m.area_rect(egui::Id::new(id))).unwrap();
+        let (table, graph, foot) = (rect("st-table"), rect("st-graph"), rect("st-foot"));
+        let screen = gui.ctx.screen_rect();
+        assert!(graph.height() > 372.0 && screen.bottom() - 40.0 - 44.0 - graph.bottom() < 20.0, "{graph:?}");
+        for (id, at) in [("st-graph", graph.min + egui::vec2(60.0, 30.0)), ("st-table", table.center()), ("st-foot", foot.center())] {
+            assert_eq!(gui.ctx.layer_id_at(at).map(|l| l.id), Some(egui::Id::new(id)), "{id} at {at:?}");
+        }
+        // The history's list: its empty part too.
+        let mut st = StatsScreen::history(vec![game_match(5)], None);
+        for _ in 0..2 {
+            gui.run((1920, 1080), &style, |ctx| {
+                st.modern(ctx, &texts, &[], &[], 1.0);
+            });
+        }
+        let list = gui.ctx.memory(|m| m.area_rect(egui::Id::new("st-list"))).unwrap();
+        assert_eq!(gui.ctx.layer_id_at(list.max - egui::vec2(40.0, 40.0)).map(|l| l.id), Some(egui::Id::new("st-list")), "{list:?}");
+    }
 }

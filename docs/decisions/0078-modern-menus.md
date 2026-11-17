@@ -79,7 +79,8 @@ have a small pause menu (Continue, Save, Load, Options, Help, Quit, Exit) with s
 10. **The end-of-game page** (`stats_screen/modern.rs`; with "Modern main menu"): the statistics screen (ADR 0034) as a
    page: the outcome title (own, enemy, silver), mode, days and end date, the empires table (colour stripe from the
    palette, race head, LCD values, score in LCD yellow, your row lit, a beaten empire muted), the graph with segment
-   tabs, grid, day marks and line names; the match history as a table that scrolls instead of Newer and Older pages.
+   tabs, grid, day marks and line names (the graph fills the space down to the Continue plate; each panel takes the
+   pointer over its whole area, so the tabs answer clicks); the match history as a table that scrolls instead of Newer and Older pages.
 11. **The name prompt**: the multiplayer name entry (game question 15/3/2) is a modern prompt with a field, Back and OK.
 12. **Alignment with the boards**: the main menu's entries at the board's 52-point spacing; the pause menu's "Resume"
    and last-save line; the save and load page 12 points lower (below the top bar); settings cards' headings 18 high,

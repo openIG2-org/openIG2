@@ -88,6 +88,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - A mod deleted from the mods folder is dropped from the enabled list at start instead of leaving the Mods page stuck.
 - The browser version no longer freezes on the Mods page's Browse tab; its multiplayer offers only internet games through the fixed relay server, without the relay field and port mapping.
 - The automatic updater installs releases again (it stopped at the bundle's `models` folder). In the browser version Ctrl+V pastes a join code and the copy button copies it.
+- The modern end-of-game statistics page answers mouse clicks on the graph's tabs and Continue, the right button goes Back again, and the graph is taller.
 - The quit and exit confirmations are no longer dimmed along with the screen behind them.
 - The browser version draws 3D models again (ships, asteroids, planets): the browser had rejected the model shader since the detailed starmap background came in.
 

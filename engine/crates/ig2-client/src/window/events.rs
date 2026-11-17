@@ -105,7 +105,8 @@ impl ApplicationHandler for App {
         let mods_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.mods.is_some());
         // Ours (ADR 0085): the Custom game page likewise.
         let custom_page = self.options.is_none() && self.front.as_ref().is_some_and(|f| f.custom.is_some());
-        let page = mp_page || mods_page || custom_page || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
+        // The modern statistics page (ADR 0078) covers the menu: every press is its own, not only one over its panels.
+        let page = mp_page || mods_page || custom_page || self.stats_modern_up() || self.options.as_ref().is_some_and(|o| o.s.modern.is_some());
         // The modern main menu's entries take either button, as the panel's and the exe's rings (`Mouse_Lenyom`).
         let either = self.main_menu_modern_up();
         let production = self.production_modern_up();

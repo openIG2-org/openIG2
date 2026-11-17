@@ -22,11 +22,10 @@ pub fn load_heads(ctx: &egui::Context, install: &ig2_formats::Install) -> Vec<Op
         .collect()
 }
 
-/// The board's places (points at 1920 × 1080): the margin, the title's top, the table's top, the graph's height.
+/// The board's places (points at 1920 × 1080): the margin, the title's top, the table's top; the graph takes the rest.
 const MARGIN: f32 = 140.0;
 const TITLE_Y: f32 = 61.0;
 const TABLE_Y: f32 = 196.0;
-const GRAPH_H: f32 = 372.0;
 /// The table's value columns: 96 wide, 12 apart.
 const COL_W: f32 = 96.0;
 const COL_GAP: f32 = 12.0;
@@ -84,7 +83,7 @@ impl StatsScreen {
                 let m = m.clone();
                 let table_h = self.modern_table(ctx, texts, palette, heads, &m, Rect::from_min_size(Pos2::new(screen.left() + margin, screen.top() + table_y), Vec2::new(w, row_h)), opacity);
                 let top = screen.top() + table_y + table_h + 12.0;
-                let gh = GRAPH_H.min(foot_y - 16.0 - top).max(160.0);
+                let gh = (foot_y - 16.0 - top).max(160.0);
                 self.modern_graph(ctx, texts, palette, &m, Rect::from_min_size(Pos2::new(screen.left() + margin, top), Vec2::new(w, gh)), opacity);
             }
             None => {
@@ -122,6 +121,8 @@ impl StatsScreen {
         egui::Area::new(egui::Id::new("st-table")).fixed_pos(panel.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), panel, ds::PanelKind::Deep, 0.90);
+            // The whole panel is the area's (the window gives the page a press only over an area).
+            ui.expand_to_include_rect(panel);
             let inner = Rect::from_min_max(panel.min + Vec2::new(24.0, 16.0), panel.max - Vec2::new(24.0, 20.0));
             // The value columns from the right; a narrow window narrows them.
             let cw = COL_W.min((inner.width() - 300.0) / 9.0 - COL_GAP).max(40.0);
@@ -181,6 +182,7 @@ impl StatsScreen {
         egui::Area::new(egui::Id::new("st-graph")).fixed_pos(r.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), r, ds::PanelKind::Glass, 0.90);
+            ui.expand_to_include_rect(r);
             let inner = Rect::from_min_max(r.min + Vec2::new(24.0, 17.0), r.max - Vec2::new(24.0, 20.0));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
             let labels: Vec<String> = tabs.iter().map(|t| tr(t)).collect();
@@ -253,6 +255,7 @@ impl StatsScreen {
         egui::Area::new(egui::Id::new("st-list")).fixed_pos(r.min).fade_in(false).show(ctx, |ui| {
             ui.multiply_opacity(opacity);
             ds::paint_panel(ui.painter(), r, ds::PanelKind::Deep, 0.90);
+            ui.expand_to_include_rect(r);
             let inner = Rect::from_min_max(r.min + Vec2::new(24.0, 16.0), r.max - Vec2::new(24.0, 20.0));
             let xs = [0.0, 0.16, 0.32, 0.46, 0.56];
             let heads = ["Date", "Mode", "Result", "Days", "Empires"];
