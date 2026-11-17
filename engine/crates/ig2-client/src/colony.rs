@@ -201,6 +201,8 @@ pub struct ColonySnap {
     /// (`BolygoTipus::pMuholdakMennyi(EN)` = planet `+0xc4 + EN`; empire 7 counts an empty entry as one). Else
     /// the buildings, roads and units are hidden and only red footprints show (`DrawBuildingBases`).
     pub visible: bool,
+    /// The human owns the planet (`Bolygok[AktPlanet]+0x20 == EN`): its idle buildings show markers ([`status_marker`]).
+    pub human_owned: bool,
 }
 
 impl ColonySnap {
@@ -321,6 +323,7 @@ impl ColonySnap {
             placed: field.units.iter().zip(&field.alive).enumerate().filter(|(_, (u, a))| **a && u.flags & flag::LANDED == 0).map(|(i, (u, _))| (i, u.owner, u.cell)).collect(),
             self_destruct: field.self_destruct,
             visible,
+            human_owned: p.owner as usize == en,
         })
     }
 
@@ -879,27 +882,83 @@ fn smoke_places(m: &Model, xf: &Transform, b: &BuildingView, verts: &[MeshVertex
         out.chimneys.push((b.slot, xf.point(n.at)));
     }
     let (gx, gz) = grid_to_real(b.x, b.y);
-    let hit = |y: f32, z: f32| -> Option<V3> {
-        let mut best: Option<f32> = None;
-        for t in verts.chunks_exact(3) {
-            let (a, b, c) = (t[0].pos, t[1].pos, t[2].pos);
-            let d = (b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2]);
-            if d.abs() < 1e-9 {
-                continue;
-            }
-            let u = ((y - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (z - a[2])) / d;
-            let v = ((b[1] - a[1]) * (z - a[2]) - (y - a[1]) * (b[2] - a[2])) / d;
-            if u < 0.0 || v < 0.0 || u + v > 1.0 {
-                continue;
-            }
-            let h = a[0] + u * (b[0] - a[0]) + v * (c[0] - a[0]);
-            if (-1500.0..=15000.0).contains(&h) && best.is_none_or(|x| h < x) {
-                best = Some(h);
-            }
-        }
-        best.map(|h| [h, y, z])
-    };
+    let hit = |y: f32, z: f32| vertical_hit(verts, y, z, -1500.0);
     out.damage.push((b.slot, [hit(gx + 30.0, gz - 25.0), hit(gx - 30.0, gz + 30.0), hit(gx - 30.0, gz - 30.0)]));
+}
+
+/// `vonalmetszes` along the vertical line through `(y, z)` from height `from` down to 15000: the first (highest,
+/// smallest height) point of `verts`' triangles.
+fn vertical_hit(verts: &[MeshVertex], y: f32, z: f32, from: f32) -> Option<V3> {
+    let mut best: Option<f32> = None;
+    for t in verts.chunks_exact(3) {
+        let (a, b, c) = (t[0].pos, t[1].pos, t[2].pos);
+        let d = (b[1] - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (b[2] - a[2]);
+        if d.abs() < 1e-9 {
+            continue;
+        }
+        let u = ((y - a[1]) * (c[2] - a[2]) - (c[1] - a[1]) * (z - a[2])) / d;
+        let v = ((b[1] - a[1]) * (z - a[2]) - (y - a[1]) * (b[2] - a[2])) / d;
+        if u < 0.0 || v < 0.0 || u + v > 1.0 {
+            continue;
+        }
+        let h = a[0] + u * (b[0] - a[0]) + v * (c[0] - a[0]);
+        if (from..=15000.0).contains(&h) && best.is_none_or(|x| h < x) {
+            best = Some(h);
+        }
+    }
+    best.map(|h| [h, y, z])
+}
+
+/// `GetBuildingTop` (exe 0x47a450, spec §3.6): the first hit of the vertical line through the building's placement
+/// `(gx, gz)`, raised to the highest hit of four more lines at (∓10, ∓10), (−20, +20), (+20, −20); kinds 6 and 10
+/// then 100 higher, 0x1c..=0x1f 60 higher. `None` when the middle line misses (the exe keeps a stale hit).
+fn building_top(verts: &[MeshVertex], kind: u8, gx: f32, gz: f32) -> Option<V3> {
+    let mut top = vertical_hit(verts, gx, gz, -15000.0)?;
+    for (dy, dz) in [(-10.0, -10.0), (10.0, 10.0), (-20.0, 20.0), (20.0, -20.0)] {
+        if let Some(p) = vertical_hit(verts, gx + dy, gz + dz, -15000.0) {
+            top[0] = top[0].min(p[0]);
+        }
+    }
+    top[0] -= match kind {
+        6 | 10 => 100.0,
+        0x1c..=0x1f => 60.0,
+        _ => 0.0,
+    };
+    Some(top)
+}
+
+/// `UpdateVillam` (exe 0x4a7300, spec §3.6): the marker over a building of the human's colony, by its `+0x19` bits:
+/// `kereszt` switched off (bit 5), `villam` short of energy (bit 3), `ember` short of workers (bit 6, and bits 0, 2, 3
+/// clear); the last two only once finished.
+fn status_marker(b: &BuildingView) -> Option<&'static str> {
+    let f = b.flags;
+    if f & 0x20 != 0 {
+        Some("kereszt")
+    } else if b.work_left != 0 {
+        None
+    } else if f & 0x08 != 0 {
+        Some("villam")
+    } else if f & 0x0d == 0 && f & 0x40 != 0 {
+        Some("ember")
+    } else {
+        None
+    }
+}
+
+/// [`status_marker`]'s pose this frame for the 1-based `slot` at `ColonyCounter` `counter`, the model's half-extents
+/// `origin`: the record matrix `R·S` (`ScaleObjGenesis`; the bolt and the person `RotateObj(0, π/2, 0)` then
+/// `RotateObj2((1, 0, 0), C/55 + i)`, the cross `RotateObj(C/55 + i, 0, 0)`).
+fn marker_matrix(name: &str, counter: f32, slot: usize, origin: V3) -> M3 {
+    let (c, i) = (counter as f64, slot as f64 - 1.0);
+    let wave = (c / 20.0 + i).sin();
+    let turn = (c / 55.0 + i) as f32;
+    if name == "kereszt" {
+        let s = Placement::genesis(origin, ((wave / 10.0 + 0.5) / 4000.0) as f32);
+        s.rotated(turn, 0.0, 0.0)
+    } else {
+        let s = Placement::genesis(origin, ((wave / 5.0 + 1.0) / 4000.0) as f32);
+        scene::mul(&scene::axis_matrix([1.0, 0.0, 0.0], turn), &s.rotated(0.0, std::f32::consts::FRAC_PI_2, 0.0))
+    }
 }
 
 /// [`cut_height`]'s `frac`: the share of the work done, `None` once finished.
@@ -1209,6 +1268,8 @@ pub struct ColonyScene {
     fog: [f32; 3],
     /// The buildings' world transforms by slot (for markers).
     pub building_at: Vec<(usize, V3)>,
+    /// The buildings' tops by slot (`GetBuildingTop`, [`building_top`]): where the status markers float.
+    tops: Vec<(usize, V3)>,
     /// The radar's picture: the terrain seen from straight above (re/screens/hud.md §3.1).
     pub radar: Option<TexId>,
     /// What the baked buildings were made from: `(slot, kind, x, y, finished)` ([`ColonyScene::stale`]).
@@ -1428,6 +1489,7 @@ impl ColonyScene {
         let mut building_at = Vec::new();
         let mut faces = Vec::new();
         let mut emitters = crate::colony_smoke::Emitters::default();
+        let mut tops = Vec::new();
         let mut placed = Vec::new();
         for b in &s.buildings {
             let Some(bm) = rules.building_models.get(b.kind as usize) else { continue };
@@ -1484,6 +1546,7 @@ impl ColonyScene {
             // The slot's `+0x14` is `getbottomvertex`'s height, one below the model's placement.
             cuts.extend(std::iter::repeat_n((b.work_left > 0).then_some((b.slot, xf.translation[0] + 1.0)), rg.len() - before));
             smoke_places(m, &xf, b, &v[vstart..level0_end], &mut emitters);
+            tops.extend(building_top(&v[vstart..level0_end], b.kind, wx, wy).map(|t| (b.slot, t)));
             owners.extend(std::iter::repeat_n(b.kind, rg.len() - before));
             blink_slots.extend(std::iter::repeat_n(blinks(b).then_some(b.slot), rg.len() - before));
             worlds.extend(std::iter::repeat_n(xf.matrix, rg.len() - before));
@@ -1569,7 +1632,7 @@ impl ColonyScene {
                 .collect();
             statics.push(Drawn { mesh, draws, when: Some(true), lods: Vec::new() });
         }
-        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), new_ruins: Vec::new(), extra_tex: None, emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), collapses: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed, roads_from, roads_pending })
+        Ok(Self { statics, env, finest, levels: models, lods, faces, last_scaffolds: Vec::new(), falling: Vec::new(), fall_counter: None, fall_rand: crate::colony_weather::CRand(1), smoke: Default::default(), new_ruins: Vec::new(), extra_tex: None, emitters, weather: crate::colony_weather::Weather::new(s.weather), scaffold_models: (0..10).map(|_| None).collect(), sky, textures, white, units: HashMap::new(), turrets: HashMap::new(), fog, building_at, tops, radar: Some(radar), key: scene_key(s), buildings: HashMap::new(), collapses: HashMap::new(), info_target: None, globes: HashMap::new(), dropship: None, fx: HashMap::new(), unit_centres: Vec::new(), unit_poses: Vec::new(), placed, roads_from, roads_pending })
     }
 
     /// The background's fog colour (`Hatterek+0x20..+0x28`, 0..1).
@@ -2498,6 +2561,26 @@ impl View {
                 }
             }
         }
+        // The status markers over the human's idle buildings (`UpdateVillam`, spec §3.6): 30 above the building's
+        // top, additive (`PropertiesOff(8)`), unlit (`PropertiesOff(1)`: a zero normal, full-bright colour), writing
+        // depth (properties 0x6 in the exe).
+        if curr.human_owned {
+            let marks: Vec<(&'static str, usize, V3)> = curr.buildings.iter()
+                .filter_map(|b| Some((status_marker(b)?, b.slot, scene.tops.iter().find(|(s, _)| *s == b.slot)?.1)))
+                .collect();
+            for (name, slot, top) in marks {
+                let Some(mesh) = scene.fx_mesh(r, install, name) else { continue };
+                let m = marker_matrix(name, self.overlay.counter, slot, mesh.model.origin);
+                let xf = Transform { matrix: m.map(|x| x * 1024.0), translation: [top[0] - 30.0, top[1], top[2]] };
+                let (mut v, mut rg) = (Vec::new(), Vec::new());
+                bake(&mesh.model, &xf, [1.0; 3], 1.0, &mut v, &mut rg);
+                let base = dynamic.len() as u32;
+                dynamic.extend(v.into_iter().map(|x| MeshVertex { normal: [0.0; 3], ..x }));
+                for (range, pi, _) in rg {
+                    draws.push(MeshDraw { mesh: None, range: range.start + base..range.end + base, tex: mesh.texs[pi], glass: true, cloud: false, shadow: Shadow::None, video: false, additive: true, depth_write: true });
+                }
+            }
+        }
         // The machine gun's tracers (`LineParticle::Draw`, two 1-px `line3d2` segments) and the laser's beams
         // (`villam::Update`: a `villam.bmp` ribbon of half width W and a `flare.bmp` square), spec §5.4, §5.5.
         if curr.visible {
@@ -3288,6 +3371,44 @@ mod tests {
         assert!((blink_transparency(0.0, 3) - (3.0f64.sin() * 0.25 + 0.26) as f32).abs() < 1e-7);
         let ts: Vec<f32> = (0..95).map(|c| blink_transparency(c as f32, 1)).collect();
         assert!(ts.iter().all(|t| (0.0099..=0.5101).contains(t)));
+    }
+
+    #[test]
+    fn status_markers_follow_update_villam() {
+        // exe 0x4a7300: the cross on bit 5 (even unfinished), the bolt on bit 3, the person on bit 6 with 0, 2, 3 clear.
+        let b = |flags, work_left| BuildingView { slot: 1, kind: 7, x: 0.0, y: 0.0, work_left, damage: 0, flags, yield_pct: 100, efficiency: 256 };
+        let cases = [(0x00, 0, None), (0x01, 0, None), (0x40, 0, Some("ember")), (0x41, 0, None), (0x44, 0, None), (0x48, 0, Some("villam")),
+            (0x08, 0, Some("villam")), (0x09, 0, Some("villam")), (0x08, 5, None), (0x40, 5, None), (0x20, 5, Some("kereszt")), (0x68, 0, Some("kereszt"))];
+        for (flags, left, want) in cases {
+            assert_eq!(status_marker(&b(flags, left)), want, "flags {flags:#x} left {left}");
+        }
+        // The pose at C = 0, slot 1 (i = 0): the bolt and the person `diag(o)/4000` turned by `RotateObj(0, π/2, 0)`, the
+        // cross `diag(o)·0.5/4000` unturned.
+        let o = [100.0, 50.0, 25.0];
+        let s = Placement::genesis(o, 1.0 / 4000.0);
+        let want = s.rotated(0.0, std::f32::consts::FRAC_PI_2, 0.0);
+        let got = marker_matrix("ember", 0.0, 1, o);
+        assert!(got.iter().zip(&want).all(|(a, b)| (a - b).abs() < 1e-9), "{got:?}");
+        let cross = marker_matrix("kereszt", 0.0, 1, o);
+        assert!(cross.iter().zip(&[0.0125, 0.0, 0.0, 0.0, 0.00625, 0.0, 0.0, 0.0, 0.003125]).all(|(a, b)| (a - b).abs() < 1e-9), "{cross:?}");
+        // C = 20·(π/2 − 1), slot 2: sin = 1, the largest: 1.2/4000 for the bolt, 0.6/4000 for the cross.
+        let c = (20.0 * (std::f64::consts::FRAC_PI_2 - 1.0)) as f32;
+        let big = marker_matrix("kereszt", c, 2, [1.0, 1.0, 1.0]);
+        let det = big[0] * (big[4] * big[8] - big[5] * big[7]) - big[1] * (big[3] * big[8] - big[5] * big[6]) + big[2] * (big[3] * big[7] - big[4] * big[6]);
+        assert!((det.cbrt() - 0.6 / 4000.0).abs() < 1e-9, "{det}");
+    }
+
+    #[test]
+    fn building_top_takes_the_highest_of_five_lines() {
+        let v = |h: f32, y: f32, z: f32| MeshVertex { pos: [h, y, z], normal: [0.0; 3], uv: [0.0; 2], color: [1.0; 4] };
+        // A roof at −500 over ±50 and a spire at −600 that only the (+10, +10) line meets.
+        let mut verts = vec![v(-500.0, -50.0, -50.0), v(-500.0, 50.0, -50.0), v(-500.0, 50.0, 50.0), v(-500.0, -50.0, -50.0), v(-500.0, 50.0, 50.0), v(-500.0, -50.0, 50.0)];
+        verts.extend([v(-600.0, 8.0, 8.0), v(-600.0, 12.0, 8.0), v(-600.0, 10.0, 12.0)]);
+        assert_eq!(building_top(&verts, 7, 0.0, 0.0), Some([-600.0, 0.0, 0.0]));
+        assert_eq!(building_top(&verts, 10, 0.0, 0.0), Some([-700.0, 0.0, 0.0]));
+        assert_eq!(building_top(&verts, 0x1d, 0.0, 0.0), Some([-660.0, 0.0, 0.0]));
+        // The middle line misses: no top.
+        assert_eq!(building_top(&verts[6..], 7, 0.0, 0.0), None);
     }
 
     #[test]

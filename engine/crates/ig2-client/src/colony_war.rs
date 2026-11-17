@@ -1112,6 +1112,7 @@ pub(crate) mod tests {
             placed: (0..4).map(|i| (i, if i < 3 { 1 } else { 2 }, (10 + i as i32, 20))).collect(),
             self_destruct: -1,
             visible: true,
+            human_owned: false,
         }
     }
 

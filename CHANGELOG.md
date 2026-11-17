@@ -81,6 +81,7 @@ Getting the game from "every part works" to "a player can install it and play it
 ### Fixes
 - Multiplayer in the browser works on a page served over HTTPS: it reaches the relay server over HTTPS (behind the server's TLS proxy), and the relay server counts its limits per player behind that proxy.
 - Entering planets and space battles over and over no longer crashes with "Not enough memory left".
+- Idle buildings in your colonies now show the original's floating marker: a lightning bolt without energy, a figure without workers, a cross when switched off.
 - The galaxy simulation and the modern interface do less work every frame, and a ground war no longer stutters when a building falls.
 - Fixed: a crash in campaign 1, a black screen after minimising, the spy screen's buttons, a desync after garrisons entered a battle, and a crash from a malformed diplomacy message.
 - Fleet splitting, single clicks on the production buttons, the messages screen's list and the credits video work again.

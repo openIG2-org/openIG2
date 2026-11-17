@@ -238,6 +238,36 @@ Every fifth UI tick (`(int)ColonyCounter % 5 == 0`), `Atlepes` clear, owner 1 (`
   puff per step while the building works; `a += 3` from 0x80, `vy/vz += 0.08`, size +0.3, 40 updates.
 The particles' random tables come from `srand(SDL_GetTicks())`: not reproducible.
 
+### 3.6 Status markers over idle buildings (`PlaceVillam`, `UpdateVillam`)
+A spinning model floats over a building of the human's colony that stands idle. `PlaceVillam` (exe 0x48c400, ELF 0x4b9fc0;
+`Init3dColony` and `Build3dBuilding`, with the building's other effects) loads three models from `vector/colony/` into the
+building's scene record (exe 0x9964e0 + 0x98·(slot − 1)): `villam.xvb` (a lightning bolt) at `+0x8`, `ember.xvb` (a person)
+at `+0x10`, `kereszt.xvb` (a cross) at `+0x18`. Each one: `AddToScene(model, atlatszodolgok, 0.025)`, `PropertiesOff(8)`
+(additive `ONE`/`ONE`) and `PropertiesOff(1)` (unlit, full bright; render.md §2.3), `MoveObj(h − 30, x, z)` with
+`(h, x, z)` the building's top, `RotateObj(0, π/2, 0)`; hidden until `UpdateVillam` shows it. [obs: a `kirak2` probe on
+quick-2.sav planet 71: the markers draw with properties 0x6 (depth test and write, additive, unlit, fog off) and vertex
+colour 0xfffefefe; their textures are `embertex_bmp`, `kereszt_bmp` and the like in `textures/colony/`.]
+
+The top (`GetBuildingTop` exe 0x47a450, ELF 0x4b9a20): `(gx, gz)` = `Grid2Real(x + (w odd)·0.5, y − (h odd)·0.5)` (as
+§3.1). A vertical line from −15000 to 15000 through `(gx, gz)` meets the building's mesh (`vonalmetszes`, property
+0x100000 on the building alone): its first hit is the top `(h, x, z)`. Four more lines at `(gx − 10, gz − 10)`,
+`(gx + 10, gz + 10)`, `(gx − 20, gz + 20)` and `(gx + 20, gz − 20)` raise `h` to a higher hit (smaller value); a miss
+changes nothing. Then kinds 6 and 10 (the Park) go 100 higher, kinds 0x1c..0x1f 60 higher.
+
+`UpdateVillam` (exe 0x4a7300, ELF 0x4ba2f0), from `ShowColony`'s building loop every drawn frame, `i` = slot − 1,
+`C` = `ColonyCounter` (f64 maths), each marker shown only on a planet the human owns (`Bolygok[AktPlanet]+0x20 == EN`),
+else hidden; status bits `+0x19` as `re/rules/colony-economy.md` (bit 0 working, 2 damaged, 3 no energy, 5 switched
+off, 6 no workers):
+| Model | Shown when | Scale (`ScaleObjGenesis`, `S = diag(o)·s`) | Turn |
+|---|---|---|---|
+| `ember` (no workers) | bits 0, 2, 3, 5 clear, bit 6 set, finished (`+8 == 0`) | `(sin(C/20 + i)/5 + 1)/4000` | `RotateObj(0, π/2, 0)`, `RotateObj2((1, 0, 0), C/55 + i)` |
+| `villam` (no energy) | bit 3 set, bit 5 clear, finished | the same | the same |
+| `kereszt` (switched off) | bit 5 set | `(sin(C/20 + i)/10 + 0.5)/4000` | `RotateObj(C/55 + i, 0, 0)` |
+
+So a building short of both shows the lightning only, and a switched-off one the cross only (also while it is being
+built). The exe and the ELF agree instruction for instruction (constants exe 0x8523c8 20, 0x852390 5, 0x8522e0 1,
+0x8524a0 4000, 0x852418 55, 0x848530 0.5).
+
 ## 4. Units (`WF_Tank`, re/rules/ground-combat.md §11)
 
 `WF_Tank::LoadMesh` 0x46efc0, per frame `WF_Tank::Update` 0x47f9e0; visible units are alive, not mines (0x20000)
@@ -448,8 +478,7 @@ bases/selection, `WF::WriteStuff`, the radar, special-weapon buttons), `_2` (pla
 over depth 2300..2800.
 
 ## 7. Not specified here
-`ColonyGestureHandler`, the shadow map (`rendershadowmap`; render.md §4), scenery objects (`LoadScapeObj`), lightning
-(`PlaceVillam`), the lens flare, the build grid, the radar's noise, the shots' and explosions' models and particles (§5).
+`ColonyGestureHandler`, the shadow map (`rendershadowmap`; render.md §4), scenery objects (`LoadScapeObj`), the lens flare, the build grid, the radar's noise, the shots' and explosions' models and particles (§5).
 
 ## 8. Reference captures
 `tools/trace/run_screen.py <install> <save> <out> --planet P [--cam X,Y,ZOOM,PITCH,ROTATE] --run` loads the save in
@@ -1059,6 +1088,12 @@ Done: §2–§6, §9–§12 as specified; capture comparisons `colony:42`, `colo
 exe's click pass); results in
 `re/screens/diff-results.md`. Weather capture runs through `run_screen.py --script tools/trace/scripts/colony-weather.json`
 (still exe grabs come back white); the Park smoke capture uses `--cam=-793.6,-1002.6,-1100,-0.7853982,0` + `--colony-cam`.
+Status markers (§3.6): `colony.rs` `building_top`, `vertical_hit` (shared with the smoke's damage points), `status_marker`,
+`marker_matrix`, drawn in the shared 3D scene (classic and modern), `ColonySnap::human_owned`; tests
+`status_markers_follow_update_villam`, `building_top_takes_the_highest_of_five_lines`. Capture (quick-2.sav `colony:71`, the camera over the labs): the
+markers stand over the same three buildings at the same height and size; ours are brighter (mean (255, 254, 214)
+against the exe's (250, 231, 150)), open: the vertex colour and properties match, so the gap lies in the texture's
+sampling or the additive blend.
 Ours / approximations: distance fog off (border fog only); random draws are stand-in hashes, not libc (row 369);
 war effects: flashes, projectile models, trails, tracers and beam ported, smoke, dust, scorch marks, ruin fade and debris flight missing (§5, row 421); the build cursor's red is a tint; the radar is its own terrain-from-above
 render; mouse-wheel zoom (a glide to a target in the keys' −1100..240, `CameraKeys::wheel`); the pointer drawn on the colony screen only. Not compared on a capture: the scaffold collapse,
