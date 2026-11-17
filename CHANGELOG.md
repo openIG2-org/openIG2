@@ -15,6 +15,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Custom game: set the galaxy's planet count and seed and, per empire, the race, name, money, technology, start planets, computer level, aggressiveness and start relation; a map of the galaxy lets you pick your start star.
 - "Computer empires: Enhanced" (for new games and multiplayer rooms): the computer empires expand, research and build up better, gather fleets before striking, invade only with enough troops, defend their colonies, make peace and pacts, and no longer gang up on empires they have never met; Classic plays as the original.
 - Enhanced computer empires no longer stack factories or labs on a planet that has no workers or power for them.
+- Enhanced computer empires no longer break a cease-fire or a fresh peace by joining a war together, offer alliances only against an enemy both fight, and write to you at most every 300 days (90 at war), and only once you have met them.
 - Auto research: three switches on the research screen (ships, buildings, tanks) let an idle research slot pick its next project.
 - Quick save (F12) and quick load (Shift+F12), autosaves every 10, 30 or 90 game days, fleet groups (Ctrl+1…9, Alt+1…9), and an optional starmap camera with wheel zoom and W/A/S/D.
 - Every game records a replay you can watch from the main menu; after a win or a loss a statistics screen shows how the game went, History lists every finished game, and a won scenario can take your name into its high-score table.

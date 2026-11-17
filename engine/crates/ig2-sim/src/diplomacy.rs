@@ -2357,10 +2357,79 @@ mod tests {
         for a in 1..=4 {
             for b in 1..=4 {
                 fx.map.met[a][b] = 1;
+                d.known_since[a][b] = -1;
             }
         }
         d.power[..5].copy_from_slice(&power);
         d
+    }
+
+    /// Issue 122: a cease-fire, a pact or the 600 days after a treaty hold an enhanced empire back from a war
+    /// together against that empire, proposed or accepted.
+    #[test]
+    fn enhanced_war_together_keeps_a_ceasefire() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 400.0, 400.0, 400.0]);
+        let against_1 = Message::ai(cat::NEGOTIATE, negotiate::WAR_TOGETHER, 1);
+        d.set_level(2, 1, level::CEASEFIRE);
+        let mut w = fx.world();
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 0, 1), Some(against_1), "2 holds a cease-fire with its target");
+        assert!(!d.decide(&mut w, &(), 3, 2, against_1), "nor does 2 join one");
+        d.set_level(2, 1, level::NEUTRAL);
+        d.known_since[2][1] = 600;
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 0, 1), Some(against_1), "peace made lately");
+        assert!(!d.decide(&mut w, &(), 3, 2, against_1));
+        d.known_since[2][1] = -1;
+        d.known_since[3][1] = 600;
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 0, 1), Some(against_1), "the partner made peace lately");
+        d.known_since[3][1] = -1;
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 0, 1), Some(against_1), "600 days on");
+        assert!(d.decide(&mut w, &(), 3, 2, against_1));
+    }
+
+    /// Issue 122: alliances only against an enemy both fight (or a runaway leader the proposer fights).
+    #[test]
+    fn enhanced_alliance_needs_a_common_war() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 100.0, 100.0, 1000.0]);
+        d.set_level(2, 3, level::NAP);
+        d.relations[2][3].v[field::TRUST] = 6000;
+        let w = fx.world();
+        assert_eq!(d.runaway_leader(&w), 4);
+        let alliance = Some(Message::ai(cat::NEGOTIATE, negotiate::ALLIANCE, 0));
+        assert_ne!(d.enhanced_pick(&w, 2, 3, 4, 0), alliance, "a leader alone is no reason");
+        d.set_level(2, 4, level::WAR);
+        assert_eq!(d.enhanced_pick(&w, 2, 3, 4, 0), alliance, "2 fights the leader");
+    }
+
+    /// Issue 122: a human hears from an enhanced empire every 300 days at most (90 at war), and only once it has
+    /// met that empire itself; computer empires every 90 (30).
+    #[test]
+    fn enhanced_writes_to_a_human_less_often() {
+        let fx = &mut Fixture::new();
+        let mut d = enhanced(fx, [1.0, 100.0, 100.0, 100.0, 100.0]);
+        let sent = |d: &mut Diplomacy, fx: &mut Fixture, b: usize, days: i32| {
+            d.last_contact[2 * 9 + b] = days;
+            let mut w = fx.world();
+            d.consider_enhanced(&mut w, 2, b, 0, 0);
+            d.last_contact[2 * 9 + b] == 0
+        };
+        assert!(sent(&mut d, fx, 3, 91), "an AI after 90 days");
+        assert!(!sent(&mut d, fx, 1, 91), "the human not yet");
+        assert!(!sent(&mut d, fx, 1, 300));
+        fx.map.met[1][2] = 0;
+        assert!(!sent(&mut d, fx, 1, 301), "the human hasn't met 2");
+        fx.map.met[1][2] = 1;
+        d.players.clear();
+        assert!(sent(&mut d, fx, 1, 301));
+        d.set_level(2, 1, level::WAR);
+        d.set_level(2, 3, level::WAR);
+        d.power[3] = 200.0;
+        d.power[1] = 200.0;
+        assert!(sent(&mut d, fx, 3, 31), "a cease-fire asked of an AI after 30 days");
+        d.players.clear();
+        assert!(!sent(&mut d, fx, 1, 31));
+        assert!(sent(&mut d, fx, 1, 91));
     }
 
     #[test]

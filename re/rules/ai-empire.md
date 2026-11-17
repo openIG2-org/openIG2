@@ -830,15 +830,22 @@ Terms (x judges y; `power` = `BirodalomEro`, `danger` = `MiVeszelyAllapot`, `r =
   (§6.2 there), computed once per day per sender.
 **Sending** (`MI_DIPLOMACY`'s pair loop, the original's checks on contact, race-5 empires and a human still answering;
 instead of its 1-in-100 draw and table): a message to y at most every 90 days (30 at war: `DiplomaciaMikorHivta`
-reset only when one is sent), the first that applies:
+reset only when one is sent); to a human-played y at most every 300 days (the original's minimum; 90 at war), and
+only once y has met x itself (`BirodalomIsmeri[y][x]`; the original writes on x's contact alone, so empires the
+player never found wrote to it, issue 122). The first that applies:
 1. level ≥ 4 and (`r.v0 > 2500` or `r.v5 > 3000`) → break the alliance / the NAP (y spied a lot or broke its word);
 2. level 1 and (weak, or gang and not winning) → cease-fire; level 2 → peace;
-3. gang, levels x–y ≥ 3, y–L neutral, x–L neutral or at war, no other war of x and `power[x] + power[y] ≥ 0.75 ·
-   power[L]` → war together against L; else `t = target(x) > 0` (x is then at war with nobody), t ≠ y, x–y ≥ 3, y–t
-   neutral → war together against t (the original's step j without its draws and opinion test); both x and y must
+3. gang, levels x–y ≥ 3, y–L neutral, x–L neutral or at war, x and y both *free to fight* L (at war with it, or
+   neutral with `BirodalomMiotaIsmeri < 0`: past the 600 days after a treaty, below), no other war of x and `power[x] + power[y] ≥ 0.75 ·
+   power[L]` → war together against L; else `t = target(x) > 0` (x is then at war with nobody), t ≠ y, x–y ≥ 3, both x
+   and y neutral with t and free to fight it → war together against t (`target(x)` may be a cease-fire or pact
+   partner, which the original scores −500 / +3000: without the test the loser of a war asked a third for a war
+   together against the empire it had just signed a cease-fire with, and the war and the cease-fire took turns,
+   issue 122) (the original's step j without its draws and opinion test); both x and y must
    have met L (or y must have met t: `BirodalomIsmeri`), so no war together drags in an empire that never met the
    third (without it, Enhanced empires all over the map declared war on an unmet human one after another);
-4. level 4, no grudge, trust `r.v1 > 5500`, y ≠ target(x), y ≠ L, shared enemy → alliance;
+4. level 4, no grudge, trust `r.v1 > 5500`, y ≠ target(x), y ≠ L, and a third empire at war with both or x at war
+   with L → alliance (a loose L alone made every NAP partner an alliance offer, issue 122);
 5. level 3, no grudge, y ≠ target(x), y ≠ L, and (L exists and isn't x, near and `power[y] ≥ 0.8 · power[x]`,
    opinion `r.v17 > 6000`, or a shared enemy) → NAP;
 6. level ≥ 3, no trade agreement, no grudge, y ≠ target(x), y ≠ L unless x is L → trade agreement;
@@ -846,18 +853,19 @@ reset only when one is sent), the first that applies:
 **Accepting** (b = the enhanced receiver judging a, `EldontIgenNemUzenet` cat 0; the war declaration and the breaks
 are accepted as before): cease-fire and peace at level ≤ 2 when rule 2 holds for b or b isn't winning; NAP, alliance
 and trade by rules 5, 4, 6 for b (the original judges alliance offers by the NAP rule and so never accepts one,
-`diplomacy.md` §6); war together when b is neutral with the third and at war with nobody and the two hold 0.75 × its
-power when it is L, 2 × its power otherwise (both a and b must have met it), or by the original's rule (no war and `target(b)` is the third).
+`diplomacy.md` §6); war together when b is neutral with the third, free to fight it and at war with nobody and the two hold 0.75 × its
+power when it is L, 2 × its power otherwise (both a and b must have met it), or by the original's rule (`target(b)` is the third) under the same three tests.
 A NAP, an alliance, a cease-fire and a peace call the original's `BirodalomBeketKot` (`diplomacy.md` §8.2), which
 sets both empires' `BirodalomMiotaIsmeri` row to at least 600: the 600 days without a declared war (§11.3 needs
-`< 0`) that follow every treaty are the original's; a war together is not held back by it.
+`< 0`) that follow every treaty are the original's, and hold back a war together too (rule 3, accepting).
 **Keeping its word** (§11.3): an enhanced empire declares no war on an empire it holds a cease-fire, NAP or alliance
 with, the original's 1-in-720 day included (its draws are made as before); it breaks a pact only by rule 1, and never
 by the original's random "bad" step, threats or insults (it sends none).
 
 Port: `diplomacy::enhanced` (`runaway_leader`, `enhanced_pick`, `enhanced_accepts`, `consider_enhanced`), the gated
 branches of `Diplomacy::ai_messages` and `Diplomacy::decide`, `ai::enhanced::pact` in `AiState::fleets`; tests
-`diplomacy::tests::enhanced_peace_when_the_war_is_lost`, `enhanced_gang_up_on_a_runaway_leader`,
+`diplomacy::tests::enhanced_peace_when_the_war_is_lost`, `enhanced_war_together_keeps_a_ceasefire`,
+`enhanced_alliance_needs_a_common_war`, `enhanced_writes_to_a_human_less_often`, `enhanced_gang_up_on_a_runaway_leader`,
 `enhanced_pacts_end_over_spies_and_broken_word`. The harness's `--growth` line has `diplomacy [wars started, wars
 ended, pacts formed, pacts broken, trade agreements]` per empire since the start (changes of `Viszony` levels,
 counted every tick).
@@ -885,3 +893,9 @@ neighbours now go to war together against the target one of them can beat. A fir
 both signers back from any war for 600 days (§15.6). The main fleets are smaller than with parts 1 + 2 (more wars,
 fought and ended). The MP run (`mp:2:40`, seeds 1–4) kept its 60 state compares a seed equal and every turn hashed
 alike.
+
+The war-together and alliance tests of §15.6 (issue 122), same skirmish runs with `--human ai`, seeds 1–8, 10 years,
+per game (pairs once): wars started 5.8 → 3.0, ended 3.9 → 2.1, pacts formed 4.5 → 2.6, broken 0.5 → 0, trade 3.8 →
+3.3; empire-months at war 149 → 30 over the eight games. Before, a war and a cease-fire between the same two empires
+took turns every few months in three seeds (13 wars in seed 1); after, a game sees at most two new wars a year. With
+`--human idle` (seeds 1–4) the human still falls in 3 of 4, but later (months 60–96 instead of 24–48).

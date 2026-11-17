@@ -43,8 +43,11 @@ builds labs outgrows them within a few years.
    and opinion thresholds: a lost war ends in a cease-fire and peace, two empires gang up on a runaway leader (1.5 ×
    the second's power) or on the target one of them can beat, pacts come from a common enemy or a strong neighbour,
    spies and broken treaties block new ones and end old ones, and a pact or cease-fire is never broken by a declared
-   war (the original's 1-in-720 day included). They send no threats or insults and draw nothing on the diplomacy
-   stream; the human's deals and the effects of every answer stay the original's. No save or protocol change.
+   war (the original's 1-in-720 day included) nor by a war together, which also waits out the original's 600 days
+   after every treaty. Alliances need a war both fight; a human player hears from a computer empire at most every
+   300 days (90 at war, the original's minimum) and only from empires it has met itself. They send no threats or
+   insults and draw nothing on the diplomacy stream; the human's deals and the effects of every answer stay the
+   original's. No save or protocol change.
 
 ## Consequences
 - Classic games, replays and saves are unchanged (every enhanced branch is behind the flag).
