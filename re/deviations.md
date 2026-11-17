@@ -7,7 +7,7 @@ original bug kept), **Enhanced** (an opt-in option proposed to the maintainers; 
 `docs/ENHANCEMENTS.md`). Rule: fix only what a player would notice; tiny pixel, timing or RNG differences are
 **Keep** unless they change gameplay. Only live rows are listed; closed rows (fixed, settled, not reachable, not
 reproduced) live in git history (`git log -p re/deviations.md`). Row numbers are stable; a new row takes the next
-free number (547).
+free number (549).
 
 ## Open: player-visible
 
@@ -131,6 +131,7 @@ free number (547).
 | 544 | design, modern screen | Redesign edits the chosen design in place (the exe's modify, spot 3: OK keeps or refits the units) and only New makes a design; the exe's Redesign (spot 2, a numbered copy) has no modern button and `r` acts as Enter. A name another listed design has is refused: OK keeps the edit open, a typed name is not written while it matches. The exe takes any name; the classic screen keeps all of it | yes | design.md §14, ADR 0075 |
 | 546 | new game, starting designs and techs | the starting ship designs and the tech names are written in the game language's `txt17` (Hungarian line where that slot is empty or "-"); the exe writes the Hungarian names in every language (its English saves list "Vadász", "Romboló"). A Hungarian install is identical; race names and the first fleet name stay as the exe writes them | yes | new-game.md, ADR 0017 |
 | 547 | every text field | the standard editing keys on top of the exe's (characters, Backspace, Delete, arrows, Home, End): Shift+arrows/Home/End select, Ctrl+arrows and Ctrl+Backspace/Delete work by word, Ctrl+A/C/X/V/Z, Shift+Insert, Ctrl+Insert, Shift+Delete; typing replaces a selection; a pasted first line follows the field's own limits; on the egui-drawn fields a press places the caret, a drag selects, a double click selects a word; the password field copies and cuts nothing. The exe's `DoKeyboard` has none of these. | yes | input.md §1 |
+| 548 | starmap, minimap | a fleet the story always shows (Professor Zaschkin's ship) is drawn on the minimap even with the exe's state bit 0 set, where the exe hides it there; the starmap itself matches | no | starmap.md §4.1, §8 |
 
 ## Enhanced
 

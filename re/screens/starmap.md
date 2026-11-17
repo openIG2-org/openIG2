@@ -203,7 +203,9 @@ textures; the strip's summed colour within 10 % of the capture). The wormholes' 
 
 ### 4.1 Which fleets
 `Show_Flottak2d` 0x6e3d30: owner ≠ 0xFF, `+0x52` bit 10 clear, and (`+0x19 + EN` set and `+0x18` bit 0 clear, or
-`FlottaTipus::fMindigLathato`, or `DEBUGX`).
+`FlottaTipus::fMindigLathato`, or `DEBUGX`). `fMindigLathato` = `+0x52` bit 8 (story `st_fShow`) or
+`Story_Minden_Flotta_Latszik` (fleet-movement.md §9). Port: `world.rs` `fleet_shown`, which also feeds picking,
+the minimap and the selection repair.
 
 ### 4.2 Sprites (2D brushes)
 The fleet's position (0, x, y) is projected (§2.2); when in front:
@@ -371,7 +373,9 @@ The 17 `star_pl` columns are drawn in the same colours (column e − 1). Particl
 ## 8. Minimap (`GFX_StarmapRadar` 0x70e490)
 In the panel at virtual (274..366, 388..453): planets the human sees as 2×2 dots at
 `(−x·92/600 + 320, y·65/600 + 420)` (exactly `((−x/100/3)·92)/2 + 46 + 274`, `((y/100/3)·65)/2 + 32 + 388`),
-`DDColor[owner + 15]` (unowned `DDColor[12]`), the selected one blinking; visible fleets as 2×1 dots; the view's
+`DDColor[owner + 15]` (unowned `DDColor[12]`), the selected one blinking; fleets with owner ≠ 0xFF and
+((`fMindigLathato` or `+0x19 + EN` bit 0) and `+0x18` bit 0 clear, or `DEBUGX`) as 2×1 dots (unlike §4.1, `+0x18` bit 0
+hides an always-visible fleet here; the port shows the §4.1 set); the view's
 footprint as four lines between `get_radarpos` of the virtual corners (−320, −220), (320, −220), (−320, 240),
 (320, 240).
 

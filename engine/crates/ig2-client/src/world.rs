@@ -177,6 +177,7 @@ impl Snapshot {
         // A spectator (ADR 0026) sees the whole map, as `DebugX` shows it, on its own machine only; so does a replay's
         // viewer, single player's too (whose classic view has no spectator: `Game::local` is the machine's own).
         let all = debug || game.local.spectating;
+        let story_all = m.i32(va::STORY_ALL_FLEETS_VISIBLE) != 0;
         let planets = (1..=n)
             .map(|p| {
                 let r = m.read(va::PLANETS + (p * ig2_sim::save::PLANET_SIZE) as u32, ig2_sim::save::PLANET_SIZE);
@@ -207,7 +208,7 @@ impl Snapshot {
                 slot,
                 pos: [f.x, f.y],
                 owner: f.owner,
-                visible: f.owner as usize == en || ((f.visible[en] != 0 || all) && f.state & 1 == 0),
+                visible: f.owner as usize == en || fleet_shown(f, en, all, story_all),
                 target: target(&map, f),
                 order: f.order,
                 flags: f.flags,
@@ -1213,10 +1214,10 @@ impl<'r> World<'r> {
         let map = self.game.state.starmap();
         let en = v.empire as usize;
         let debug = self.game.state.mem.u8(va::DEBUGX) != 0;
-        let seen = |f: &ig2_sim::fleet::Fleet| f.visible.get(en).is_some_and(|&b| b & 1 != 0) || f.flags & flag::ALWAYS_VISIBLE != 0;
-        let gone = map.fleets.get(v.fleet.max(0) as usize).is_none_or(|f| {
-            f.flags & flag::WORMHOLE == 0 && (f.owner == DELETED || ((!f.visible.get(en).is_some_and(|&b| b & 1 != 0) || f.state & 1 != 0) && !debug && f.flags & flag::ALWAYS_VISIBLE == 0))
-        });
+        let story_all = self.game.state.mem.i32(va::STORY_ALL_FLEETS_VISIBLE) != 0;
+        let seen = |f: &ig2_sim::fleet::Fleet| f.visible.get(en).is_some_and(|&b| b & 1 != 0) || always_visible(f, story_all);
+        let gone = map.fleets.get(v.fleet.max(0) as usize)
+            .is_none_or(|f| f.flags & flag::WORMHOLE == 0 && (f.owner == DELETED || !fleet_shown(f, en, debug, story_all)));
         if !gone {
             return None;
         }
@@ -1355,9 +1356,37 @@ impl<'r> World<'r> {
     }
 }
 
+/// `FlottaTipus::fMindigLathato`, as the exe inlines it: `+0x52` bit 8 or `Story_Minden_Flotta_Latszik` (0xF265D4).
+fn always_visible(f: &ig2_sim::fleet::Fleet, story_all: bool) -> bool {
+    f.flags & ig2_sim::fleet::flag::ALWAYS_VISIBLE != 0 || story_all
+}
+
+/// `Show_Flottak2d` (ELF 0x6e3d30, exe 0x5a5080): a fleet is drawn when empire `en` sees it and its `+0x18` bit 0 is
+/// clear, or it is always visible, or `DEBUGX` (`all`) is on.
+fn fleet_shown(f: &ig2_sim::fleet::Fleet, en: usize, all: bool, story_all: bool) -> bool {
+    (f.visible.get(en).is_some_and(|&b| b != 0) && f.state & 1 == 0) || always_visible(f, story_all) || all
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Episode 802's `st_fShow(8020)` sets bit 8 on Zaschkin's ship: shown though no radar sees it (issue #117).
+    #[test]
+    fn an_always_visible_fleet_is_shown_out_of_radar() {
+        let mut f = ig2_sim::fleet::Fleet { owner: 5, ..Default::default() };
+        assert!(!fleet_shown(&f, 1, false, false), "unseen");
+        f.visible[1] = 1;
+        assert!(fleet_shown(&f, 1, false, false), "seen");
+        f.state = 1;
+        assert!(!fleet_shown(&f, 1, false, false), "seen, state bit 0 hides it");
+        assert!(fleet_shown(&f, 1, true, false), "DEBUGX overrides state bit 0");
+        f.visible[1] = 0;
+        f.flags = ig2_sim::fleet::flag::ALWAYS_VISIBLE;
+        assert!(fleet_shown(&f, 1, false, false), "always visible overrides radar and state bit 0");
+        f.flags = 0;
+        assert!(fleet_shown(&f, 1, false, true), "story 237 shows every fleet");
+    }
 
     fn fleet(slot: usize, x: f32, y: f32) -> FleetView {
         FleetView { slot, pos: [x, y], owner: 3, visible: true, target: None, order: 0, flags: 0, name: Vec::new(), ships: 1, story_id: 0, kind: 0, target_index: 0 }
