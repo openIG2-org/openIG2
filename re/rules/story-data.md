@@ -41,6 +41,15 @@ C<id> <values…>                                                       → Pars
 | 7 | Corvette | 12 | Transport | | |
 | 8 | HCorvette | 13 / 14 | Colonization / Terraformer | | |
 
+- Record (0x94 bytes, exe 0xF2F8C0, ≤ 500 asserted; ELF `ParseDesignData` 0x72ad70): +0 id, +4 name (strcpy, rest
+  zero to +0x1c), +0x1c `II` = 1 / `NN` = 0, +0x20 owner, +0x24 hull, +0x28 pod count n, for pair j = 1..=n:
+  +0x60+4j pod id (before `/`), +0x2c+4j count (after `/`).
+- fleet.txt's `D` lines go through the same `ParseDesignData` in `ReadFlottaData`, which `NEWGAME_Story` calls
+  first, so the table is fleet.txt's 208 designs (explicit ids 11…9998), then designs.txt's 217; the counter is
+  shared. Observed in ig2.exe: `StoryDesignDataMut` = 425, `StoryDesignElsoTerv` = 10217 after both.
+  `LoadSave` runs `NEWGAME_Story` too, so a loaded game has the table. Port: `StoryRules::designs`
+  (`ig2-sim` game.rs), written at new game step 12 and by `Game::new` when a save left it empty; test
+  `ig2-sim/tests/story_designs.rs` (byte for byte against the exe's live table).
 - Commented examples document the base-design ID scheme `9xyz`: x = race, y = 1 destroyer …
   7 battleship, z = equipment level 0–9 (these are generated elsewhere, not loaded here).
 

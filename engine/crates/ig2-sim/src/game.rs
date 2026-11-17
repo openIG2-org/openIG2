@@ -136,6 +136,10 @@ pub struct StoryRules {
     pub values: Vec<(i32, i32)>,
     pub fleets: Vec<crate::story::FleetData>,
     pub buildings: Vec<crate::story::BuildingData>,
+    /// `StoryDesignData` as `ParseDesignData` (exe 0x72ad70) writes it: fleet.txt's `D` lines (`ReadFlottaData`),
+    /// then designs.txt (`ReadDesignData`), and `StoryDesignElsoTerv` after both (`re/rules/story-data.md`).
+    pub designs: Vec<[u8; crate::trade::STORY_DESIGN]>,
+    pub designs_next: i32,
     /// `GameInfoList` (exe 0xE3E398, gameinfo.txt by `LoadGameInfo`): the info lines' ids and texts (bytes as read).
     pub game_info: Vec<(i32, Vec<u8>)>,
     /// Ours (ADR 0061): the enabled mods' stories in the order they run (`story_mods::load`); empty without mods.
@@ -189,9 +193,14 @@ impl StoryRules {
             .collect();
         let data = |f: &str| text::decode(&install.read(&format!("dataraw/text/{f}")).unwrap_or_default(), install.lang());
         use ig2_formats::story_data;
+        let fleet_file = story_data::parse_fleets(&data("fleet.txt"));
+        let (designs, designs_next) =
+            Self::story_design_table(&[&fleet_file.designs, &story_data::parse_designs(&data("designs.txt"))], install.lang());
         Self {
+            designs,
+            designs_next,
             values: story_data::parse_values(&data("values.txt")),
-            fleets: story_data::parse_fleets(&data("fleet.txt"))
+            fleets: fleet_file
                 .fleets
                 .into_iter()
                 .map(|f| crate::story::FleetData { story: f.story, fleet: f.fleet, design: f.design, counts: f.counts })
@@ -212,6 +221,37 @@ impl StoryRules {
         }
     }
 
+    /// `ParseDesignData`'s records (0x94 bytes): +0 id (`StoryDesignElsoTerv++` from 10000 for a quoted-name line),
+    /// +4 name, +0x1c `II`, +0x20 owner, +0x24 hull, +0x28 pods, pod `j` (1-based) +0x60+4j id and +0x2c+4j count;
+    /// at most 500 (asserted).
+    fn story_design_table(files: &[&ig2_formats::story_data::Designs], lang: ig2_formats::text::Lang)
+        -> (Vec<[u8; crate::trade::STORY_DESIGN]>, i32) {
+        let mut next = ig2_formats::story_data::FIRST_AUTO_DESIGN_ID;
+        let mut out = Vec::new();
+        for d in files.iter().flat_map(|f| &f.designs).take(500) {
+            let mut r = [0u8; crate::trade::STORY_DESIGN];
+            let id = d.id.unwrap_or_else(|| {
+                next += 1;
+                next - 1
+            });
+            let put = |r: &mut [u8], o: usize, v: i32| r[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            put(&mut r, 0, id);
+            let name = lang.encoding().encode(&d.name).0;
+            let n = name.len().min(0x17);
+            r[4..4 + n].copy_from_slice(&name[..n]);
+            put(&mut r, 0x1c, d.visible as i32);
+            put(&mut r, 0x20, d.owner);
+            put(&mut r, 0x24, d.hull);
+            put(&mut r, 0x28, d.pods.len() as i32);
+            for (j, &(pod, count)) in d.pods.iter().enumerate() {
+                put(&mut r, 0x60 + 4 * (j + 1), pod);
+                put(&mut r, 0x2c + 4 * (j + 1), count);
+            }
+            out.push(r);
+        }
+        (out, next)
+    }
+
     /// `GameInfoList` from the install's gameinfo.txt in its language (`LoadGameInfo`).
     pub fn game_info_lines(install: &ig2_formats::Install) -> Vec<(i32, Vec<u8>)> {
         let lang = install.lang();
@@ -219,6 +259,15 @@ impl StoryRules {
         let lines = ig2_formats::misc_text::parse_gameinfo(&ig2_formats::text::decode(&raw, lang));
         lines.into_iter().map(|(id, t)| (id, lang.encoding().encode(&t).0.into_owned())).collect()
     }
+}
+
+/// `StoryDesignData`, `StoryDesignDataMut` and `StoryDesignElsoTerv` as the story data files leave them.
+pub(crate) fn put_story_designs(m: &mut crate::save::Memory, story: &StoryRules) {
+    for (i, r) in story.designs.iter().enumerate() {
+        m.write(va::STORY_DESIGNS + (i * crate::trade::STORY_DESIGN) as u32, r);
+    }
+    m.set_i32(va::STORY_DESIGN_COUNT, story.designs.len() as i32);
+    m.set_i32(va::STORY_DESIGN_NEXT, story.designs_next.max(ig2_formats::story_data::FIRST_AUTO_DESIGN_ID));
 }
 
 /// The MSVC CRT `rand()` (`holdrand · 214013 + 2531011`, bits 16..30): the unseeded libc draws of the original.
@@ -454,6 +503,10 @@ impl<'r> Game<'r> {
                 }
             }
             state.store_tech(&techs);
+        }
+        // A save leaves `StoryDesignData` out; the exe still holds the table it read at start-up.
+        if state.mem.i32(va::STORY_DESIGN_COUNT) == 0 && !rules.story.designs.is_empty() {
+            put_story_designs(&mut state.mem, &rules.story);
         }
         Self {
             state,

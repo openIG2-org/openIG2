@@ -730,9 +730,8 @@ impl<'r> Game<'r> {
         let mut st = self.state.story();
         st.new_game();
         self.state.store_story(&st);
+        crate::game::put_story_designs(&mut self.state.mem, &self.rules.story);
         let m = self.m();
-        m.set_i32(va::STORY_DESIGN_NEXT, 10000);
-        m.set_i32(va::STORY_DESIGN_COUNT, 0);
         // 13: the empires.
         let pp2 = m.i32(va::PROGRAM_PLAYERS2);
         let human = |m: &Memory, e: usize| m.u8(va::PLAYER_KI + e as u32) == 1;

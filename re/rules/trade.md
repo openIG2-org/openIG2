@@ -1,6 +1,6 @@
 # Trade: the merchants, purchases and deliveries
 
-Port status: ported in `engine/crates/ig2-sim` (`trade.rs`, `game.rs`, test `tests/save_replay.rs`, §6).
+Port status: ported in `engine/crates/ig2-sim` (`trade.rs`, `game.rs`, test `tests/save_replay.rs`, §6). `StoryDesignData` is filled from `fleet.txt`/`designs.txt` (`StoryRules::designs`, test `tests/story_designs.rs`), so `st_GetTerv`/`st_GetRandomTradeTerv` find their records.
 Verification (`traces/2026-10-16-trade.md`): 1,640 whole-game ticks from an original save, with staged
 deliveries and four purchases through the exe's own `MULTIGET_Trade`, byte-exact.
 
