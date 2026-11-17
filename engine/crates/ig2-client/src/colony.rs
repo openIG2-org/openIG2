@@ -3400,7 +3400,7 @@ mod tests {
 
     #[test]
     fn building_top_takes_the_highest_of_five_lines() {
-        let v = |h: f32, y: f32, z: f32| MeshVertex { pos: [h, y, z], normal: [0.0; 3], uv: [0.0; 2], color: [1.0; 4] };
+        let v = |h: f32, y: f32, z: f32| MeshVertex { pos: [h, y, z], normal: [0.0; 3], uv: [0.0; 2], color: [1.0; 4], tangent: [0.0; 4] };
         // A roof at −500 over ±50 and a spire at −600 that only the (+10, +10) line meets.
         let mut verts = vec![v(-500.0, -50.0, -50.0), v(-500.0, 50.0, -50.0), v(-500.0, 50.0, 50.0), v(-500.0, -50.0, -50.0), v(-500.0, 50.0, 50.0), v(-500.0, -50.0, 50.0)];
         verts.extend([v(-600.0, 8.0, 8.0), v(-600.0, 12.0, 8.0), v(-600.0, 10.0, 12.0)]);
