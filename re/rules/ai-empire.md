@@ -684,7 +684,8 @@ lockstep-safe.
   shortfall against the lab *buildings* (`LaborSzintOsszes`: a built lab without power or workers needs those, not
   another lab; ties: cheaper research cost, lower number), the lab type with the largest shortfall (first on ties),
   the empire's best researched building of autobuild category 5 + type (`AutoBuildMitEpitMin/Max`), on the most
-  populous own planet with nothing under construction, if `MoneyMennyi(e, 2) ≥ price + 20,000`; placed as the colony
+  populous own planet with nothing under construction and the workers and energy to run it (as §6.1's autobuild:
+  `+0x50 + workers ≤ population` and `+0x4c < +0x48`), if `MoneyMennyi(e, 2) ≥ price + 20,000`; placed as the colony
   screen's order (`ColonyOrder::Build`: paid from the credits, the first free spot from no start cell); (b) every own
   planet but the main one in autobuild mode 2 or 6 switches to mode 3 (technological).
 - **Taxes** (after §3.3): `m = min(morale, BolygoNeededMoral)`; restless (`BolygoMennyiIdejeLazad > 0`) → 0;
@@ -750,9 +751,10 @@ reached (an attack now draws §11.5's `rndlog(10, 1, …)`), the same on every p
   while the vehicle capacity (`+0x74` summed over the empire's planets) is below half the ship capacity (`+0x70`
   summed), a tank factory (autobuild category 3); else, while the ship capacity is below 3,000 × planets, a
   spaceship factory (category 2): the best researched building of the category, on the planet with the most of that
-  capacity and nothing under construction (lower number on ties), if `MoneyMennyi(e, 2) ≥ price + reserve`
-  (20,000 at peace, 30,000 at war). Placed like §15.2's lab. A planet's line runs at its own capacity, so the
-  factories pile onto the biggest yard.
+  capacity, nothing under construction and the workers and energy to run it (§15.2's lab gate; lower number on
+  ties), if `MoneyMennyi(e, 2) ≥ price + reserve` (20,000 at peace, 30,000 at war). Placed like §15.2's lab. A
+  planet's line runs at its own capacity, and only working factories add to it: without the gate an unstaffed
+  factory left the same planet first and the factories piled onto it far beyond its workers.
 - **Production mix** (§5.2): the wanted-category test and §15.2's colony-ship replacement count the units the
   day's earlier yards already took (`total + taken < want`), so one wanted colony ship starts on one yard. The
   peace-time cap (§15.2) counts real warships: ships in the empire's fleets whose design is neither a colony ship nor

@@ -32,7 +32,7 @@ builds labs outgrows them within a few years.
    priority with ties to the cheaper tech (the auto research pick of ADR 0037), urgent when credits pile up; colony
    ships are wanted per free planet seen (up to 3) on every shipyard and, at peace, replace a warship batch; at peace
    no more warships than 4 + 2 per planet.
-5. **Part 2, fleets and war** (spec §15.4): spaceship factories go onto the biggest yard while the ship capacity is
+5. **Part 2, fleets and war** (spec §15.4): spaceship factories go onto the biggest yard that can staff and power them while the ship capacity is
    short (tank factories first at war), one wanted colony ship starts on one yard a day, the peace cap counts real
    warships (not fighters), garrisons refill to 25 at war; a war is declared once the main fleet is 1.5 × the
    target's, a planet is invaded only with 1.5 × its defence aboard, an enemy attacking an own colony that the main

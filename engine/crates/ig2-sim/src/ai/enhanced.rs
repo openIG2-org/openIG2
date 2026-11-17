@@ -86,8 +86,11 @@ fn lab_to_build(w: &World, e: usize) -> Option<(usize, u8)> {
     place(w, e, LAB_CATEGORY + i, LAB_RESERVE, |p| p.population)
 }
 
-/// `e`'s best researched building of autobuild category `c` on its planet with nothing under construction and the
-/// greatest `rank` (the first on ties), while the credits after paying stay at `reserve` or above.
+/// `e`'s best researched building of autobuild category `c` on its planet with nothing under construction, the
+/// workers for it and spare energy (§6.1's autobuild gate: the workers wanted, `+0x50`, plus the building's within
+/// the population; the energy wanted, `+0x4c`, below the energy produced, `+0x48`) and the greatest `rank` (the
+/// first on ties), while the credits after paying stay at `reserve` or above. An unstaffed factory adds no
+/// capacity, so without the gate the same planet stays first and the factories pile up on it.
 fn place(w: &World, e: usize, c: usize, reserve: f64, rank: fn(&Planet) -> i32) -> Option<(usize, u8)> {
     let colony = &w.spy.colony;
     let rules = &w.spy.side_rules;
@@ -97,21 +100,26 @@ fn place(w: &World, e: usize, c: usize, reserve: f64, rank: fn(&Planet) -> i32) 
         .flat_map(|k| std::iter::once(k).chain(rules.colony.kinds_like(k)))
         .filter(|&k| rules.colony.buildings.get(k).is_some_and(|b| colony.tech.status(b.tech as usize, e) == status::OWNED))
         .last()?;
-    let cost = price(&colony.tech, w.rules.design.race_role(w.race(e)), rules.colony.buildings[kind].tech as usize);
+    let b = &rules.colony.buildings[kind];
+    let cost = price(&colony.tech, w.rules.design.race_role(w.race(e)), b.tech as usize);
 
     if colony.money[e].available(2) < cost as f64 + reserve {
         return None;
     }
     let p = (1..colony.planets.len())
         .filter(|&p| colony.planets[p].owner as usize == e && !colony.planets[p].buildings.iter().any(|b| b.kind != 0 && b.work_left > 0))
+        .filter(|&p| {
+            let pl = &colony.planets[p];
+            pl.workers_demand + b.workers <= pl.population && pl.energy_demand < pl.energy_produced
+        })
         .max_by_key(|&p| (rank(&colony.planets[p]), std::cmp::Reverse(p)))?;
     Some((p, kind as u8))
 }
 
 /// The factory an enhanced empire adds when research doesn't wait for labs: at war a tank factory while the
 /// vehicle capacity (`+0x74`, summed) is below half the ship capacity, else a spaceship factory while the ship
-/// capacity is below [`SHIP_CAPACITY_PER_PLANET`] per planet; on the planet with the most of that capacity (a
-/// planet's line runs at its own capacity), with [`FACTORY_RESERVE_WAR`] at war and [`FACTORY_RESERVE_PEACE`] at peace.
+/// capacity is below [`SHIP_CAPACITY_PER_PLANET`] per planet; on the planet with the most of that capacity that
+/// can staff and power it ([`place`]; a planet's line runs at its own capacity), with [`FACTORY_RESERVE_WAR`] at war and [`FACTORY_RESERVE_PEACE`] at peace.
 fn factory_to_build(w: &World, e: usize) -> Option<(usize, u8)> {
     let war = w.danger[e] >= 2;
     let (mut ships, mut vehicles, mut n) = (0i32, 0i32, 0i32);

@@ -1627,6 +1627,9 @@ mod tests {
         fx.colony.planets[1].buildings = vec![crate::colony::Building { kind: 3, work_left: 10, ..Default::default() }];
         fx.colony.planets[2] = planet(2, 2.0, 20_000, 0);
         fx.colony.planets[3] = planet(2, 3.0, 10_000, 0);
+        for p in 1..=3 {
+            fx.colony.planets[p].energy_produced = 1;
+        }
         open_tech(&mut fx, 20, 1, 500, 4);
         open_tech(&mut fx, 21, 1, 400, 9);
         fx.colony.empires.lab_buildings[2][1] = 2;
@@ -1735,12 +1738,14 @@ mod tests {
         let mut fx = fixture();
         fx.colony.planets[1] = planet(2, 1.0, 30_000, 1000);
         fx.colony.planets[2] = planet(2, 2.0, 20_000, 4000);
+        (fx.colony.planets[1].energy_produced, fx.colony.planets[2].energy_produced) = (500, 500);
         fx.research.current[2] = 5;
         fx.side.autobuild.min = vec![0, 0, 19, 21];
         fx.side.autobuild.max = vec![0, 0, 20, 22];
         fx.side.colony.buildings = vec![crate::colony::BuildingKind::default(); 23];
         for k in 19..=22 {
             fx.side.colony.buildings[k].tech = 40 + k as u8;
+            fx.side.colony.buildings[k].workers = 5_000;
             fx.colony.tech.set_status(40 + k, 2, crate::colony_side::status::OWNED);
         }
         fx.colony.money[2] = Treasury { total: 30_000.0, pools: [0.0, 10_000.0, 10_000.0, 10_000.0, 0.0, 0.0], share: [0.0, 0.4, 0.3, 0.3, 0.0, 0.0], ..Default::default() };
@@ -1753,5 +1758,15 @@ mod tests {
         fx.colony.planets[2].ship_capacity = 6000;
         fx.danger[2] = 1;
         assert!(run(&mut fx, |w| ai.enhanced_planet_settings(w, 2)).is_empty(), "7,000 capacity is enough for 2 planets");
+        // issue #121: only a planet with the workers and spare energy for the factory gets it
+        fx.colony.planets[2].ship_capacity = 4000;
+        fx.colony.planets[2].workers_demand = 16_000;
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        assert_eq!(ev, [AiEvent::Build { empire: 2, planet: 1, kind: 20 }], "16,000 + 5,000 > 20,000 workers: the smaller yard");
+        fx.colony.planets[1].energy_demand = 500;
+        assert!(run(&mut fx, |w| ai.enhanced_planet_settings(w, 2)).is_empty(), "no spare energy on 1, no workers on 2");
+        fx.colony.planets[2].workers_demand = 15_000;
+        let ev = run(&mut fx, |w| ai.enhanced_planet_settings(w, 2));
+        assert_eq!(ev, [AiEvent::Build { empire: 2, planet: 2, kind: 20 }], "15,000 + 5,000 = 20,000 workers fit");
     }
 }
