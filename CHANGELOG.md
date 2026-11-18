@@ -24,6 +24,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - New games name the starting ship designs and technologies in the game's language instead of Hungarian.
 - An empire you first meet through a planet changing hands (captured, colonised or rebelling) now shows the "new empire" message and joins the diplomacy screen (#112).
 - Fleets the story always shows, like Professor Zaschkin's ship in the capture mission, now appear on the starmap and minimap anywhere, not only inside radar range, and can be intercepted (#117).
+- A mod's added ship hull now shows its 3D model in the ship designer (with the right parts to fit), and its research entry shows the original hull's ship in your race's look instead of another race's ship (#115).
 - Hired mercenaries, the campaign's story fleets and the travelling merchant's special ship offers now bring their real designs (a heavy battleship is no longer a lone destroyer) (#116).
 
 ### Multiplayer

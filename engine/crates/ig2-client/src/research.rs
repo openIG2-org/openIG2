@@ -1845,9 +1845,12 @@ impl ResearchModels {
         if let std::collections::hash_map::Entry::Vacant(slot) = self.techs.entry(idx) {
             let s = &rules.research_screen;
             let name = s.models.get(idx).cloned().unwrap_or_default();
-            let (name, vdir, tdir) = if c == 1 && k > 4 {
+            // An added tech (ADR 0069 §8) shows its original's model, so its original's field picks the branch.
+            let role = rules.tech_role(idx + 1).max(1) - 1;
+            let (rc, rk) = (role / 16 + 1, role % 16 + 1);
+            let (name, vdir, tdir) = if rc == 1 && rk > 4 {
                 let mut n = name.into_bytes();
-                if k < 12 && n.len() > 4 {
+                if rk < 12 && n.len() > 4 {
                     n[4] = b'0' + rules.race_role(race as usize) as u8;
 
                 }

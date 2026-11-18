@@ -533,7 +533,8 @@ impl Design {
         self.back = false;
         // `DesignGfx2D_1` (drawn inside `Update3D`, after the above): `AktAlap = Alapok[d.+0x44]+8`.
         if let Some(d) = self.edited(state) {
-            let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
+            // An added hull (ADR 0069 §7) is `Alapok` 25+; its `id` stays the original's model.
+            let hull = i32_at(d, field::HULL).max(0) as usize;
             self.model = rules.hulls.get(hull).map_or(-1, |h| h.id);
         }
         self.pods_end(c, mask);
@@ -613,7 +614,7 @@ impl Design {
             2..=4 => {
                 !editing
                     && self.record(state).is_some_and(|d| {
-                        let hull = i32_at(d, field::HULL).clamp(0, 24) as usize;
+                        let hull = i32_at(d, field::HULL).max(0) as usize;
                         let tech = rules.hulls.get(hull).map_or(0, |h| h.tech).max(0) as usize;
                         techs.byte(tech, 0x26) & 1 == 0 && d[field::OBSOLETE] == 0
                     })
