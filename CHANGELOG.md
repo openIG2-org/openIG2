@@ -11,6 +11,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Single player: a planet invaded in real time is fought out on its colony screen, with dropships setting the tanks down and the original's sounds, explosions, tracers, smoke, debris and collapsing buildings; the rest of the galaxy pauses meanwhile, and losing every tank no longer leaves the fleet stuck.
 - Ground war: with Enhanced battle effects the shots' flashes and trails no longer vanish under the smoke a few seconds into the fight.
 - Colony view: fortresses can be selected again by clicking them, and repaired, demolished or switched off; tanks and turrets that appear during a fight can be picked and show their selection rings.
+- Ground war: explosion debris from a finished battle no longer flies again every time the planet view opens; it falls, fades and is gone (old saves clear it after one more flight).
 - Space battles: ships obey orders however the battle is started, the retreat button works (losing computer fleets retreat too), and the "simulate" and "overrun" options change how battles are fought.
 - The tutorial locks input as the original does and its chapters play through (chapter 4 up to its ground battle).
 - Custom game: set the galaxy's planet count and seed and, per empire, the race, name, money, technology, start planets, computer level, aggressiveness and start relation; a map of the galaxy lets you pick your start star.

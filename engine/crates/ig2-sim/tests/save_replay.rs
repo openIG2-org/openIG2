@@ -977,6 +977,40 @@ fn warfare_status_is_zero_without_a_running_war() {
     }
 }
 
+/// `WF::Refresh2`'s debris branch (colony.md §5.8) runs on the colony UI ticks only while a colony screen is up, and frees
+/// the faded pieces, so a finished battle's debris doesn't stay in the save (#125).
+#[test]
+fn colony_ui_ticks_free_faded_debris() {
+    let Some(inst) = install() else { return };
+    let p = local("IG2_SAVE_DIR", "saves").join("quick-0.sav");
+    if !p.exists() {
+        return;
+    }
+    let tech_defaults = ig2_rules::Rules::from_install(&inst).expect("catalogued exe").tech_defaults;
+    let rules = game_rules(&inst);
+    let mut g = Game::new(SaveState::from_save(&load(&p), &tech_defaults), &rules);
+    g.sp_battles.live = true;
+    let planet = (1..=g.state.planet_count()).find(|&q| g.state.has_ground_field(q)).expect("a battlefield");
+    let mut f = g.state.take_ground_field(planet);
+    let piece = ig2_sim::ground::Missile { vel: [-4.0, 1.0, 1.0], pos: [0.0, 100.0, 100.0], dest: [0.0; 3], life: -1, dmg: 0, target: 10000, kind: 7, fade: 0.0, by: 10000 };
+    f.lists.missiles.push(Some(piece));
+    g.state.store_ground_field(planet, f);
+    let debris = |g: &Game| g.state.fields_with_debris().len();
+    for _ in 0..1000 {
+        g.colony_ui_tick();
+    }
+    assert_eq!(debris(&g), 1, "no colony screen: the piece waits");
+    g.sp_battles.colony = Some(planet);
+    for _ in 0..300 {
+        g.colony_ui_tick();
+    }
+    assert_eq!(debris(&g), 1, "rises 80 passes, then fades 100");
+    for _ in 0..100 {
+        g.colony_ui_tick();
+    }
+    assert_eq!(debris(&g), 0);
+}
+
 /// The tutorial's sim-side events (`re/rules/tutorial.md` §4): `EpuletNew`'s small house on an `EN` planet (0x13),
 /// and `MULTIGET_Starmap`'s 0x15 for an own fleet sent past the radar's reach from the last own planet (not for a
 /// near move).

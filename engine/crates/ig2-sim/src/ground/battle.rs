@@ -344,6 +344,28 @@ impl War<'_> {
         }
     }
 
+    /// `WF::Refresh2`'s debris branch (exe 0x48ce10, ELF 0x489170; colony.md §5.8): on the second UI ticks while the
+    /// colony screen is up, for every battlefield. `+0x2c` counts down (−1 never reaches 0), `vh += 0.05`, and once
+    /// falling the piece fades `+0.01` a pass and is freed past 1.0. The client draws the flight (`pos += vel`, the
+    /// trail puffs) and keys a piece by its slot and the point it was made, so the port keeps that point.
+    pub fn debris(&mut self) {
+        for slot in self.field.lists.missiles.iter_mut() {
+            let Some(m) = slot.as_mut().filter(|m| m.kind == 7) else { continue };
+            m.life = m.life.wrapping_sub(1);
+            if m.life == 0 {
+                *slot = None;
+                continue;
+            }
+            m.vel[0] = (m.vel[0] as f64 + 0.05) as f32;
+            if m.vel[0] > 0.0 {
+                m.fade = (m.fade as f64 + 0.01) as f32;
+                if m.fade > 1.0 {
+                    *slot = None;
+                }
+            }
+        }
+    }
+
     /// The burst of a dying group, a blown mine or a falling building on screen: one particle draw, then
     /// `n` pieces of debris (three draws each), velocities `/ 1.5` for units and mines.
     pub(super) fn burst(&mut self, p: [f32; 3], n: usize, slow: bool) {

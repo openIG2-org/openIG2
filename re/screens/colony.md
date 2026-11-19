@@ -401,10 +401,15 @@ Sources (draws in the exe's order: it evaluates call arguments last first; `rN` 
 - A piece of debris (§5.8) on every twelfth slot; the ruins' dust (§5.9).
 
 ### 5.8 Debris (`AddRepesz` exe 0x45d400, `WF::Refresh2`)
-Each list-B kind-7 record on the second UI ticks (`(int)ColonyCounter % 2 == 0`, 50 Hz), on the shown war: `+0x2c −=
-1` (never set by `AddRepesz`: debris ends by fading); slot `% 12 == 0`: an owner-1 trail particle (three `r3 − 1`
-velocities, (0xff, 0x82, 0), `T` 0xa0, size 5, type 0); `pos += vel`, `vh += 0.05`; while `vh > 0` its transparency
-`+0x3c += 0.01`, past 1.0 it goes. `WF::Update` sets `SetObjTransparency(+0x3c)` every frame.
+Each list-B kind-7 record on the second UI ticks (`(int)ColonyCounter % 2 == 0`, 50 Hz) while `AktKep == 3`, on
+**every** battlefield (ELF `WF::Refresh2` 0x489170, exe 0x48ce10; only the shown one's mesh is removed): `+0x2c −=
+1` (never set by `AddRepesz`: debris ends by fading); slot `% 12 == 0`, shown war: an owner-1 trail particle (three
+`r3 − 1` velocities, (0xff, 0x82, 0), `T` 0xa0, size 5, type 0); `pos += vel`, `vh += 0.05`; while `vh > 0` its
+transparency `+0x3c += 0.01`, past 1.0 the record is freed. `WF::Update` sets `SetObjTransparency(+0x3c)` every frame.
+Port: the sim's `War::debris` (from `Game::colony_ui_tick`) counts the ticks, `vh` and the fade and frees the record;
+it keeps `pos` at the point the piece was made, since the client (`colony_smoke.rs`) flies and draws it from there and
+keys it by that point. The trail particles' libc draws aren't replayed (cosmetic). Test
+`save_replay::colony_ui_ticks_free_faded_debris`, `ground::tests::debris_fades_and_is_freed`.
 
 ### 5.9 Ruins (`Rom::Rom` exe 0x455570, `Rom::Refresh` exe 0x4904f0, `Rom::Update` exe 0x4a5240)
 `Remove3dBuilding` (exe 0x497760) pushes a `Rom` to `RomTarolo` (exe 0xA3500C) for any building whose 3D model exists:

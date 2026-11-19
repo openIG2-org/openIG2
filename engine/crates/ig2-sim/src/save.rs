@@ -1144,6 +1144,11 @@ impl SaveState {
         }
     }
 
+    /// The planets whose live battlefield holds debris (list B kind 7, made only on the colony screen).
+    pub fn fields_with_debris(&self) -> Vec<usize> {
+        self.fields.iter().filter(|(_, f)| f.lists.missiles.iter().flatten().any(|m| m.kind == 7)).map(|(&p, _)| p).collect()
+    }
+
     /// Whether planet `p` has a battlefield ([`SaveState::ground_field`] is `Some`), without decoding it.
     pub fn has_ground_field(&self, p: usize) -> bool {
         self.fields.contains_key(&p) || p.checked_sub(1).is_some_and(|i| self.wf_ranges.contains_key(&i))

@@ -947,7 +947,9 @@ impl Game<'_> {
 
     /// `Frissit2_Colony`'s battlefield part in single player (exe 0x477dc0, called by `Fake_FRISSITES` at 0x4de8e8 on
     /// every 100 Hz UI tick while `AktKep ≤ 0xD`, paused or not; spec §11.16): `ColonyCounter += 1`, and on every fifth
-    /// count the dropships of every battlefield. Canonical MP steps them with the sim instead. True when they stepped.
+    /// count the dropships of every battlefield; on every second count with the colony screen up, the debris
+    /// ([`crate::ground::War::debris`]; canonical MP makes none). Canonical MP steps the dropships with the sim
+    /// instead. True when they stepped.
     pub fn colony_ui_tick(&mut self) -> bool {
         if self.view != ViewMode::Classic || self.globals().multiplayer || !self.sp_battles.live {
             return false;
@@ -956,6 +958,12 @@ impl Game<'_> {
         let step = self.sp_battles.colony_counter % 5 == 0;
         if step {
             self.dropships_mp();
+        }
+        if self.sp_battles.colony_counter % 2 == 0 && self.sp_battles.colony.is_some() {
+            let planets = self.state.fields_with_debris();
+            if !planets.is_empty() {
+                self.with_wars(&planets, |w| w.debris());
+            }
         }
         step
     }

@@ -940,7 +940,8 @@ and 4 for the weapons 2 and 0x100), then remembers the cell.
 - `GenerateMap`'s editor mode (`GenerateMap(p, 1)`: layer 0 and mask A written back, §11.13).
 - `WF::MI` (0x486d40, stream 13): the battle AI, ported separately (`ground-ai.md`, `War::mi`).
 - The rest of `Refresh2` (per UI tick: visuals, debris flight, the effect list 0xA34FD4 with the laser
-  beams; its dropship pass is §11.16), the MP battle protocol (the dropships' arrival doesn't run in MP).
+  beams; its dropship pass is §11.16, its debris lifetime colony.md §5.8), the MP battle protocol (the dropships'
+  arrival doesn't run in MP).
 - The laser's mesh intersection is renderer work (it needs the shown 3D scene); the port uses the target
   point, which gives the same armour side (§11.10).
 - An AI-against-AI battle on screen has no end in `WF::Refresh` (§11.7 step 9).
@@ -955,7 +956,8 @@ the dust:
 - `AddRepesz` (0x45d400, debris, list B kind 7, only while `+0x334 ≠ 0`): 2 draws on screen. Its ticks
   `+0x2c` are **never initialised**: whatever the heap block held (often a small count from a freed object,
   so it expires within a few rounds; else never) [original nondeterminism: the Windows heap's reuse order
-  isn't reproducible]. The port gives debris −1 (it never expires in this tick).
+  isn't reproducible]. The port gives debris −1 (it never expires in this tick); it
+  ends by fading on the colony screen's UI ticks (colony.md §5.8).
 - Bursts (1 flash draw + 3 per piece, velocities `((r%60)/10 − 3, (r%60)/10 − 3, (r%30)/10 − 4)`, ÷1.5 when
   slow): a dying group 16 slow + a sound draw, a mine 16 slow, a turret's building falling 16 slow, a
   building hit directly falling 24, a ruin 24, a self-destructing building 16 slow.

@@ -2861,6 +2861,24 @@ mod tests {
     }
 
     #[test]
+    fn debris_fades_and_is_freed() {
+        // libc 0: every piece flies up at vh −4, falls after 80 passes of +0.05, then fades 0.01 a pass (#125).
+        let mut x = fx();
+        x.ctx.on_screen = true;
+        with_war(&mut x, |w| w.building_delete(1));
+        let left = |x: &Fx| x.field.lists.missiles.iter().flatten().filter(|m| m.kind == 7).count();
+        for _ in 0..150 {
+            with_war(&mut x, |w| w.debris());
+        }
+        assert_eq!(left(&x), 24);
+        assert!(x.field.lists.missiles.iter().flatten().all(|m| m.vel[0] > 0.0 && (0.6..1.0).contains(&m.fade)));
+        for _ in 0..50 {
+            with_war(&mut x, |w| w.debris());
+        }
+        assert_eq!(left(&x), 0);
+    }
+
+    #[test]
     fn sounds_and_flashes_on_screen_only() {
         // The test's libc is always 0: a hit's flash is `0 % 30 + 10`, its sound Blast01 (`Gr_Hangok[2]`); a death
         // burst's flash `0 % 70 + 20` and Blast07 (`[8]`).
