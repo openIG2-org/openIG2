@@ -296,7 +296,9 @@ and placed (bit 2 clear). Exe unit offsets are ELF − 8 from `+0x164` on, −0x
   `P`; no hull. `WF_Tank::Update` (exe 0x4a5b20) hides the gun while flags2 (`+0x18c`) bit 2 is set, i.e. until
   `BuildingBuilt`: a defence building under construction shows no guns [obs: planet 35 of the 0.7.394 report save, a
   laser fortress at work left 21000]. The port also checks the building's work left (the sim's start-up buildings
-  placed finished keep the bit).
+  placed finished keep the bit). The space defence guns (kinds 0x1c..0x1f, "Űrvédelmi ágyú 1–4") are the same: the
+  dome alone while built, the barrel (`a1v0+` … `a4v0+`) once finished [obs: planet 37 of the same save, a finished
+  kind 0x1c, its barrel drawn by ig2.exe and the port alike].
 - Own units being placed: transparency (`+0x190` bit 15); selection rings, targets, shadows and the route lines
   (`line3d`, colour 0x80be8882) are `WF_Tank::DrawSelection/DrawTarget/DrawShadow/Draw3d`.
 
