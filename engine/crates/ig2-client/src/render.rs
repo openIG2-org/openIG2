@@ -1813,6 +1813,9 @@ fn design_snapshot(o: &crate::Options, out: &std::path::Path, l: &crate::Loaded,
             }
             if let (Some(k), true) = (o.design_edit, i + 1 == o.ui_frames.max(1)) {
                 s.modern_act(&c, crate::design_modern::Act::Pod(k));
+                if o.design_ok {
+                    s.modern_act(&c, crate::design_modern::Act::Button(5));
+                }
             }
         }
     }

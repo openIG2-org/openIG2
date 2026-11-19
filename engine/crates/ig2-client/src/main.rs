@@ -261,6 +261,8 @@ pub struct Options {
     /// `--dip-pick M,R;M,R…`: the diplomacy snapshot picks this menu path first (the modern page's replayed press).
     pub dip_pick: Option<Vec<(usize, usize)>>,
     pub design_edit: Option<usize>,
+    /// `--design-ok` (with `--design-edit`): OK pressed after modify, the refit choice up.
+    pub design_ok: bool,
     /// `--design-row N`: the list's row chosen first.
     pub design_row: Option<usize>,
     /// `--research-pick A,F`: the research snapshot shows category A's field F first (the modern panels' picks).
@@ -413,6 +415,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         stage_queue: false,
         dip_pick: None,
         design_edit: None,
+        design_ok: false,
         design_row: None,
         research_pick: None,
         watch: None,
@@ -554,6 +557,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 o.research_pick = Some((a, f));
             }
             "--design-edit" => o.design_edit = Some(val()?.parse().map_err(|e| format!("--design-edit: {e}"))?),
+            "--design-ok" => o.design_ok = true,
             "--stage-win" => o.stage_win = Some(val()?.parse().map_err(|e| format!("--stage-win: {e}"))?),
             "--dkm" => {
                 let v: Vec<f32> = val()?.split(',').map(|x| x.trim().parse().map_err(|e| format!("--dkm: {e}"))).collect::<Result<_, _>>()?;

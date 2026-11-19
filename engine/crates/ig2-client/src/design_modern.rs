@@ -430,11 +430,15 @@ fn popup(ctx: &egui::Context, p: &Popup, at: egui::Pos2, pivot: Align2, acts: &m
         ds::entrance(ui);
         ui.multiply_opacity(t);
         ds::panel(ui, PanelKind::Deep, 0.96, 8.0, |ui| {
-            ui.set_width(320.0);
+            // As wide as the widest row (the refit cost ends its row), within the screen, so no row is cut.
+            let f = Font::BODY.sized(16.0);
+            let widest = p.rows.iter().map(|(_, s)| Text::new(s, f).layout(ui.ctx(), f32::INFINITY).width).fold(0.0, f32::max);
+            let room = ui.ctx().screen_rect().width() - 2.0 * ds::EDGE - 16.0;
+            ui.set_width((widest + 2.0 * ds::SPACE[1] + ds::SPACE[2]).clamp(320.0f32.min(room), room));
             ui.spacing_mut().item_spacing.y = 0.0;
             egui::ScrollArea::vertical().scroll_source(egui::scroll_area::ScrollSource { drag: false, ..Default::default() }).max_height(26.0 * 14.0).show(ui, |ui| {
                 for (sel, name) in &p.rows {
-                    if ds::pressed(&ui.add(ListRow::new(name).font(Font::BODY.sized(16.0)))) {
+                    if ds::pressed(&ui.add(ListRow::new(name).font(f))) {
                         acts.push(Act::Pick(*sel));
                     }
                 }

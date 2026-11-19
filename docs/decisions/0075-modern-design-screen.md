@@ -5,8 +5,8 @@ Date: 2026-11-03. Status: accepted (the design screen of the "Modern versions of
 `ui::Hud::design_modern_view` (what they show, read from the state `DesignGfx2D_1` and `_2` read),
 `design::Design::modern_act` (the acts through the original's hot-spot code), `design_scene::DesignScene::modern`
 (the console left out), the option `ModernDesign` (`display.rs` row 47) and the window (`design_modern_up`,
-`design_modern_apply`); `--snapshot --screen design --modern-design [--design-row N --design-edit K]` draws it
-headless. Uses ADR 0073 (the design kit).
+`design_modern_apply`); `--snapshot --screen design --modern-design [--design-row N --design-edit K [--design-ok]]` draws it
+headless (`--design-ok` presses OK after the modify, so the refit popup shows). Uses ADR 0073 (the design kit).
 
 ## Context
 The design screen (re/screens/design.md) was the last of the main game screens without a modern version. Its 2D
