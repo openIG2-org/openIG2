@@ -1290,11 +1290,27 @@ impl Hud {
         // The short info: the units selected, else the building, else the planet's (`ColonyInfoMod` 1, 2, 0).
         let k = crate::gui::ds::tokens();
         let mut card = m::Card { tip: dec(&parts.tips[5]), surplus: hs.own.then_some((hs.workers, hs.energy)), ..Default::default() };
-        if let Some(first) = units.first() {
+        // One fortress's turrets show the fortress (`ColonyKisInfo`'s `OnlyOneFortressSelected` branch).
+        if let Some(first) = units.first().filter(|_| ui.war.one_fortress(&w).is_none()) {
             let owner = col((first.owner + 0xf).max(0) as usize);
             card.colour = owner;
             card.title = if units.len() > 1 { dec(&sprintf(&self.texts.get(3, 2, 33), &[units.len() as i64])) } else { dec(&self.unit_design_name(state, first)) };
             card.lines = vec![(empire(first.owner), owner), (dec(&self.unit_weapon_name(state, first)), k.info)];
+            // One unit: the classic info's damage bar, range and strikes or mines left (`draw_unit_info`).
+            if units.len() == 1 {
+                let label = |n: u16| dec(&self.texts.get(3, 2, n)).trim_end_matches([':', ' ']).to_string();
+                let row = |l: String, value: String| m::Row { label: l, value, colour: k.info, ..Default::default() };
+                card.rows.push(m::Row { bar: Some(first.hp.0 as f32 / first.hp.1.max(1) as f32), colour: k.own, ..row(label(28), String::new()) });
+                if first.flags & ig2_sim::ground::flag::MINE == 0 {
+                    let line = |n: u16, v: i32| dec(&sprintf(&self.texts.get(3, 2, n), &[v as i64]));
+                    card.lines.push((line(29, crate::colony_war::shown_range(first)), k.info));
+                    for (bit, id, n) in [(ig2_sim::ground::weapon::AMMO, 30, first.ammo), (ig2_sim::ground::weapon::FIGHTER, 31, first.air), (ig2_sim::ground::weapon::BIG_SHIP, 32, first.air)] {
+                        if first.weapons & bit != 0 {
+                            card.lines.push((line(id, n), k.info));
+                        }
+                    }
+                }
+            }
         } else if let Some(b) = &parts.building {
             card.colour = col(0x22);
             card.title = dec(&b.name);

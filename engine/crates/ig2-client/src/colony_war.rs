@@ -172,6 +172,14 @@ fn blind(u: &UnitView) -> bool {
     u.flags & flag::TURRET != 0 && ((0xa1..=0xa4).contains(&u.design) || !u.has_gun)
 }
 
+/// The unit info's "Range: %d": the fire range `+0x148` truncated (`cvttss2si`), 1 shown as 0 (exe 0x465650).
+pub(crate) fn shown_range(u: &UnitView) -> i32 {
+    match u.range as i32 {
+        1 => 0,
+        r => r,
+    }
+}
+
 fn planet_of(c: &WarCtx) -> i32 {
     c.snap.planet as i32
 }
@@ -772,6 +780,21 @@ impl WarUi {
         } else {
             d.font.text(f, d.v, &(d.design_name)(first), x, y + 3.0, 19, 2, Align::Left, owner_col, None);
             d.font.text(f, d.v, &empire, x, y + 15.0, 19, 1, Align::Left, owner_col, None);
+            // Exe 0x4655dd..0x4657ad: "Damage:" (3, 2, 28) and the first member's hit point bar; not a mine:
+            // "Range: %d" (3, 2, 29) of the truncated range (1 shows 0) and, by weapon, the mines (0x10, 3, 2, 30),
+            // air strikes (0x20, 31) or laser strikes (8, 32; also `+0x288`) left.
+            d.font.text(f, d.v, &d.line(28), x, y + 24.0, 15, 1, Align::Left, col(0x23), None);
+            crate::colony_ui::hp_stripe(f, d.white, d.v, d.palette, first.hp.0, first.hp.1, x + 48.0, y + 24.0, 50.0);
+            if first.flags & flag::MINE == 0 {
+                let line = crate::ui::sprintf(&d.line(29), &[shown_range(first) as i64]);
+                d.font.text(f, d.v, &line, x, y + 33.0, 19, 1, Align::Left, col(0x23), None);
+                for (bit, id, n) in [(weapon::AMMO, 30, first.ammo), (weapon::FIGHTER, 31, first.air), (weapon::BIG_SHIP, 32, first.air)] {
+                    if first.weapons & bit != 0 {
+                        let line = crate::ui::sprintf(&d.line(id), &[n as i64]);
+                        d.font.text(f, d.v, &line, x + 64.0, y + 33.0, 19, 1, Align::Left, col(0x23), None);
+                    }
+                }
+            }
             let weapon = (d.weapon_name)(first);
             d.font.text(f, d.v, &weapon, x, y + 42.0, 20, 1, Align::Left, col(0x23), None);
         }
@@ -1098,6 +1121,9 @@ pub(crate) mod tests {
             building: 0,
             dropship: None,
             smoking: false,
+            hp: (100, 100),
+            range: 0.0,
+            ammo: 0,
         }
     }
 
@@ -1330,6 +1356,15 @@ pub(crate) mod tests {
         u.design = 0x9f;
         u.has_gun = false;
         assert!(blind(u));
+    }
+
+    #[test]
+    fn the_unit_info_range_truncates_and_hides_one() {
+        let mut u = unit(0, 1, 0);
+        for (r, shown) in [(0.0, 0), (1.0, 0), (1.9, 0), (2.0, 2), (7.6, 7)] {
+            u.range = r;
+            assert_eq!(shown_range(&u), shown, "{r}");
+        }
     }
 
     #[test]

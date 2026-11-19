@@ -835,7 +835,15 @@ missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles
 - **Unit info** (`ColonyInfoMod` 1, in `StarmapRovidInfoKiir`'s place at (50, 424)): several units: `GetString(3, 2, 33)`
   ("%d units selected.") at (50, 430) size 1, the first one's empire at (50, 439) in colour owner + 0xf, its weapon's
   tech name (the pod, `+0x51` else `+0x52` of the design; a turret's own pod) at (50, 466); one unit: its design's name at
-  (50, 427) size 2 in the owner's colour instead of the count. Left of the lines the unit's turning model (`HandleKisInfoObject`,
+  (50, 427) size 2 in the owner's colour instead of the count, and (`ColonyKisInfo` exe 0x464b20, listed in
+  `re/symbols` as `WriteRepairWindow`; its third `DrawHpStripe` call 0x465637): `GetString(3, 2, 28)` ("Damage:") at
+  (50, 448) size 1 colour 0x23 with `DrawHpStripe(*+0x154, +0x158, 98, 448, 50, 255)` (the first member's hit points of
+  the maximum); not a mine (0x20000): `GetString(3, 2, 29)` ("Range: %d") of `cvttss2si(+0x148)`, 1 shown as 0, at
+  (50, 457), and at (114, 457) by the weapons `+0x1d0`: 0x10 `(3, 2, 30)` of `+0x120` (mines), 0x20 `(3, 2, 31)` and 8
+  `(3, 2, 32)` both of `+0x288` (air / laser strikes; each later one over the earlier). The exe draws no health bars on
+  the units or buildings themselves: `DrawHpStripe` (exe 0x472020) is called only here (building, unit) and from the
+  space battle's info box. With only one fortress's turrets selected the fortress's building info is shown instead
+  (ELF 0x4edb40 calls itself with `ColonyInfoMod` 2). Left of the lines the unit's turning model (`HandleKisInfoObject`,
   §11.10).
 
 ### 11.5 Sounds

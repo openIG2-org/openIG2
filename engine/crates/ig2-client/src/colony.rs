@@ -109,6 +109,11 @@ pub struct UnitView {
     pub dropship: Option<V3>,
     /// `WF_Tank::Refresh2`'s smoke (spec §5.7): the first member below half its hit points, not a mine, not riding.
     pub smoking: bool,
+    /// The unit info's lines (`ColonyKisInfo`, spec §11.4): the first member's hit points `*+0x154` of `+0x158`,
+    /// the fire range `+0x148` and the ammunition `+0x120`.
+    pub hp: (i32, i32),
+    pub range: f32,
+    pub ammo: i32,
 }
 
 /// A shot in flight: `(h, x, y)`, the list it is in (0 shells, 1 missiles/debris, 2 bolts, 3 fighters) and its kind.
@@ -264,6 +269,9 @@ impl ColonySnap {
                     building: u.building,
                     dropship: (u.flags & 0x4020000 == 0 && u.transport & 1 == 0).then_some([u.rt.drop[2], u.rt.drop[0], u.rt.drop[1]]),
                     smoking: u.hp.first().is_some_and(|&h| h < u.max_hp / 2) && u.flags & flag::MINE == 0 && u.transport & 8 == 0,
+                    hp: (u.hp.first().copied().unwrap_or(0), u.max_hp),
+                    range: u.rt.range,
+                    ammo: u.ammo,
                 }
             })
             .collect();
