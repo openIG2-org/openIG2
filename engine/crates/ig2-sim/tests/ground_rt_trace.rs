@@ -477,6 +477,37 @@ fn run(env: &Env, gr: &GroundRules, ev: &Value, start: &Value, seed: u32, f: imp
     Run { field, rng, lcg }
 }
 
+/// `Init3dColony`'s unit pass (spec §11.5): units landed while another planet was on screen take the shown map's
+/// heights when the colony scene loads (#128), as if they had landed on screen.
+#[test]
+fn scene_load_takes_the_shown_maps_heights() {
+    let Some(env) = env() else { return };
+    let gr = ground_rules(&env.rules);
+    let Some(ev) = events("place").into_iter().find(|ev| ev["g"]["aktMap"].as_u64().is_some()) else { return };
+    let f = ev["f"].as_i64().unwrap() as i32;
+    let seed = ev["rand"]["seed"].as_u64().unwrap() as u32;
+    let mut off = ev.clone();
+    off["g"]["aktMap"] = Value::Null;
+    let on = run(&env, &gr, &ev, &ev["before"], seed, |w| w.land(f, false));
+    let mut a = run(&env, &gr, &off, &off["before"], seed, |w| w.land(f, false));
+    let heights = |x: &Field| x.units.iter().map(|u| u.rt.z).collect::<Vec<_>>();
+    assert_ne!(heights(&a.field), heights(&on.field), "landed off screen: the heights differ");
+    {
+        let p = ev["p"].as_i64().unwrap() as i32;
+        let ctx = context(&ev);
+        let (mut planet, map) = planet(&ev["before"]["planet"], p);
+        let mut world = world(&ev, &ev["before"]);
+        let mut libc = || a.lcg.next();
+        let mut place = |_s: Option<(i32, i32)>| (false, (0, 0));
+        let view = ev["g"]["aktMap"].as_u64().map(|m| &env.maps[m as usize]);
+        War::new(&mut a.field, &mut planet, &mut world, &gr, &ctx, &mut a.rng, &mut libc, &mut place)
+            .with_map(&env.maps[map as usize])
+            .with_view_map(view)
+            .load_scene();
+    }
+    assert_eq!(heights(&a.field), heights(&on.field));
+}
+
 #[test]
 fn realtime_landing_matches_trace() {
     let Some(env) = env() else { return };

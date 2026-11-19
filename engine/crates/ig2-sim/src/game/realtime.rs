@@ -127,6 +127,8 @@ pub struct SpBattles {
     pub old_pause: Option<bool>,
     /// `ColonyCounter` (exe 0x99823c, an f32 there): the 100 Hz UI ticks [`Game::colony_ui_tick`] counted.
     pub colony_counter: u32,
+    /// The planet whose colony scene [`Game::colony_ui_tick`] last loaded (`Init3dColony`), so it loads once per visit.
+    pub scene: Option<usize>,
 }
 
 /// What a real-time battle did (canonical multiplayer, or single player's own with [`SpBattles::live`]).
@@ -949,10 +951,19 @@ impl Game<'_> {
     /// every 100 Hz UI tick while `AktKep ≤ 0xD`, paused or not; spec §11.16): `ColonyCounter += 1`, and on every fifth
     /// count the dropships of every battlefield; on every second count with the colony screen up, the debris
     /// ([`crate::ground::War::debris`]; canonical MP makes none). Canonical MP steps the dropships with the sim
-    /// instead. True when they stepped.
+    /// instead. Before that, on a newly shown colony screen, the scene load's unit pass
+    /// ([`crate::ground::War::load_scene`]). True when the units moved.
     pub fn colony_ui_tick(&mut self) -> bool {
         if self.view != ViewMode::Classic || self.globals().multiplayer || !self.sp_battles.live {
             return false;
+        }
+        let mut loaded = false;
+        if self.sp_battles.scene != self.sp_battles.colony {
+            self.sp_battles.scene = self.sp_battles.colony;
+            if let Some(p) = self.sp_battles.colony.filter(|&p| self.state.has_ground_field(p)) {
+                self.with_war(p, |w| w.load_scene());
+                loaded = true;
+            }
         }
         self.sp_battles.colony_counter = self.sp_battles.colony_counter.wrapping_add(1);
         let step = self.sp_battles.colony_counter % 5 == 0;
@@ -965,7 +976,7 @@ impl Game<'_> {
                 self.with_wars(&planets, |w| w.debris());
             }
         }
-        step
+        step || loaded
     }
 
     /// The dropships of every battlefield (`WF::Refresh2`'s pass, exe 0x48ce10), once per tick in canonical MP:

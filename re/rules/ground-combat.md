@@ -710,6 +710,13 @@ Besides the 3D objects this sets flags 0x10/0x20/0x200 (0x20 lasts one frame: `W
 once more: **a vehicle landed on screen drives at the slope speed, one landed off screen at its hull's**
 [original quirk]. Mines take their cell's map position and `GetHeightFloat` (0x4a89a0) [not traced].
 
+Loading the colony scene does the same for the whole field: `Init3dColony` (ELF 0x4c6050, exe 0x47d520) runs
+`WF::LoadMesh`, then `WF_Tank::LoadMesh` for every alive unit of `AktPlanet`'s battlefield (ELF lines after
+`InitFader3`), so units made while another planet was on screen (whose map gave their heights, §11.2) stand on the
+shown map from then on. Port: `War::load_scene`, run by `Game::colony_ui_tick` once per visit (`SpBattles::scene`;
+single player, classic view); test `ground_rt_trace::scene_load_takes_the_shown_maps_heights`. The mine branch's
+height isn't ported (as above).
+
 ### 11.6 The battle tick (`FRISSIT_Grwar`, every 20 Hz tick)
 Called from the main tick (exe 0x4deb36) after the strategic systems, unless paused; while the colony
 screen shows a contested battle (`0x47c150(AktPlanet) == 1`) the strategic systems stop and only this and

@@ -415,6 +415,16 @@ impl War<'_> {
         }
     }
 
+    /// `Init3dColony`'s unit pass (ELF 0x4c6050, exe 0x47d520; spec §11.5): every alive unit of the shown battlefield
+    /// loads its mesh, so each vehicle takes its height and slope from the shown planet's map again.
+    pub fn load_scene(&mut self) {
+        for i in 0..self.n() as i32 {
+            if self.alive(i) {
+                self.load_mesh(i);
+            }
+        }
+    }
+
     /// The state side of `WF_Tank::LoadMesh` (exe 0x4847a0), which runs when a unit is created while its
     /// battlefield is on the colony screen ([`GroundContext::on_screen`]): flags 0x10/0x20/0x200, and the
     /// orientation is computed again, so a vehicle landed on screen drives at the slope speed instead of
