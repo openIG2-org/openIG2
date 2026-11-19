@@ -237,6 +237,11 @@ Every fifth UI tick (`(int)ColonyCounter % 5 == 0`), `Atlepes` clear, owner 1 (`
 - `KemenyFust` chimneys (children `fust1…` of the building mesh, empty nodes; `SetLangPlaces` 0x49bd50): a type-10 grey (100, 100, 90)
   puff per step while the building works; `a += 3` from 0x80, `vy/vz += 0.08`, size +0.3, 40 updates.
 The particles' random tables come from `srand(SDL_GetTicks())`: not reproducible.
+On a planet the human doesn't see into (§3.3) none of this smoke shows, though `AddParticle` has no view test for owner 1
+[obs: planet 54 of `replay-quick1-battles-ground-x16/0.sav`: the exe draws only the red footprints; the client drew the
+working buildings' chimney puffs over them until it gated the puffs on the view flag]. The collapsing building of a ruin
+(§5.9) is the building's own hidden mesh, so it doesn't show either; the rubble box and the scorch marks (§5.10) have no
+view test in `Rom::Update`/`Koszfolt::Update` and are kept.
 
 ### 3.6 Status markers over idle buildings (`PlaceVillam`, `UpdateVillam`)
 A spinning model floats over a building of the human's colony that stands idle. `PlaceVillam` (exe 0x48c400, ELF 0x4b9fc0;

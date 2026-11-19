@@ -2434,7 +2434,8 @@ impl View {
         // The ruins (`Rom::Update`, spec §5.9): the collapsing building at `fade²`, the rubble `torm_e.xvb` at its own
         // transparency (`RomMeret[0]` = 7.8125e-5, `ScaleObj2(h, w, w/1.5)`, turned a quarter, `5w` above the ground).
         for ru in scene.smoke.ruins.clone() {
-            if ru.collapsing {
+            // The collapsing building is the building's own mesh, hidden with the others when the human doesn't see in (§3.3).
+            if ru.collapsing && curr.visible {
                 let opacity = 1.0 - ru.fade * ru.fade;
                 if let Some((model, texs)) = scene.collapse_pose(r, install, rules, ru.kind, ru.frame) {
                     push_model_faded(&model, texs, &ru.building, opacity, &mut dynamic, &mut draws);
@@ -2448,7 +2449,7 @@ impl View {
                 push_model_faded(&mesh.model, &mesh.texs, &xf, 1.0 - ru.rubble, &mut dynamic, &mut draws);
             }
         }
-        if !scene.smoke.puffs().is_empty() {
+        if curr.visible && !scene.smoke.puffs().is_empty() {
             let rcloud = scene.colony_texture(r, install, "rcloud.bmp");
             let base = dynamic.len() as u32;
             for q in scene.smoke.puffs() {
