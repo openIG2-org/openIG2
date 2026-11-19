@@ -705,7 +705,8 @@ pause in `SpBattles::old_pause`), the screens in the client (`window.rs`, `RealT
 ### 11.5 `LoadMesh` side effects
 On the colony screen of the battlefield (`AktKep == 3`, `AktPlanet == p`, not entering or leaving it, exe
 0xBAE24C/0xBAE24D) `AddTank` (a new group) and `AddTurret` load the unit's meshes unless flag 0x10 is set.
-Besides the 3D objects this sets flags 0x10/0x20/0x200 and, for vehicles, runs `SetTankPositionAndMatrix`
+Besides the 3D objects this sets flags 0x10/0x20/0x200 (0x20 lasts one frame: `WF_Tank::Update` clears it, exe
+0x4a6b24) and, for vehicles, runs `SetTankPositionAndMatrix`
 once more: **a vehicle landed on screen drives at the slope speed, one landed off screen at its hull's**
 [original quirk]. Mines take their cell's map position and `GetHeightFloat` (0x4a89a0) [not traced].
 

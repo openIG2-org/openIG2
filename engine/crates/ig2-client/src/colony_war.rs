@@ -61,7 +61,7 @@ pub struct OnScreen {
     pub slot: usize,
     pub at: [f32; 2],
     /// `TransformTav(35.0, z)` = 35·600/z, at least 10 (`WF::MouseOver`); `None` when `WF_Tank::MouseOver` never
-    /// hits it (flag 0x20, a defence turret of pods 0xa1..=0xa4 or without a gun).
+    /// hits it ([`blind`]).
     pub radius: Option<f32>,
 }
 
@@ -165,6 +165,13 @@ pub struct WarUi {
     info_turn: (Option<usize>, f32),
 }
 
+/// `WF_Tank::MouseOver` (exe 0x48bc90) never hits a defence turret of pods 0xa1..=0xa4 or one without a gun. Its flag
+/// 0x20 test (0x48bcf2) is left out: `LoadMesh` sets that flag and `WF_Tank::Update` clears it at the end of every
+/// drawn frame (exe 0x4a6b24), so the pointer and the rings never see it; the sim sets it and never clears it.
+fn blind(u: &UnitView) -> bool {
+    u.flags & flag::TURRET != 0 && ((0xa1..=0xa4).contains(&u.design) || !u.has_gun)
+}
+
 fn planet_of(c: &WarCtx) -> i32 {
     c.snap.planet as i32
 }
@@ -184,9 +191,7 @@ impl WarUi {
             .filter_map(|u| {
                 let centre = centres.iter().find(|(s, _)| *s == u.slot).map_or(u.pos, |&(_, c)| c);
                 let (at, z) = view.camera.project_virtual(&basis, centre)?;
-                let turret = u.flags & flag::TURRET != 0;
-                let blind = u.flags & 0x20 != 0 || (turret && ((0xa1..=0xa4).contains(&u.design) || !u.has_gun));
-                Some(OnScreen { slot: u.slot, at, radius: (!blind).then(|| (35.0 * 600.0 / z).max(10.0)) })
+                Some(OnScreen { slot: u.slot, at, radius: (!blind(u)).then(|| (35.0 * 600.0 / z).max(10.0)) })
             })
             .collect();
     }
@@ -538,7 +543,10 @@ impl WarUi {
             if !self.mods.shift {
                 self.selected.retain(|&s| Some(s) == t);
             }
-            let Some(t) = t else { return Some(false) };
+            let Some(t) = t else {
+                self.select_post(c);
+                return Some(false);
+            };
             let own = c.unit(t).is_some_and(|u| u.owner == c.en);
             if !self.mods.shift || (own && (self.last_owner == c.en || self.selected.is_empty())) {
                 self.select(c, t, true);
@@ -570,6 +578,20 @@ impl WarUi {
             }
         }
         Some(true)
+    }
+
+    /// `GetNearestBuilding` with no unit under the pointer (ELF 0x4c9d79): a finished defence post (kinds
+    /// 0x20..=0x23) under it selects every turret of it (`+0x238` = its slot); the building pick then gives 0
+    /// (`ColonyUi::building_under`).
+    fn select_post(&mut self, c: &WarCtx) {
+        let Some(b) = self.under.and_then(|s| c.snap.buildings.iter().find(|b| b.slot == s)) else { return };
+        if !(0x20..0x24).contains(&b.kind) || b.work_left != 0 {
+            return;
+        }
+        let turrets: Vec<usize> = c.snap.units.iter().filter(|u| u.flags & flag::TURRET != 0 && u.building == b.slot as i32).map(|u| u.slot).collect();
+        for s in turrets {
+            self.select(c, s, true);
+        }
     }
 
     /// A left press on the view outside a war (nothing armed, no build cursor): the box runs there too
@@ -713,7 +735,7 @@ impl WarUi {
 
     pub fn marks(&self, c: &WarCtx) -> Vec<Mark> {
         let mut out = Vec::new();
-        for u in self.chosen(c).filter(|u| u.flags & 0x20 == 0) {
+        for u in self.chosen(c) {
             let Some(p) = self.rings.get(&u.slot) else { continue };
             let turret = u.flags & flag::TURRET != 0;
             let tex = if u.owner == c.en { MarkTex::Friend } else { MarkTex::Enemy };
@@ -733,6 +755,10 @@ impl WarUi {
     pub fn draw_unit_info(&self, f: &mut Frame, c: &WarCtx, d: &Draw2d) -> bool {
         let units: Vec<&UnitView> = self.chosen(c).collect();
         let Some(first) = units.first() else { return false };
+        // One fortress's turrets: `ColonyKisInfo` describes the fortress instead (ColonyUi::draw_building_info).
+        if self.one_fortress(c).is_some() {
+            return false;
+        }
         let col = |i: usize| d.palette.get(i).copied().unwrap_or([1.0; 3]);
         let (x, y) = (50.0, 424.0);
         let empire = d.empire_names.get(first.owner.clamp(0, 18) as usize).cloned().unwrap_or_default();
@@ -1287,6 +1313,49 @@ pub(crate) mod tests {
         let g = w.take_groups().expect("kept");
         assert_eq!((g[1].clone(), g[5].clone()), (BTreeSet::from([0, 2]), BTreeSet::from([1])));
         assert!(w.take_groups().is_none());
+    }
+
+    #[test]
+    fn units_loaded_on_screen_stay_pickable() {
+        // A fortress turret added while the colony is shown carries `LoadMesh`'s 0x230 (exe `WF_Tank::Update`
+        // 0x4a6b24 clears 0x20 every frame); the turret pods 0xa1..=0xa4 and gunless turrets never hit.
+        let mut s = field();
+        let u = &mut s.units[1];
+        u.flags |= flag::TURRET | 0x230;
+        u.has_gun = true;
+        u.design = 0x9f;
+        assert!(!blind(u));
+        u.design = 0xa2;
+        assert!(blind(u));
+        u.design = 0x9f;
+        u.has_gun = false;
+        assert!(blind(u));
+    }
+
+    #[test]
+    fn a_press_on_a_finished_post_selects_its_turrets() {
+        // `GetNearestBuilding` (ELF 0x4c9d79): no unit under the pointer, a finished kind 0x20..=0x23 under it.
+        let mut s = field();
+        for (i, b) in [(1, 5), (2, 5), (3, 6)] {
+            s.units[i].flags |= flag::TURRET;
+            s.units[i].building = b;
+        }
+        s.buildings.push(crate::colony::BuildingView { slot: 5, kind: 0x21, x: 0.0, y: 0.0, work_left: 0, damage: 10, flags: 1, yield_pct: 100, efficiency: 256 });
+        let c = WarCtx { snap: &s, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        w.under = Some(5);
+        w.box_start = Some([300.0, 300.0]);
+        assert_eq!(w.drag(&c, [300.0, 300.0]), Some(false));
+        assert_eq!((w.selected.clone(), w.one_fortress(&c)), (BTreeSet::from([1, 2]), Some(5)));
+        // Still under construction: nothing.
+        let mut s2 = s.clone();
+        s2.buildings[0].work_left = 3;
+        let c = WarCtx { snap: &s2, en: 1, tutorial_paused: false };
+        let mut w = ui();
+        w.under = Some(5);
+        w.box_start = Some([300.0, 300.0]);
+        w.drag(&c, [300.0, 300.0]);
+        assert!(w.selected.is_empty());
     }
 
     #[test]

@@ -789,11 +789,12 @@ impl ColonyUi {
             let r = self.rand.below(2);
             self.sounds.push(colony(r));
         }
-        if let (Confirm::Demolish, Some(_)) = (w, c.building(self.selected)) {
+        if let (Confirm::Demolish, Some(_)) = (w, c.building(self.target(c))) {
             let r = self.rand.below(4);
             self.sounds.push(SoundId::new(Table::Gr, 13 + r as u16));
         }
-        if let Some(b) = c.building(self.selected) {
+        // `GetAktEpulet` (ELF 0x4cbda0): the selected building, else the selected fortress turrets' one.
+        if let Some(b) = c.building(self.target(c)) {
             let (planet, slot) = (c.snap.planet as i32, b.slot as i32);
             out.commands.push(match w {
                 Confirm::Repair => ColonyOrder::Repair { planet, slot },
@@ -883,7 +884,7 @@ impl ColonyUi {
 
     /// The window's title and, for the repair, its price (`WriteRepairWindow`/`WriteDemolishWindow`).
     pub fn window_texts(&self, c: &Ctx, w: Confirm) -> (Vec<u8>, Option<i32>, [Vec<u8>; 2]) {
-        let cost = (w == Confirm::Repair).then(|| c.building(self.selected).map_or(0, |b| {
+        let cost = (w == Confirm::Repair).then(|| c.building(self.target(c)).map_or(0, |b| {
             let k = c.rules.buildings.get(b.kind as usize);
             let price = k.map_or(0, |k| c.state.tech().price(k.tech as usize));
             ig2_sim::game::repair_price(price, b.damage, k.map_or(1, |k| k.max_hp))
@@ -924,6 +925,15 @@ impl ColonyUi {
     fn target(&self, c: &Ctx) -> usize {
         match self.war.one_fortress(&c.war()) {
             Some(b) if self.selected == 0 && c.owner_is_en() => b,
+            _ => self.selected,
+        }
+    }
+
+    /// The building `ColonyKisInfo` describes: the selected one, else with only one fortress's turrets selected that
+    /// fortress (ELF 0x4edb40, `OnlyOneFortressSelected`: `ColonyInfoMod` 2 for the call, any owner).
+    fn info_building(&self, c: &Ctx) -> usize {
+        match self.war.one_fortress(&c.war()) {
+            Some(b) if self.selected == 0 => b,
             _ => self.selected,
         }
     }
@@ -1247,7 +1257,7 @@ impl ColonyUi {
         match w {
             Confirm::Repair => {
                 font.text(f, v, &c.text(4, 4), x, 411.0, cells, 2, Align::Field, col(2), None);
-                let cost = c.building(self.selected).map_or(0, |b| {
+                let cost = c.building(self.target(c)).map_or(0, |b| {
                     let k = c.rules.buildings.get(b.kind as usize);
                     let price = k.map_or(0, |k| c.state.tech().price(k.tech as usize));
                     ig2_sim::game::repair_price(price, b.damage, k.map_or(1, |k| k.max_hp))
@@ -1617,7 +1627,7 @@ impl ColonyUi {
     /// short info then). The small turning copy of the model beside it is [`PanelBuilding::render_info`].
     #[allow(clippy::too_many_arguments)]
     pub fn draw_building_info(&self, f: &mut Frame, c: &Ctx, font: &Font, white: TexId, v: &Virtual, palette: &[[f32; 3]]) -> bool {
-        let Some(b) = c.building(self.selected) else { return false };
+        let Some(b) = c.building(self.info_building(c)) else { return false };
         let Some(k) = c.rules.buildings.get(b.kind as usize) else { return false };
         let col = |i: usize| palette.get(i).copied().unwrap_or([1.0; 3]);
         let (x, y) = (50.0, 424.0);
@@ -1698,7 +1708,7 @@ impl ColonyUi {
 
     /// `ColonyKisInfo`'s building half as data ([`ColonyUi::draw_building_info`]'s lines).
     fn building_parts(&self, c: &Ctx) -> Option<BuildingParts> {
-        let b = c.building(self.selected)?;
+        let b = c.building(self.info_building(c))?;
         let k = c.rules.buildings.get(b.kind as usize)?;
         let mut p = BuildingParts { name: (c.tech_name)(k.tech as usize), hp: (k.max_hp - b.damage, k.max_hp), damage: c.text(2, 11), ..Default::default() };
         if b.flags & 1 == 0 {

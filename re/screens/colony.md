@@ -587,7 +587,7 @@ becomes `AktEpuletTipus` with the cursor up. Without a working hub (`SearchBuild
 picked.
 
 The 3D view: without the build cursor the left button selects the building under the pointer (`GetNearestBuilding`'s
-`selectedepulet + 1`, the model hit by the click, below; finished defence posts 0x20..=0x23 select their turrets and give 0)
+`selectedepulet + 1`, the model hit by the click, below; finished defence posts 0x20..=0x23 select their turrets and give 0; with only one fortress's turrets selected the repair/demolish windows and the short info use that fortress, `GetAktEpulet` ELF 0x4cbda0, `ColonyKisInfo` ELF 0x4edb40 with AktEpulet = the turret's +0x238)
 and makes its kind `AktEpuletTipus`. With the cursor up (`ShowColony`): the pointer's ground cell `AktBGridX/Y`
 (`Real2Grid` ELF 0x4717e0: `floor((S/2 − x)·99/S/100·99·2)`, `floor((y + S/2)·99/S/100·99·2)`) is searched for the
 kind's first free spot (`LocateActBuildingSuitableLocation` exe 0x486460 / ELF 0x4bc820, over the colony screen's grid; differs from
@@ -752,8 +752,10 @@ MouseSzovegSzam)`, the war buttons and the view 0x14 included) and returns.
 missing the ground sets `InvalidBuildingPosition`), and `WarfareKeretesKijeloles` (the box). Then `Colony_Main`:
 
 - **Hit test** (`WF::CheckTanks` exe 0x460b70): among the alive units with flags & 2 = 0 whose owner is EN, or all when
-  side EN has units on the field (`WF+0x8b1 + EN`), those under the pointer (`WF_Tank::MouseOver` exe 0x48bc90 via
-  `WF::MouseOver`'s test: not flag 0x20, not a defence turret of pods 0xa1..=0xa4; the object centre (`GetObjCenter` of
+  side EN has units on the field (`WF+0x8b1 + EN`), those under the pointer (`WF_Tank::MouseOver` exe 0x48bc90:
+  not a defence turret of pods 0xa1..=0xa4, not flag 0x20 (0x48bcf2; that flag is `LoadMesh`'s, cleared at the end of
+  every `WF_Tank::Update` exe 0x4a6b24, so it is never set at input time; the port leaves the test out, as the sim
+  never clears it); the object centre (`GetObjCenter` of
   the hull mesh, the gun mesh for a turret: the middle of the posed model's extent) projected; radius
   `TransformTav(35.0, z)` = 35·600/−z, at least 10.0; hit when `dx² + dy² < r²`, f32); of those the one whose projected
   centre is nearest to the pointer; −1 none.
