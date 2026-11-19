@@ -208,7 +208,9 @@ Per frame in `ShowColony` (exe 0x49f130, asm 0x49f3a0..0x49f5a4) for each slot w
 node (`+0x104`) together with property 0x1000000; `Kocka` copies it to the sort record (`+0x74`; 0.0 inherits the parent's).
 `clippolygonvagashatar` (exe 0x52e410, called per triangle after back-face culling, before the near clip) keeps the vertices whose
 world first coordinate (more negative = higher) is ≥ `cut`, clips the edges (colours and uv lerped, `cliptlvertexvh` 0x52ea60),
-no cap. The shadow map (`Kockashadow`) draws the building whole (`Shadow::CastOnly`). Unfinished buildings are opaque.
+no cap. `Kockashadow` (ELF 0x5fc430) has no cut test, yet the uncut building's shadow doesn't show on its own plate
+[obs: planet 35 of the 0.7.394 report save, a laser fortress at work left 21000: the exe's plate is lit where a
+whole-model shadow map darkened it to a slab]; the port lets only the cut part cast. Unfinished buildings are opaque.
 Scaffolding: `step = (int)(frac·10)` (0..9), grown only (`Epulet3d[k−1]+0x50`); `AddAllvanyok` (exe 0x4578c0) puts one
 `allvany<level+1>.xvb` box per footprint cell at `level = min(step, magas[kind−1][row·10+col])` (`magas` exe 0x8F3968, 60 × 100
 bytes, `Building+0x60` filled by `InitEpuletek` 0x482bf0; `ig2-rules` `scaffold_masks`), `ModifyAllvany` (0x48b390) scale
@@ -291,7 +293,10 @@ and placed (bit 2 clear). Exe unit offsets are ELF − 8 from `+0x164` on, −0x
   `+0x64`, at `P + body·(0, 0, pivot) + body·(0, −10, 12)` (`Forgasd` 0x47f780 = matrix × vector).
 - Defence turrets (flag 0x4000000, `WF::AddBuildingTurrets`): `TankTorony[pod − 0x98]` (pods 0xa1..0xa8 →
   `a1v0+ … fr4v2++`), `TankToronyMeret[pod − 0xa1]/1024/10` (exe 0x8F1BA4), turned by the turret angle about h, at
-  `P`; no hull.
+  `P`; no hull. `WF_Tank::Update` (exe 0x4a5b20) hides the gun while flags2 (`+0x18c`) bit 2 is set, i.e. until
+  `BuildingBuilt`: a defence building under construction shows no guns [obs: planet 35 of the 0.7.394 report save, a
+  laser fortress at work left 21000]. The port also checks the building's work left (the sim's start-up buildings
+  placed finished keep the bit).
 - Own units being placed: transparency (`+0x190` bit 15); selection rings, targets, shadows and the route lines
   (`line3d`, colour 0x80be8882) are `WF_Tank::DrawSelection/DrawTarget/DrawShadow/Draw3d`.
 

@@ -2315,18 +2315,13 @@ impl View {
                 let b = curr.buildings.iter().find(|b| b.slot == slot)?;
                 cut_height(rules, curr.owner_race, b.kind, b.work_left, bottom)
             });
-            let mut shadow = e.shadow;
+            let shadow = e.shadow;
             match cut {
+                // Only the cut part casts a shadow (spec §3.4).
                 Some(c) => {
                     let all: Vec<MeshVertex> = verts.collect();
-                    if shadow == Shadow::Cast {
-                        dynamic.extend_from_slice(&all);
-                        draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: e.tex, glass: e.glass, cloud: false, shadow: Shadow::CastOnly, video: false, additive: false, depth_write: false });
-                        shadow = Shadow::None;
-                    }
-                    let start = dynamic.len() as u32;
                     clip_below(&all, c, &mut dynamic);
-                    draws.push(MeshDraw { mesh: None, range: start..dynamic.len() as u32, tex: e.tex, glass: e.glass, cloud: false, shadow, video: false, additive: false, depth_write: false });
+                    draws.push(MeshDraw { mesh: None, range: base..dynamic.len() as u32, tex: e.tex, glass: e.glass, cloud: false, shadow, video: false, additive: false, depth_write: false });
                     continue;
                 }
                 None => dynamic.extend(verts),
@@ -2683,7 +2678,11 @@ impl View {
                     }
                 }
             }
-            let Some(k) = u.gun else { continue };
+            // `WF_Tank::Update` (exe 0x4a5b20) hides the gun while flags2 bit 2 is set: a defence turret until its building
+            // is built. The building's work left is checked too: the sim's finished start-up buildings keep the bit.
+            let building = |s: i32| curr.buildings.iter().find(|b| b.slot as i32 == s);
+            let unfinished = u.flags2 & 4 != 0 && building(u.building).is_some_and(|b| b.work_left > 0);
+            let Some(k) = u.gun.filter(|_| !unfinished) else { continue };
             let Some(mesh) = scene.turret_mesh(r, install, um, k) else { continue };
             let (s, xf) = if turret_unit {
                 let s = um.defence_scale.get(k.wrapping_sub(9)).copied().unwrap_or(0.2) / 1024.0 / 10.0;
