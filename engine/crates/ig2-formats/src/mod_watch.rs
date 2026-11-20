@@ -50,7 +50,7 @@ pub fn classify(rel: &str) -> Reload {
     }
     match rel.rsplit_once('.').map(|(_, e)| e) {
         Some("pvr") => Reload::Texture(rel),
-        Some("ogg") => Reload::Sound,
+        Some("ogg" | "flac" | "wav") => Reload::Sound,
         Some("mp4") => Reload::Nothing,
         Some("txt" | "eng") if crate::textpatch::kind(&rel).is_some() => Reload::Texts,
         _ => Reload::Apply,
@@ -110,6 +110,7 @@ mod tests {
         assert_eq!(classify("dataraw/textures/main/a_bmp.pvr"), Reload::Texture("dataraw/textures/main/a_bmp.pvr".into()));
         assert_eq!(classify("hires/dataraw/textures/main/a_bmp.png"), Reload::Texture("dataraw/textures/main/a_bmp.pvr".into()));
         assert_eq!(classify("dataraw/sounds/colony/click.ogg"), Reload::Sound);
+        assert_eq!(classify("sounds/mine/hum.flac"), Reload::Sound);
         assert_eq!(classify("texts.de.toml"), Reload::Texts);
         assert_eq!(classify("dataraw/text/txt03.txt"), Reload::Texts);
         assert_eq!(classify("visuals.toml"), Reload::Looks);
