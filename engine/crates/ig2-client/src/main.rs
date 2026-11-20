@@ -35,6 +35,8 @@
 //!           `--info-select K,X,Y,I` the planet-settings menu of hot-spot K open at (X, Y) on item I (§7.1).
 //! MP host:  `ig2-client --mp-host` hosts a room without a window through the relay server of `relay.txt` (for
 //!           trying other clients, `mp_lobby::headless_host`).
+//! Mod dev:  `ig2-client --mod-dev`: a changed texture, sound, text, `visuals.toml` or `effects.toml` of an enabled
+//!           folder mod reloads while the game runs; other changed files ask for Apply on the Mods page (ADR 0092 §2).
 //! MP join:  `ig2-client --mp-join ADDRESS|CODE` joins that room once the main menu is up (the restart after a room's
 //!           mods were installed, ADR 0086 §3).
 //! Play-through: `ig2-client --playthrough <runs> [--ticks N] [--seed S] [--save-every M] [--stall M] [--human ai|idle]` plays whole
@@ -355,6 +357,8 @@ pub struct Options {
     pub lang: Option<Lang>,
     /// `--mod` (repeatable): the mods for this run, over `mods/enabled.txt` (ADR 0044).
     pub mods: Option<Vec<String>>,
+    /// `--mod-dev`: an enabled folder mod's changed look-only files reload while the game runs (ADR 0092 §2).
+    pub mod_dev: bool,
 }
 
 /// The release's version, in the window's title and `--version`: `OPENIG2_VERSION` at build time (the release
@@ -458,6 +462,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         mouse: None,
         lang: None,
         mods: None,
+        mod_dev: false,
     };
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -634,6 +639,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
                 }
             }
             "--mod" => o.mods.get_or_insert_with(Vec::new).push(val()?),
+            "--mod-dev" => o.mod_dev = true,
             "--lang" => {
                 let v = val()?;
                 o.lang = Some(Lang::from_code(&v).ok_or(format!("--lang {v}: en, hu, de, fr, es or it"))?);

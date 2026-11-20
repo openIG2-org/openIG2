@@ -931,6 +931,17 @@ impl Renderer {
         Ok(t)
     }
 
+    /// Ours (ADR 0092 §2): every texture loaded from `path` (any case) decoded again from `install` and replaced in
+    /// place; one that fails keeps its picture. How many were replaced.
+    pub fn reload_file(&mut self, install: &ig2_formats::Install, path: &str) -> Result<usize, String> {
+        let hits: Vec<(String, TexId)> = self.files.iter().filter(|(k, _)| k.eq_ignore_ascii_case(path)).map(|(k, &t)| (k.clone(), t)).collect();
+        for (k, t) in &hits {
+            let img = Image::load(install, k)?;
+            self.replace_texture(*t, &img);
+        }
+        Ok(hits.len())
+    }
+
     /// One shared white texture.
     pub fn white(&mut self) -> TexId {
         if self.white.is_none() {

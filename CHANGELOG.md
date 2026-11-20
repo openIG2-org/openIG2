@@ -63,6 +63,7 @@ Getting the game from "every part works" to "a player can install it and play it
 - Mods: drop a zip into the `mods` folder and switch it on in the Mods page, or install, update and remove mods with their dependencies from the Browse tab; a broken mod no longer stops the game.
 - Mods can give 3D models as glTF binary files (`.glb`) in place of the game's own model files, at the model's path or under `hires`.
 - Apply in the Mods page loads the changed mods at once from the main menu, with no restart.
+- Modders: `openIG2-check --new-mod FOLDER` (or New mod on the Mods page) writes a ready, commented mod to start from; with `--mod-dev` a folder mod's changed textures, sounds, texts and look files reload in the running game within a second, and rules, stories and data say "Changed, Apply to reload".
 - Mods can change rule values, texts, textures and sounds, and add techs, buildings, ship hulls, weapons, parts, tanks, races, planet types and their own stories; computer empires, saves and multiplayer games use them.
 - A mod's new ship hull can have its own equipment slots (`slots` in `[[hulls.new]]`), for example a destroyer with two rocket slots instead of its lasers; the designer, the battle and computer empires use them.
 - Visual mods (`visuals.toml`) can switch on smoother edges, per-pixel lighting on every 3D model, soft shadows, scene glow and planet halos; they change only the look, so they work in multiplayer with players who don't have them.

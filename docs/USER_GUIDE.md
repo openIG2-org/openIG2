@@ -246,7 +246,10 @@ A mod changes the game with your own files: a sharper texture, another text, ano
 3. Apply loads the list at once, with no restart. The page shows each mod's problems in red and the files another
    mod above it overrides; a broken mod is skipped, and a list that fails to load falls back to no mods (the page says why).
 
-**Making a mod** in three steps (new to modding? [Your first mod](modding/first-mod.md) walks through one from start to finish):
+**Making a mod** in three steps (new to modding? [Your first mod](modding/first-mod.md) walks through one from start to finish).
+The quick start is `openIG2-check --new-mod mods\my-mod --kind story` (or `rules`, `texts`, `visual`), or the Mods
+page's New mod button with its kind: it writes a ready mod, `mod.toml` with every line explained, one example file
+of the kind and a README; it never writes into a folder that isn't empty, and the result passes the checks as it is.
 1. Make a folder named after your mod and put each file at the same path it has in the install:
    `sharp-menu\dataraw\textures\main\eng\unselected\0_credits_bmp.pvr` replaces the install's
    `dataraw\textures\main\eng\unselected\0_credits_bmp.pvr`. Names are not case-sensitive. A mod's file also beats
@@ -277,6 +280,17 @@ A mod changes the game with your own files: a sharper texture, another text, ano
    `openIG2-check --package <folder>` checks the mod and writes `<id>-<version>.zip`, its SHA-256 and the mod index
    entry (it needs `version`, `requires` and `license` in `mod.toml`; only TOML, PNG, text and the game's data
    formats, no programs, scripts or archives, and no file copied from the install; fill in the entry's download URL).
+
+**Trying changes while the game runs**: start the game with `--mod-dev` (`openIG2.exe --mod-dev`). Once a second
+it looks at the enabled mods that are folders (not zips); when you save a texture (`.pvr`, or a `hires/` picture),
+a sound (`.ogg`), a `texts.<lang>.toml` or text file, `visuals.toml` or `effects.toml`, the running game loads it
+again within a second, in the menu or in a game. A texture changes wherever it is drawn from the shared picture
+cache (most screens); a screen that made its own copy, and texts a screen read when it opened, change when that
+screen opens again. A file that doesn't load (a typo in a TOML file, a broken picture) keeps the version loaded
+before, and the message line (in a game) and the Mods page say what is wrong. Rule tables (`rules.toml`), stories,
+`mod.toml`, models and the game's data files change the game itself: the message line names them, the Mods page
+shows "Changed, Apply to reload", and Apply in the main menu loads them. Nothing is reloaded while a multiplayer game
+or room is open. Without `--mod-dev` nothing is watched.
 
 **Browse and install**: the Mods page's Browse tab (Ctrl+Tab switches tabs) lists mods from the openIG2 mod index. The list is fetched over HTTPS only when you open the tab (nothing is contacted at start), its signature is checked against the key built into the game, and the checked copy is kept beside your settings (`mod-index`) so Browse also works offline, with a note saying so. It lists the newest release that fits this version, with search (`/`), picture, author, licence, size, dependencies and conflicts. Install (Enter) downloads the mod and the dependencies you lack, checks every zip (size, SHA-256, safe data files only) and puts `<id>.zip` in the `mods` folder beside the game; Update replaces the zip once the new one is verified; Remove (Delete) deletes the zip. F5 refreshes. A mod you put in by hand as a folder is never replaced or removed. Installing waits while the Installed tab has changes you have not applied; then switch the mod on there and press Apply (no restart).
 

@@ -16,6 +16,8 @@ pub mod highscore;
 pub mod locale;
 pub mod mp4;
 pub mod misc_text;
+pub mod mod_template;
+pub mod mod_watch;
 pub mod options;
 pub mod pvr;
 pub mod save;

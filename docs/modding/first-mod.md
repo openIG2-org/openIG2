@@ -9,6 +9,11 @@ The game ships no original files, and neither should your mod: everything below 
 
 ## 1. Make the mod's folder
 
+The quick way: main menu → Mods, pick **Story** beside **New mod** and press it, or run
+`openIG2-check --new-mod modsirst-mod` in the game's folder. Either writes the three files of this page (with a
+comment on every line, and a README) into a new folder; read on to see what each line does, or skip to step 5.
+The rest of this page makes the same files by hand.
+
 Open the game's mods folder: main menu → Mods → Open mods folder (it is the `mods` folder beside `openIG2.exe`; the
 button makes it when it's missing). Inside it, make a folder named `first-mod`. The folder's name is the mod's name
 in the enabled list, so keep it short, lower case, without spaces.
@@ -101,7 +106,15 @@ A typo shows up here with the file, the story and the word it didn't understand,
 
 If the game starts without your mod, the Mods page says why in red, naming the file and the line.
 
-## 7. Share it
+## 7. Change it while the game runs
+
+Start the game with `--mod-dev` (for example a shortcut to `openIG2.exe --mod-dev`). Now change the line in
+`texts.en.toml` and save: the game reads it again within a second, no restart. The same goes for textures, sounds,
+`visuals.toml` and `effects.toml`. A change to `stories.toml`, `rules.toml` or `mod.toml` changes the game itself, so
+the Mods page asks you to press Apply in the main menu instead. If you save a file with a typo, the game keeps the
+last good version and tells you what is wrong.
+
+## 8. Share it
 
 Zip the `first-mod` folder (Windows: right click → Send to → Compressed (zipped) folder) and share
 `first-mod.zip`. Players drop the zip into their `mods` folder as it is, without unpacking it, and switch it on in the

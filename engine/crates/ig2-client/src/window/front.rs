@@ -342,6 +342,7 @@ impl App {
             (f.s, f.ng, f.page, f.at, f.mods) = (old.s, old.ng, old.page, old.at, browse);
         }
         *self = new;
+        crate::mods_page::clear_stale();
         Ok(())
     }
 

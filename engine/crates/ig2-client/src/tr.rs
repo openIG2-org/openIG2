@@ -322,6 +322,15 @@ const TABLE: &[(&str, &str)] = &[
     ("A mod can't load: switch it off or add what it needs.", "Egy mod nem tölthető be: kapcsold ki, vagy add hozzá, ami kell neki."),
     ("How to make a mod", "Hogyan készíts modot"),
     ("The modding tutorial on the openIG2 website, in your browser.", "A modkészítési útmutató az openIG2 oldalán, a böngésződben."),
+    // New mod and the live reload (ADR 0092).
+    ("New mod", "Új mod"),
+    ("Make a new mod of the kind at the left in the mods folder, with every file explained, and open its folder.", "Új mod a bal oldalt választott fajtából a mods mappába, minden fájlja elmagyarázva, és megnyitja a mappáját."),
+    ("The kind of mod New mod makes.", "Milyen modot készít az Új mod."),
+    ("Rules", "Szabályok"),
+    ("Texts", "Szövegek"),
+    ("Visual", "Látvány"),
+    ("Live reload kept the loaded version:", "Az élő újratöltés a betöltött változatot tartotta meg:"),
+    ("Changed, Apply to reload:", "Megváltozott, az Alkalmaz újratölti:"),
     // The Mods page's Browse tab (ADR 0086 §1.2).
     ("Browse", "Böngészés"),
     ("The mods in the mods folders (Ctrl+Tab).", "A mods mappákban lévő modok (Ctrl+Tab)."),

@@ -51,6 +51,7 @@ mod gpu;
 mod input;
 mod media;
 mod menus;
+mod mod_dev;
 mod modern;
 mod pointer;
 mod presence;
@@ -518,6 +519,8 @@ struct App {
     update: crate::update::Updater,
     /// Ours: the start's arguments, built again from when the Mods page swaps the mods in place ([`App::swap_mods`]).
     opts: Option<crate::Options>,
+    /// `--mod-dev`'s watch over the enabled folder mods (ADR 0092 §2).
+    mod_dev: Option<mod_dev::ModDev>,
     /// `--mp-join`'s room, joined as a Discord Join is ([`App::discord_join`]).
     mp_join: Option<String>,
     discord_races: Vec<String>,
@@ -697,6 +700,9 @@ fn build(o: &crate::Options, swap: bool) -> Result<App, String> {
     if let Some(c) = start {
         app.take_video_requests();
         app.after_video = AfterVideo::StarmapEntry(c);
+    }
+    if o.mod_dev && !cfg!(target_arch = "wasm32") {
+        app.mod_dev = Some(mod_dev::ModDev::new(app.install.mods()));
     }
     app.opts = Some(o);
     Ok(app)
@@ -1031,6 +1037,7 @@ impl App {
             discord: Default::default(),
             update: Default::default(),
             opts: None,
+            mod_dev: None,
             mp_join: None,
             discord_races: Vec::new(),
         }
@@ -1150,6 +1157,7 @@ impl App {
     }
 
     fn frame(&mut self) {
+        self.mod_dev_frame();
         if self.stage_win.is_some_and(|d| self.world.game.stats.days >= d) {
             self.stage_win = None;
             let en = self.world.game.local_view().empire as u32;

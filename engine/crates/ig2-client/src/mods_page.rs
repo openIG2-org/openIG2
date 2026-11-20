@@ -3,6 +3,8 @@
 //! files two enabled mods both have; Apply writes `enabled.txt` and loads it in place (no restart). `mod.toml` 2 (ADR 0086
 //! §2): a mod's dependencies sit under it and switch on and off with it, a mod that can't load says why. The Browse
 //! tab (ADR 0086 §1.2, [`crate::mods_browse`]) lists, installs, updates and removes the mod repository's mods.
+//! New mod writes a mod template (ADR 0092 §1); with `--mod-dev` the page names the files changed since the mods loaded
+//! that only Apply reloads, and the last live reload's problem (ADR 0092 §2).
 
 use std::collections::HashMap;
 
@@ -44,6 +46,32 @@ static FAILED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 /// Why the enabled mods didn't load (`None`: they did).
 pub fn set_failed(e: Option<&str>) {
     *FAILED.lock().unwrap_or_else(|e| e.into_inner()) = e.map(str::to_owned);
+}
+
+/// `--mod-dev`: the enabled mods' files changed since they loaded that only Apply reloads ("mod: path"), and the
+/// last live reload's problem (ADR 0092 §2).
+static STALE: std::sync::Mutex<(Vec<String>, Option<String>)> = std::sync::Mutex::new((Vec::new(), None));
+
+/// A changed file only Apply reloads.
+pub fn mark_stale(what: String) {
+    let mut s = STALE.lock().unwrap_or_else(|e| e.into_inner());
+    if !s.0.contains(&what) {
+        s.0.push(what);
+    }
+}
+
+/// The live reload's problem (`None`: the last one worked).
+pub fn set_live_problem(e: Option<String>) {
+    STALE.lock().unwrap_or_else(|e| e.into_inner()).1 = e;
+}
+
+/// The mods loaded again: nothing is stale.
+pub fn clear_stale() {
+    *STALE.lock().unwrap_or_else(|e| e.into_inner()) = (Vec::new(), None);
+}
+
+fn stale() -> (Vec<String>, Option<String>) {
+    STALE.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// What a frame of the page asks of the window.
@@ -104,6 +132,8 @@ pub struct ModsPage {
     /// The Browse tab shows (else the installed mods).
     browse_tab: bool,
     pub browse: crate::mods_browse::Browse,
+    /// New mod's kind.
+    new_kind: ig2_formats::mod_template::Kind,
 }
 
 fn tr(en: &'static str) -> &'static str {
@@ -172,7 +202,7 @@ impl ModsPage {
                 }
             })
             .collect();
-        let mut page = Self { rows, saved, loaded: install.mods().iter().map(|m| m.name.clone()).collect(), given, failed, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default() };
+        let mut page = Self { rows, saved, loaded: install.mods().iter().map(|m| m.name.clone()).collect(), given, failed, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default(), new_kind: Default::default() };
         page.refresh();
         page
     }
@@ -264,15 +294,23 @@ impl ModsPage {
         self.rows.iter().filter(|r| r.on).map(|r| r.m.name.clone()).collect()
     }
 
-    /// The changes aren't written yet.
+    /// The changes aren't written yet, or an enabled mod's file changed that only Apply reloads (ADR 0092 §2).
     pub fn pending(&self) -> bool {
-        self.enabled() != self.saved
+        self.enabled() != self.saved || !stale().0.is_empty()
     }
 
-    /// The written list isn't the one this run loaded.
+    /// The written list isn't the one this run loaded, or a file of it changed.
     fn restart_needed(&self) -> bool {
         let loads = |n: &&String| self.rows.iter().any(|r| &r.m.name == *n && r.loads);
-        !self.given && !self.saved.iter().filter(loads).eq(self.loaded.iter())
+        !self.given && (!self.saved.iter().filter(loads).eq(self.loaded.iter()) || !stale().0.is_empty())
+    }
+
+    /// New mod (ADR 0092 §1): the template in the mods folder beside the executable, then its folder opened.
+    fn new_mod(&mut self) -> Result<(), String> {
+        let mods = Mod::exe_folder().ok_or("no mods folder")?;
+        let folder = ig2_formats::mod_template::free_name(&mods);
+        ig2_formats::mod_template::write(&folder, self.new_kind, crate::version())?;
+        open(folder.as_os_str())
     }
 
     /// Each enabled mod's files that an enabled mod above it provides too.
@@ -397,7 +435,7 @@ impl ModsPage {
             Key::Named(NamedKey::Escape) => Some(Act::Back),
             Key::Named(NamedKey::Enter) if self.pending() && !self.any_refused() => {
                 self.apply();
-                Some(Act::Click)
+                Some(if self.restart_needed() { Act::Swap } else { Act::Click })
             }
             Key::Named(NamedKey::Enter) => Some(Act::Back),
             _ if n == 0 => None,
@@ -576,25 +614,48 @@ impl ModsPage {
             // The status, then the buttons.
             ui.horizontal(|ui| {
                 ui.set_min_height(22.0);
-                let browse = self.browse_tab.then(|| self.browse.status_line()).flatten();
-                if let Some(e) = &self.error {
-                    ui.label(egui::RichText::new(e).color(bad));
-                } else if let Some(s) = browse {
-                    let (text, colour) = match &s {
-                        Ok(t) => (t, hot),
-                        Err(e) => (e, bad),
-                    };
-                    ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).truncate()).on_hover_text(text);
-                } else if let Some(e) = self.failed.as_ref().filter(|_| !self.pending()) {
-                    let line = format!("{} {e}", tr("The mods failed to load; the game started without them:"));
-                    ui.add(egui::Label::new(egui::RichText::new(line).color(bad)).truncate()).on_hover_text(e);
-                } else if self.any_refused() {
-                    ui.label(egui::RichText::new(tr("A mod can't load: switch it off or add what it needs.")).color(bad));
-                } else if self.given {
-                    ui.label(egui::RichText::new(tr("This run's mods come from --mod; the list applies without it.")).color(hot));
-                } else if self.pending() {
-                    ui.label(egui::RichText::new(tr("Apply saves the list and loads the mods.")).weak());
-                }
+                // New mod and its kind (ADR 0092 §1) at the right, the status in the rest.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::gui::secondary(ui, tr("New mod")).on_hover_text(tr("Make a new mod of the kind at the left in the mods folder, with every file explained, and open its folder.")).clicked() {
+                        match self.new_mod() {
+                            Ok(()) => acts.push(Act::Reload),
+                            Err(e) => self.error = Some(e),
+                        }
+                        acts.push(Act::Click);
+                    }
+                    let mut k = ig2_formats::mod_template::Kind::ALL.iter().position(|&k| k == self.new_kind).unwrap_or(0);
+                    if crate::gui::ds::segmented(ui, &mut k, &[tr("Rules"), tr("Texts"), tr("Story"), tr("Visual")], None).on_hover_text(tr("The kind of mod New mod makes.")).changed() {
+                        self.new_kind = ig2_formats::mod_template::Kind::ALL[k];
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let browse = self.browse_tab.then(|| self.browse.status_line()).flatten();
+                        let (changed, live) = stale();
+                        if let Some(e) = &self.error {
+                            ui.label(egui::RichText::new(e).color(bad));
+                        } else if let Some(e) = live {
+                            let line = format!("{} {e}", tr("Live reload kept the loaded version:"));
+                            ui.add(egui::Label::new(egui::RichText::new(line).color(bad)).truncate()).on_hover_text(e);
+                        } else if !changed.is_empty() && !self.given {
+                            let line = format!("{} {}", tr("Changed, Apply to reload:"), changed.join(", "));
+                            ui.add(egui::Label::new(egui::RichText::new(&line).color(hot)).truncate()).on_hover_text(line);
+                        } else if let Some(s) = browse {
+                            let (text, colour) = match &s {
+                                Ok(t) => (t, hot),
+                                Err(e) => (e, bad),
+                            };
+                            ui.add(egui::Label::new(egui::RichText::new(text).color(colour)).truncate()).on_hover_text(text);
+                        } else if let Some(e) = self.failed.as_ref().filter(|_| !self.pending()) {
+                            let line = format!("{} {e}", tr("The mods failed to load; the game started without them:"));
+                            ui.add(egui::Label::new(egui::RichText::new(line).color(bad)).truncate()).on_hover_text(e);
+                        } else if self.any_refused() {
+                            ui.label(egui::RichText::new(tr("A mod can't load: switch it off or add what it needs.")).color(bad));
+                        } else if self.given {
+                            ui.label(egui::RichText::new(tr("This run's mods come from --mod; the list applies without it.")).color(hot));
+                        } else if self.pending() {
+                            ui.label(egui::RichText::new(tr("Apply saves the list and loads the mods.")).weak());
+                        }
+                    });
+                });
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -699,7 +760,7 @@ mod tests {
     }
 
     fn page(rows: Vec<Row>) -> ModsPage {
-        let mut p = ModsPage { rows, saved: Vec::new(), loaded: Vec::new(), given: false, failed: None, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default() };
+        let mut p = ModsPage { rows, saved: Vec::new(), loaded: Vec::new(), given: false, failed: None, pictures: HashMap::new(), error: None, focus: None, scroll: false, browse_tab: false, browse: Default::default(), new_kind: Default::default() };
         p.refresh();
         p
     }
@@ -731,6 +792,11 @@ mod tests {
         p.rows.push(row("broken", true, &[]));
         p.saved.push("broken".into());
         assert!(!p.restart_needed());
+        // A changed file only Apply reloads (ADR 0092 §2): Apply waits and loads in place, until the mods load again.
+        mark_stale("a: rules.toml".into());
+        assert!(p.pending() && p.restart_needed());
+        clear_stale();
+        assert!(!p.pending() && !p.restart_needed());
     }
 
     fn with(name: &str, on: bool, toml: &str) -> Row {

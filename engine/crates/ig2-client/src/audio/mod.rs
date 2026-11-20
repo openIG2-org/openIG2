@@ -429,6 +429,19 @@ impl Audio {
         self.output.is_some()
     }
 
+    /// Ours (ADR 0092 §2): the sounds from `install` (a mod's sound changed): every record read again; a sound
+    /// playing keeps its old samples until it ends.
+    pub fn reload(&mut self, install: Install) {
+        self.install = install;
+        let ids: Vec<SoundId> = self.records.keys().copied().collect();
+        for id in ids {
+            let chunk = self.load(id);
+            if let Some(v) = self.records.get_mut(&id) {
+                v.chunk = chunk;
+            }
+        }
+    }
+
     fn load(&self, id: SoundId) -> Option<Chunk> {
         let m = self.mixer.as_ref()?;
         let rate = m.lock().ok()?.rate;

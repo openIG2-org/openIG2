@@ -13,6 +13,7 @@
 //! instead of the checks. Both hold the game's data: for the player's own use, never to be shared.
 //! `--package FOLDER` checks a mod folder and writes its zip, the zip's SHA-256 and its mod index entry (ADR 0086
 //! §1.2, [`package`]); without an install (none given or found) it runs the format checks only.
+//! `--new-mod FOLDER [--kind rules|texts|story|visual]` writes a new mod's commented files there (ADR 0092 §1).
 
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -426,6 +427,9 @@ openIG2-check [INSTALL_DIR] [--quick] [--mod NAME]...
 openIG2-check [INSTALL_DIR] --package FOLDER
     checks the mod in FOLDER and writes <id>-<version>.zip, its .sha256 and <id>-<version>.toml (the mod index
     entry; fill in its download URL) here; without an install, only the checks that need none
+openIG2-check --new-mod FOLDER [--kind rules|texts|story|visual]
+    writes a new mod into FOLDER (a new or empty folder): mod.toml with every field explained, an example file of
+    the kind (story when not given) and a README pointing to the tutorials
 openIG2-check [INSTALL_DIR] [--dump-rules FILE] [--dump-texts FILE]
     modder tools: writes your own install's rule ids and values (RON) or every text file's keys and lines (in the
     form of a mod's texts.<lang>.toml) to FILE. The files hold the game's data: they are for your own use and must
@@ -467,13 +471,20 @@ fn main() {
     let mut root = None;
     let mut quick = false;
     let mut given: Option<Vec<String>> = None;
-    let (mut dump_rules, mut dump_texts, mut pack) = (None, None, None);
+    let (mut dump_rules, mut dump_texts, mut pack, mut new_mod, mut kind) = (None, None, None, None, None);
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--quick" => quick = true,
             "--mod" => given.get_or_insert_with(Vec::new).extend(args.next()),
-            "--dump-rules" | "--dump-texts" | "--package" => {
+            "--kind" => {
+                let k = args.next().unwrap_or_default();
+                kind = Some(ig2_formats::mod_template::Kind::parse(&k).unwrap_or_else(|| {
+                    eprintln!("openIG2-check: --kind {k:?}: one of rules, texts, story, visual");
+                    std::process::exit(2);
+                }));
+            }
+            "--dump-rules" | "--dump-texts" | "--package" | "--new-mod" => {
                 let Some(file) = args.next() else {
                     eprintln!("openIG2-check: {a} needs a file or folder name");
                     std::process::exit(2);
@@ -481,6 +492,7 @@ fn main() {
                 *match a.as_str() {
                     "--dump-rules" => &mut dump_rules,
                     "--dump-texts" => &mut dump_texts,
+                    "--new-mod" => &mut new_mod,
                     _ => &mut pack,
                 } = Some(PathBuf::from(file));
             }
@@ -490,6 +502,20 @@ fn main() {
             }
             _ => root = Some(PathBuf::from(a)),
         }
+    }
+    if let Some(folder) = new_mod {
+        match ig2_formats::mod_template::write(&folder, kind.unwrap_or_default(), &version()) {
+            Ok(files) => {
+                files.iter().for_each(|f| println!("wrote {}", f.display()));
+                let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                println!("next: openIG2-check --quick --mod {name} (with the folder in the game's mods folder), then main menu -> Mods");
+            }
+            Err(e) => {
+                eprintln!("openIG2-check: {e}");
+                std::process::exit(1);
+            }
+        }
+        return;
     }
     if let Some(folder) = pack {
         let install = root.or_else(|| found_install().ok()).filter(|r| matches!(ig2_rules::install::check(r), ig2_rules::install::Verdict::Ok | ig2_rules::install::Verdict::WrongBuild(_)));
@@ -655,6 +681,26 @@ mod tests {
         assert_eq!(g.failed.len(), 1, "{:?}", g.failed);
         assert_eq!(g.failed[0].0, "mod m: dataraw/vector/colony/ship.glb");
         std::fs::remove_dir_all(&t).unwrap();
+    }
+
+    /// Every kind's template passes the format checks (`--package` without an install) and, with an install in
+    /// `IG2_INSTALL_DIR`, loads over it with the checks `--mod` runs.
+    #[test]
+    fn the_new_mod_template_checks_clean() {
+        let install = std::env::var_os("IG2_INSTALL_DIR").map(PathBuf::from).filter(|r| r.join("ig2.exe").is_file());
+        let dir = std::env::temp_dir().join(format!("openig2-check-new-{}", std::process::id()));
+        for k in ig2_formats::mod_template::Kind::ALL {
+            let folder = dir.join(format!("new-{}", k.name()));
+            ig2_formats::mod_template::write(&folder, k, &version()).unwrap();
+            for root in [None, install.as_deref()] {
+                let out = dir.join("out");
+                std::fs::create_dir_all(&out).unwrap();
+                let p = package::package(&folder, root, &out).unwrap_or_else(|e| panic!("{}: {e}", k.name()));
+                assert!(p.size > 0, "{}", k.name());
+                std::fs::remove_dir_all(&out).unwrap();
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The dumps of the install in `IG2_INSTALL_DIR` read back: the texts as a patch, the rules as RON.

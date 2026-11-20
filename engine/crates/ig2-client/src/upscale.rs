@@ -44,6 +44,16 @@ pub fn factor() -> u8 {
 type Cache = HashMap<(String, u8), Arc<Hires>>;
 static CACHE: Mutex<Option<(Cache, usize)>> = Mutex::new(None);
 
+/// Ours (ADR 0092 §2): drop the upscaled and pack pictures made for `path` (its file changed).
+pub fn forget(path: &str) {
+    let path = path.to_ascii_lowercase();
+    let stem = path.rsplit_once('.').map_or(path.as_str(), |(s, _)| s);
+    let pack = format!("{PACK_DIR}{stem}.");
+    if let Some((c, _)) = CACHE.lock().unwrap().as_mut() {
+        c.retain(|(k, _), _| k != &path && !k.to_ascii_lowercase().starts_with(&pack));
+    }
+}
+
 fn cached(key: (String, u8), make: impl FnOnce() -> Option<Hires>) -> Option<Arc<Hires>> {
     if let Some(h) = CACHE.lock().unwrap().as_ref().and_then(|(c, _)| c.get(&key).cloned()) {
         return Some(h);
