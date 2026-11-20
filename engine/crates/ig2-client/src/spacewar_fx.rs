@@ -347,6 +347,8 @@ pub struct Fx {
     pub loop_out: Vec<Loop>,
     /// The "Enhanced" battle effects' layers (ADR 0057); none with Classic.
     pub extra: Option<crate::battle_fx::Layers>,
+    /// Ours (ADR 0091 §2): the firing sounds of the mods' added weapons ([`added_fire_sounds`]).
+    pub added_fire: HashMap<i32, Sound>,
 }
 
 impl Fx {
@@ -370,6 +372,7 @@ impl Fx {
             debris,
             loops: HashMap::new(),
             loop_out: Vec::new(),
+            added_fire: HashMap::new(),
             extra: None,
         }
     }
@@ -537,7 +540,7 @@ impl Fx {
             match *e {
                 BattleEvent::Fired { shot, .. } => {
                     let Some(s) = b.pools.get(shot.form).and_then(|p| p.shots.get(shot.slot)) else { continue };
-                    if let Some(snd) = fire_sound(s.weapon) {
+                    if let Some(snd) = fire_sound(s.weapon).or_else(|| self.added_fire.get(&s.weapon).copied()) {
                         self.sounds.push(snd);
                     }
                     let w = s.weapon;
@@ -917,6 +920,20 @@ fn enhance(x: &mut crate::battle_fx::Layers, b: &Battle, events: &[BattleEvent])
         }
     }
     x.step();
+}
+
+/// Ours (ADR 0091 §2): the mods' added weapons fire with their own `sound` at their like's volume, else with their
+/// like's sound (before, an added weapon fired silently: `lovedeksound` knows the exe's 40 only).
+pub fn added_fire_sounds(rules: &ig2_rules::Rules) -> HashMap<i32, Sound> {
+    rules
+        .added_weapons
+        .iter()
+        .filter_map(|a| {
+            let like = fire_sound(a.like as i32);
+            let own = ig2_rules::sounds::weapon_sound(rules, a.index).map(|i| spwar(i, like.map_or(80, |s| s.volume)));
+            own.or(like).map(|s| (a.index as i32, s))
+        })
+        .collect()
 }
 
 /// `lovedeksound` on a new projectile (ELF 0x69c890, exe 0x57adb0; spec §6.7.3): the weapon's firing sound and the

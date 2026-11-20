@@ -245,6 +245,18 @@ fn text(v: &Value) -> Result<String, String> {
     v.as_str().map(str::to_owned).ok_or_else(|| format!("expected a string, got {}", v.type_name()))
 }
 
+/// A sound file of an added entry (ADR 0091 §2): relative to `sounds/` as the game's tables name theirs, `.ogg`,
+/// `.flac` or `.wav`, inside the mod's folder.
+fn sound_file(v: &Value) -> Result<String, String> {
+    let s = text(v)?.replace('\\', "/");
+    let ok = !s.starts_with('/') && !s.split('/').any(|p| p.is_empty() || p == ".." || p.contains(':'));
+    let ext = s.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    if !ok || !ext.is_some_and(|e| ["ogg", "flac", "wav"].contains(&e.as_str())) {
+        return Err(format!("expected a .ogg, .flac or .wav file relative to sounds/ (\"mymod/reactor.wav\"), got \"{s}\""));
+    }
+    Ok(s)
+}
+
 type NewEntry<'a> = (String, String, &'a toml_edit::Table);
 
 /// The `[[<table>.new]]` entries of a patch, each with its key and where it is for errors.
@@ -317,7 +329,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         copy_at(&mut r.building_footprints, like, kind);
         copy_at(&mut r.scaffold_heights, like - 1, kind - 1);
         copy_at(&mut r.scaffold_masks, like - 1, kind - 1);
-        r.added_buildings.push(AddedBuilding { key: key.clone(), kind });
+        r.added_buildings.push(AddedBuilding { key: key.clone(), kind, sound: String::new() });
         kinds.push((kind, like, at, *e));
     }
 
@@ -343,7 +355,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
             copy_at(table, like, h);
         }
         copy_at(&mut r.unit_models.transfer, like, h);
-        r.added_hulls.push(AddedItem { key: key.clone(), index: h, tech: 0 });
+        r.added_hulls.push(AddedItem { key: key.clone(), index: h, tech: 0, like, sound: String::new() });
         items.push((true, h, like, at, *e));
     }
     for (key, at, e) in &weapons {
@@ -355,7 +367,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         let like = int_in(like, 0..=original as i64 - 1).map_err(|m| format!("{at}.like: {m}"))? as usize;
         let w = r.space_weapons.len();
         r.space_weapons.push(SpaceWeapon { index: w, ..r.space_weapons[like].clone() });
-        r.added_weapons.push(AddedItem { key: key.clone(), index: w, tech: 0 });
+        r.added_weapons.push(AddedItem { key: key.clone(), index: w, tech: 0, like, sound: String::new() });
         items.push((false, w, like, at, *e));
     }
 
@@ -400,6 +412,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
                     r.techs[t].prerequisites = pre;
                 }
                 "model" => set_at(&mut r.research_screen.models, t - 1, text(v).map_err(err)?),
+                "icon" | "sound" => return Err(err(format!("a tech has no {f} of its own in the game; its picture is its model (ADR 0091 §2)"))),
                 "size" => r.research_size_mult[t - 1].set(v).map_err(err)?,
                 _ => {
                     let field = r.techs[t].field(f).ok_or_else(|| {
@@ -420,13 +433,15 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
             match f {
                 "key" | "like" => continue,
                 "model" => m.model = text(v).map_err(err)?,
-                "preview" => m.preview = text(v).map_err(err)?,
+                // `icon` is the build menu's picture, the preview model (ADR 0091 §2).
+                "preview" | "icon" => m.preview = text(v).map_err(err)?,
+                "sound" => r.added_buildings.iter_mut().find(|a| a.kind == kind).expect("added in pass 1").sound = sound_file(v).map_err(err)?,
                 "scale" => m.scale.set(v).map_err(err)?,
                 "preview_scale" => m.preview_scale.set(v).map_err(err)?,
                 "tech" => r.buildings[kind].tech = tech_ref(r, v).map_err(err)?,
                 _ => {
                     let field = r.buildings[kind].field(f).ok_or_else(|| {
-                        format!("{at}.{f}: unknown field (fields: like, model, preview, scale, preview_scale, {})", Building::FIELDS.join(", "))
+                        format!("{at}.{f}: unknown field (fields: like, model, preview, icon, sound, scale, preview_scale, {})", Building::FIELDS.join(", "))
                     })?;
                     field.set(v).map_err(err)?;
                 }
@@ -460,6 +475,9 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
             match (hull, f) {
                 (_, "key" | "like") => continue,
                 (_, "tech") => tech = Some(tech_ref(r, v).map_err(err)? as usize),
+                (true, "model" | "icon" | "sound") => return Err(err(format!("a new hull has no {f} of its own yet: it shows and sounds as its like (ADR 0091 §2)"))),
+                (false, "sound") => r.added_weapons.iter_mut().find(|a| a.index == i).expect("added in pass 1").sound = sound_file(v).map_err(err)?,
+                (false, "model" | "icon") => return Err(err(format!("a new weapon has no {f} of its own yet: it shows as its like (ADR 0091 §2)"))),
                 (true, "hp") => r.ground_hull_hp[i].set(v).map_err(err)?,
                 (true, "slots") => {
                     let row = hull_slots(r, v).map_err(err)?;
@@ -473,7 +491,7 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
                 }
                 (false, _) => {
                     let more = SpaceWeapon::FIELDS.join(", ");
-                    let field = r.space_weapons[i].field(f).ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, {more})"))?;
+                    let field = r.space_weapons[i].field(f).ok_or_else(|| format!("{at}.{f}: unknown field (fields: like, tech, sound, {more})"))?;
                     field.set(v).map_err(err)?;
                 }
             }

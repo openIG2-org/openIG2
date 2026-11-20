@@ -229,3 +229,5 @@ lasts its decoded length (row 99); cosmetic draws use the client's own stream (r
 tracer's shape, compared by `run_screendiff.py --script`; scripts `tools/trace/scripts/{starmap,colony}-sounds.json`
 (the colony's E key can't be injected into the exe). Ours: `Subtitles` (off) holds a spoken scroll line's text at the
 bottom while its voice plays (ADR 0036; no other voice has a text in the install).
+Mod sounds (ADR 0091): `ig2_formats::sound` picks the decoder from the bytes (Ogg, FLAC, WAV), `Install::resolve_sound`
+picks the file (mods over the install); mod `music/` joins the rotation; added buildings and weapons carry a `sound`.

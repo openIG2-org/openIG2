@@ -95,6 +95,7 @@ fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Gro
         g.record(from.clone(), checked.map(|n| format!("{from} sets {n} lines")));
     }
     story_files(inst, &mut g);
+    mod_audio(inst, &mut g);
     // Each look file on its own (ADR 0088).
     for (name, bytes) in inst.visual_files().unwrap_or_default() {
         let from = format!("mod {name}: {}", ig2_formats::visuals::VISUALS_FILE);
@@ -129,7 +130,17 @@ fn rule_patches(inst: &Install, g: &mut Group) {
             let n = r.apply_patch(&utf8(bytes)?)?;
             Ok((n, r))
         };
-        let checked = applied().map(|(n, r)| {
+        let checked = applied().and_then(|(n, r)| {
+            // ADR 0091 §2: an added entry's own sound is a file some mod or the install has.
+            let sounds = r.added_buildings.iter().map(|a| (&a.key, &a.sound)).chain(r.added_weapons.iter().map(|a| (&a.key, &a.sound)));
+            for (key, s) in sounds.filter(|(_, s)| !s.is_empty()) {
+                if inst.resolve_sound(&ig2_rules::sounds::install_paths(s)).is_none() {
+                    return Err(format!("\"{key}\".sound: no such file: sounds/{s} (or its .ogg, .flac or .wav)"));
+                }
+            }
+            Ok((n, r))
+        });
+        let checked = checked.map(|(n, r)| {
             let mut lines = vec![format!("mod {name}: rules.toml sets {n} fields")];
             lines.extend(r.added_techs.iter().map(|a| format!("  adds tech {} \"{}\" (category {}, field {})", a.index, a.key, (a.index - 1) / ig2_rules::TECH_FIELDS + 1, (a.index - 1) % ig2_rules::TECH_FIELDS + 1)));
             lines.extend(r.added_buildings.iter().map(|a| format!("  adds building kind {} \"{}\" (like {})", a.kind, a.key, r.buildings[a.kind].like)));
@@ -366,18 +377,40 @@ fn messages(inst: &Install, g: &mut Group) {
     }
 }
 
-/// Every `.ogg`: its Vorbis headers and first packet (all of it unless `quick`: only that the container opens).
+/// Every sound file (`.ogg`, and a mod's `.flac` and `.wav`, ADR 0091): it opens as what its bytes say and its first
+/// packet decodes (all of it unless `quick`: only that its first bytes are a sound file's).
 fn audio(inst: &Install, g: &mut Group, quick: bool) {
-    for rel in files(inst, ".ogg") {
+    use ig2_formats::sound::{Kind, Reader};
+    for rel in inst.all_files().into_iter().filter(|p| ig2_formats::sound::stem(p).is_some() && !p.ends_with(".mp2")) {
         g.check(rel, || {
             let s = inst.open_stream(rel).map_err(|e| e.to_string())?;
             if quick {
-                let mut head = [0u8; 4];
-                return s.take(4).read_exact(&mut head).map_err(|e| e.to_string()).and_then(|_| if &head == b"OggS" { Ok(()) } else { Err("not Ogg".into()) });
+                let mut head = Vec::new();
+                s.take(12).read_to_end(&mut head).map_err(|e| e.to_string())?;
+                return Kind::sniff(&head).map(|_| ()).ok_or_else(|| "not an Ogg Vorbis, FLAC or WAV file".into());
             }
-            let mut ogg = lewton::inside_ogg::OggStreamReader::new(s).map_err(|e| e.to_string())?;
-            ogg.read_dec_packet_itl().map(|_| ()).map_err(|e| e.to_string())
+            let mut r = Reader::new(s)?;
+            r.next(&mut Vec::new()).map(|_| ())
         });
+    }
+}
+
+/// A mod's sound files decoded whole (ADR 0091 §1): a sound that doesn't decode stays silent in the game.
+fn mod_audio(inst: &Install, g: &mut Group) {
+    use ig2_formats::sound::{Reader, MAX_SOUND_SECONDS};
+    for o in inst.overrides().into_iter().filter(|o| ig2_formats::sound::stem(o.path).is_some()) {
+        let from = format!("mod {}: {}", o.mod_name, o.path);
+        let checked = inst.open_stream(o.path).map_err(|e| e.to_string()).and_then(Reader::new).and_then(|mut r| {
+            let (rate, ch, kind) = (r.rate(), r.channels(), r.kind);
+            let n = r.read_all(usize::MAX)?.len();
+            let secs = n as f64 / rate as f64;
+            let mut note = format!("{from}: {kind:?}, {rate} Hz, {ch} channel(s), {secs:.1} s");
+            if secs > MAX_SOUND_SECONDS as f64 {
+                note += &format!(" (as an effect or voice only the first {MAX_SOUND_SECONDS} s play; music plays whole)");
+            }
+            Ok(note)
+        });
+        g.record(from, checked);
     }
 }
 

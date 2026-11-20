@@ -623,7 +623,8 @@ fn build(o: &crate::Options, swap: bool) -> Result<App, String> {
     crate::prof::mark("world");
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
-    let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    let mut sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    sounds.add_entry_sounds(tables);
     // The same files: a second `Install::open` walked the whole install again (docs/perf.md).
     let audio_install = l.install.clone();
     let mut audio = crate::audio::Audio::new(audio_install, sounds, true);
@@ -720,7 +721,8 @@ pub fn script_run(o: &crate::Options, out: &std::path::Path, script: &crate::scr
     let mut world = crate::start_world(o, &l.install, l.save.as_ref(), rules, &l.tech_defaults, &l.volatile)?;
     world.set_speed(o.speed);
     let exe = l.install.read_raw("ig2.exe").map_err(|e| e.to_string())?;
-    let sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    let mut sounds = ig2_rules::sounds::SoundTables::from_exe(&exe).map_err(|e| e.to_string())?;
+    sounds.add_entry_sounds(tables);
     // The same files: a second `Install::open` walked the whole install again (docs/perf.md).
     let audio_install = l.install.clone();
     let mut audio = crate::audio::Audio::new(audio_install, sounds, false);

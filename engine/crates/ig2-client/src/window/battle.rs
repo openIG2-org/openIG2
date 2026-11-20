@@ -86,6 +86,9 @@ impl App {
         // `SpaceWar_Belep` exe 0x5628ac: `PlayMusicSpWar(1, 0)` (crossfade) when no battle ran yet.
         self.audio.play_music(crate::audio::Music::SpWar, false, human_race(&self.world.game));
         self.spacewar = crate::spacewar_live::Live::enter(&mut self.world, slot, &cam, &self.install, now);
+        if let Some(fx) = self.spacewar.as_mut().and_then(|l| l.fx.as_mut()) {
+            fx.added_fire = crate::spacewar_fx::added_fire_sounds(self.tables);
+        }
     }
 
     /// Multiplayer: every machine's strategic clock waits until each human has left the running battle's screen

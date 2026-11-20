@@ -1072,7 +1072,9 @@ impl ColonyUi {
         let Some(g) = self.ghost.filter(|g| self.build_mode && !g.blocked) else { return };
         // `Build-Building1` (exe 0x4a88a0), before `Multi_Send(0x1f)`.
         let r = self.rand.below(2);
-        self.sounds.push(colony(r));
+        // Ours (ADR 0091 §2): a mod's added kind may start with a sound of its own.
+        let own = ig2_rules::sounds::building_sound(c.rules, self.kind).map(|i| SoundId::new(Table::Colony, i));
+        self.sounds.push(own.unwrap_or_else(|| colony(r)));
         self.pending += 1;
         out.commands.push(ColonyOrder::Build { planet: c.snap.planet as i32, kind: self.kind as i32, x: g.at.0, y: g.at.1 }.into());
         self.can_modify = true;

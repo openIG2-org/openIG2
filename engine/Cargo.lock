@@ -1620,6 +1620,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "extended"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af9673d8203fcb076b19dfd17e38b3d4ae9f44959416ea532ce72415a6020365"
+
+[[package]]
 name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2214,7 +2220,6 @@ dependencies = [
  "ig2-formats",
  "ig2-rules",
  "ig2-sim",
- "lewton",
  "openh264",
  "sha2 0.11.0",
  "toml_edit",
@@ -2236,7 +2241,6 @@ dependencies = [
  "ig2-rules",
  "ig2-sim",
  "js-sys",
- "lewton",
  "libc",
  "minisign",
  "minisign-verify",
@@ -2266,9 +2270,11 @@ name = "ig2-formats"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "lewton",
  "lz4_flex",
  "miniz_oxide 0.8.9",
  "serde_json",
+ "symphonia",
  "thiserror 2.0.21",
  "toml_edit",
 ]
@@ -4570,7 +4576,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7edef6a96b696d4e0cab5ee9ebb7ca155ed95f30a6b45bbb8b97d2727f02424"
 dependencies = [
  "lazy_static",
+ "symphonia-bundle-flac",
  "symphonia-codec-aac",
+ "symphonia-codec-pcm",
+ "symphonia-core",
+ "symphonia-format-riff",
+ "symphonia-metadata",
+]
+
+[[package]]
+name = "symphonia-bundle-flac"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6405d5c34ff6f8f7ca08a4101efe66d21e180f7322ef9359900a0e55698a7892"
+dependencies = [
+ "log",
+ "symphonia-common",
  "symphonia-core",
  "symphonia-metadata",
 ]
@@ -4584,6 +4605,16 @@ dependencies = [
  "lazy_static",
  "log",
  "symphonia-common",
+ "symphonia-core",
+]
+
+[[package]]
+name = "symphonia-codec-pcm"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e04ba75686acbe43542fdd374571195f0530c0b7785ca25cc6840e9c6c4b6eea"
+dependencies = [
+ "log",
  "symphonia-core",
 ]
 
@@ -4610,6 +4641,18 @@ dependencies = [
  "log",
  "num-complex",
  "smallvec",
+]
+
+[[package]]
+name = "symphonia-format-riff"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ff70929083a8c1a5f6cd7c904b6071c7914ad04739b510c2f7239dfc9b7dabe"
+dependencies = [
+ "extended",
+ "log",
+ "symphonia-core",
+ "symphonia-metadata",
 ]
 
 [[package]]

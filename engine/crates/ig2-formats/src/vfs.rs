@@ -751,6 +751,27 @@ impl Install {
         self.index.get(key).map(PathBuf::as_path)
     }
 
+    /// The file a sound or music track plays (ADR 0091 §1): `paths` are the game's names for it in its order of
+    /// preference; each may be `.ogg`, `.flac` or `.wav`. Any mod's copy beats the install's; among the mods the
+    /// highest priority wins, then the game's order of names, the localised copy, and `.ogg` before `.flac` before
+    /// `.wav`. Returns the game path to read.
+    pub fn resolve_sound<S: AsRef<str>>(&self, paths: &[S]) -> Option<String> {
+        let mut keys = Vec::new();
+        for p in paths {
+            let p = normalize(p.as_ref());
+            let Some(stem) = crate::sound::stem(&p) else { continue };
+            for loc in [self.lang.dir().map(|d| format!("localization/{d}/")), Some(String::new())].into_iter().flatten() {
+                keys.extend(crate::sound::EXTENSIONS.iter().map(|e| format!("{loc}{stem}.{e}")));
+            }
+        }
+        let modded = keys.iter().enumerate().filter_map(|(n, k)| self.modded.get(k).map(|&(i, _)| (i, n))).min();
+        let key = match modded {
+            Some((_, n)) => &keys[n],
+            None => keys.iter().find(|k| self.index.contains_key(*k))?,
+        };
+        Some(key.clone())
+    }
+
     /// Raw on-disk bytes (still wrapped in the container).
     pub fn read_raw(&self, path: &str) -> Result<Vec<u8>> {
         let p = self.resolve(path).ok_or_else(|| Error::NotFound(path.to_owned()))?;
@@ -969,6 +990,38 @@ mod tests {
         let (mods, _) = Mod::find(&t.join("mods"), &["second".into(), "first".into()]);
         let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
         assert_eq!(text(&i, "dataraw/textures/colony/a_bmp.pvr"), "second a");
+        let _ = std::fs::remove_dir_all(&t);
+    }
+
+    /// ADR 0091 §1: any mod's sound beats the install's, whatever its kind and whichever of the game's names it
+    /// takes; the higher mod wins; within one mod `.ogg` before `.flac` before `.wav`.
+    #[test]
+    fn a_mods_sound_in_any_format_wins() {
+        let t = tree("sound");
+        for (rel, body) in [
+            ("install/dataraw/sounds/a/x.ogg", "base"),
+            ("install/sounds/a/y.ogg", "base y"),
+            ("mods/first/sounds/a/x.wav", "first wav"),
+            ("mods/first/sounds/a/x.flac", "first flac"),
+            ("mods/second/dataraw/sounds/a/x.ogg", "second ogg"),
+            ("mods/second/music/new.flac", "second music"),
+        ] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        let names = ["dataraw/sounds/a/x.ogg", "sounds/a/x.ogg"];
+        let open = |order: &[&str]| {
+            let (mods, _) = Mod::find(&t.join("mods"), &order.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+            Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap()
+        };
+        let i = open(&["first", "second"]);
+        assert_eq!(i.resolve_sound(&names).as_deref(), Some("sounds/a/x.flac"));
+        assert_eq!(i.resolve_sound(&["music/new.ogg"]).as_deref(), Some("music/new.flac"));
+        assert_eq!(i.resolve_sound(&["DataRaw/Sounds/A/Y.WAV", "sounds/a/y.wav"]).as_deref(), Some("sounds/a/y.ogg"));
+        assert_eq!(open(&["second", "first"]).resolve_sound(&names).as_deref(), Some("dataraw/sounds/a/x.ogg"));
+        assert_eq!(open(&[]).resolve_sound(&names).as_deref(), Some("dataraw/sounds/a/x.ogg"));
+        assert_eq!(open(&[]).resolve_sound(&["sounds/none.ogg", "x.png"]), None);
         let _ = std::fs::remove_dir_all(&t);
     }
 

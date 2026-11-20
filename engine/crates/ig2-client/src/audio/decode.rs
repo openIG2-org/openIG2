@@ -1,21 +1,13 @@
-//! Ogg Vorbis from the user's install (re/screens/audio.md §1): every sound, voice and music track of the GOG release
-//! is Ogg Vorbis, the `dataraw/` ones inside the remaster's `neGs` container (`Install::read`/`open_stream` take it
-//! off). Decoded with `lewton`, made stereo and resampled linearly to the mixer's rate.
+//! Sound files (re/screens/audio.md §1, ADR 0091): every sound, voice and music track of the GOG release is Ogg
+//! Vorbis, the `dataraw/` ones inside the remaster's `neGs` container (`Install::read`/`open_stream` take it off); a
+//! mod's may also be FLAC or WAV. Decoded by `ig2_formats::sound`, made stereo and resampled linearly to the mixer's
+//! rate.
 
 use std::io::{Read, Seek};
 
-use lewton::inside_ogg::OggStreamReader;
+use ig2_formats::sound::{Reader, MAX_SOUND_SECONDS};
 
 use super::mixer::{Chunk, Stream};
-
-fn frames_of(packet: &[Vec<i16>]) -> impl Iterator<Item = [f32; 2]> + '_ {
-    let n = packet.first().map_or(0, Vec::len);
-    (0..n).map(move |i| {
-        let l = packet[0][i] as f32 / 32768.0;
-        let r = packet.get(1).map_or(l, |c| c[i] as f32 / 32768.0);
-        [l, r]
-    })
-}
 
 /// Linear resampler from `from` Hz to `to` Hz over a stream of frames.
 #[derive(Debug, Clone)]
@@ -43,37 +35,37 @@ impl Resampler {
     }
 }
 
-/// A whole file decoded into a chunk at `rate`.
+/// A whole file decoded into a chunk at `rate` (cut after `MAX_SOUND_SECONDS`).
 pub fn chunk(data: Vec<u8>, rate: u32) -> Result<Chunk, String> {
-    let mut ogg = OggStreamReader::new(std::io::Cursor::new(data)).map_err(|e| e.to_string())?;
-    let mut rs = Resampler::new(ogg.ident_hdr.audio_sample_rate, rate);
-    let mut out = Vec::new();
-    while let Some(p) = ogg.read_dec_packet().map_err(|e| e.to_string())? {
-        for f in frames_of(&p) {
-            rs.push(f, &mut out);
-        }
+    let mut file = Reader::new(std::io::Cursor::new(data))?;
+    let frames = file.read_all((file.rate() * MAX_SOUND_SECONDS) as usize)?;
+    let mut rs = Resampler::new(file.rate(), rate);
+    let mut out = Vec::with_capacity(frames.len() * rate as usize / file.rate() as usize + 1);
+    for f in frames {
+        rs.push(f, &mut out);
     }
     Ok(Chunk::new(out))
 }
 
 /// A music track decoded as the mixer asks for it.
-pub struct OggStream<R: Read + Seek> {
-    ogg: OggStreamReader<R>,
+pub struct FileStream {
+    file: Reader,
     rs: Resampler,
+    decoded: Vec<[f32; 2]>,
     pending: Vec<[f32; 2]>,
     at: usize,
     ended: bool,
 }
 
-impl<R: Read + Seek> OggStream<R> {
-    pub fn new(r: R, rate: u32) -> Result<Self, String> {
-        let ogg = OggStreamReader::new(r).map_err(|e| e.to_string())?;
-        let rs = Resampler::new(ogg.ident_hdr.audio_sample_rate, rate);
-        Ok(Self { ogg, rs, pending: Vec::new(), at: 0, ended: false })
+impl FileStream {
+    pub fn new(r: impl Read + Seek + Send + 'static, rate: u32) -> Result<Self, String> {
+        let file = Reader::new(r)?;
+        let rs = Resampler::new(file.rate(), rate);
+        Ok(Self { file, rs, decoded: Vec::new(), pending: Vec::new(), at: 0, ended: false })
     }
 }
 
-impl<R: Read + Seek + Send> Stream for OggStream<R> {
+impl Stream for FileStream {
     fn read(&mut self, out: &mut [[f32; 2]]) -> usize {
         let mut n = 0;
         while n < out.len() {
@@ -83,13 +75,13 @@ impl<R: Read + Seek + Send> Stream for OggStream<R> {
                 }
                 self.pending.clear();
                 self.at = 0;
-                match self.ogg.read_dec_packet() {
-                    Ok(Some(p)) => {
-                        let mut buf = std::mem::take(&mut self.pending);
-                        for f in frames_of(&p) {
-                            self.rs.push(f, &mut buf);
+                self.decoded.clear();
+                // A broken packet ends the track (a mod's file; the install's never are).
+                match self.file.next(&mut self.decoded) {
+                    Ok(true) => {
+                        for &f in &self.decoded {
+                            self.rs.push(f, &mut self.pending);
                         }
-                        self.pending = buf;
                     }
                     _ => self.ended = true,
                 }

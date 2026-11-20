@@ -12,7 +12,6 @@ rust-version.workspace = true
 ig2-formats = { version = "0.1.0", path = "../ig2-formats" }
 ig2-rules = { version = "0.1.0", path = "../ig2-rules" }
 ig2-sim = { version = "0.1.0", path = "../ig2-sim" }
-lewton.workspace = true
 openh264.workspace = true
 sha2.workspace = true
 toml_edit = { workspace = true, features = ["display"] }

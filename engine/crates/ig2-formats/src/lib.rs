@@ -28,6 +28,7 @@ pub mod text;
 pub mod textpatch;
 pub mod tutorial;
 pub mod userfs;
+pub mod sound;
 pub mod vfs;
 pub mod effects;
 pub mod visuals;

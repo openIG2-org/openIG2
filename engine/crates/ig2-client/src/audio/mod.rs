@@ -70,10 +70,43 @@ pub fn real_names(path: &str) -> [String; 2] {
     [format!("dataraw/{stem}.ogg"), format!("{stem}.ogg")]
 }
 
+/// A decoded sound, or a line in the log naming the file that doesn't decode (a mod's; ADR 0091 §1): it plays nothing.
+fn said<T>(file: &str, decoded: Result<T, String>) -> Option<T> {
+    decoded.map_err(|e| eprintln!("ig2-client: sound {file}: {e}")).ok()
+}
+
 /// MSVC's `rand()` (the exe's libc), for the music picks: cosmetic, a stream of the client's own.
 fn libc_rand(seed: &mut u32) -> i32 {
     *seed = seed.wrapping_mul(214013).wrapping_add(2531011);
     ((*seed >> 16) & 0x7fff) as i32
+}
+
+/// A war track: `first + r % 3` as the exe draws it, over the mods' tracks too when there are (ADR 0091 §2).
+fn war_pick(first: usize, extra: &[usize], r: usize) -> usize {
+    match r % (3 + extra.len()) {
+        k if k < 3 => first + k,
+        k => extra[k - 3],
+    }
+}
+
+/// The mods' music (ADR 0091 §2): every sound file under a mod's `music/` is appended to the exe's track list, those
+/// under `music/ground_war/` and `music/space_war/` to the war picks, the rest to the main rotation. One track per
+/// name whatever its kinds ([`Install::resolve_sound`] picks the file). Returns the main tracks' ids and the wars'.
+fn mod_music(install: &Install, music: &mut Vec<String>) -> (std::ops::Range<usize>, [Vec<usize>; 2]) {
+    let stems: std::collections::BTreeSet<&str> =
+        install.overrides().into_iter().filter(|o| o.path.starts_with("music/")).filter_map(|o| ig2_formats::sound::stem(o.path)).collect();
+    let war = |s: &&str| s.starts_with("music/ground_war/") || s.starts_with("music/space_war/");
+    let start = music.len();
+    music.extend(stems.iter().filter(|s| !war(s)).map(|s| format!("{s}.ogg")));
+    let main = start..music.len();
+    let mut wars: [Vec<usize>; 2] = Default::default();
+    for (k, dir) in ["music/ground_war/", "music/space_war/"].into_iter().enumerate() {
+        for s in stems.iter().filter(|s| s.starts_with(dir)) {
+            wars[k].push(music.len());
+            music.push(format!("{s}.ogg"));
+        }
+    }
+    (main, wars)
 }
 
 /// The libc `rand()` of the screens' cosmetic sound picks (the colony's ambients, build and demolish sounds): the exe
@@ -144,29 +177,45 @@ pub struct MusicState {
     /// `GlobalMusicVolumeCsokkento` exe 0xe4166c and `…Real` 0xe41678 (message speech ducking).
     pub duck: i32,
     pub duck_real: f32,
+    /// Ours (ADR 0091 §2): the mods' main tracks, appended after the exe's 19; empty without mods.
+    pub extra: std::ops::Range<usize>,
 }
 
 impl Default for MusicState {
     fn default() -> Self {
         // `ZeneHangero` starts at 0 and rises toward `Cel` 100 before any track (observed, music1 trace).
-        Self { track: None, eppen: 0, regi: 0, hangero: 0.0, cel: 100.0, next: None, duck: 0, duck_real: 0.0 }
+        Self { track: None, eppen: 0, regi: 0, hangero: 0.0, cel: 100.0, next: None, duck: 0, duck_real: 0.0, extra: 0..0 }
     }
 }
 
 impl MusicState {
+    /// The track after a race's third: the mods' first, else the race's first again (`base`).
+    fn after_race(&self, base: usize) -> usize {
+        if self.extra.is_empty() { base } else { self.extra.start }
+    }
+
     /// `PlayMusicMain` exe 0x5407c0: the next main track, or `None` while one plays. `race` = `PlayerFaj[EN]`,
     /// `rand` = libc `rand()` (drawn only for the first pick).
     pub fn main_pick(&self, race: u8, self_playing: bool, rand: impl FnOnce() -> i32) -> Option<usize> {
-        if (3..12).contains(&self.eppen) {
+        if (3..12).contains(&self.eppen) || self.extra.contains(&self.eppen) {
             return None;
         }
         let mut x = match self.regi {
             3 | 4 => self.regi + 1,
-            5 => 3,
+            5 => self.after_race(3),
             6 | 7 => self.regi + 1,
-            8 => 6,
+            8 => self.after_race(6),
             9 | 10 => self.regi + 1,
-            11 => 9,
+            11 => self.after_race(9),
+            // A mod's tracks (ADR 0091 §2) play in turn, then the race's first again.
+            r if self.extra.contains(&r) => match r + 1 {
+                n if n < self.extra.end => n,
+                _ => match race {
+                    1 => 6,
+                    5 => 3,
+                    _ => 9,
+                },
+            },
             0 => match race {
                 1 => 6 + (rand() % 3) as usize,
                 3 => 9 + (rand() % 3) as usize,
@@ -260,6 +309,8 @@ pub struct Audio {
     /// `HangLejatszasID` (exe 0x912a44): the new campaign's start voice (its channel; `None` inside = none played)
     /// while it ducks the music.
     start_voice: Option<Option<usize>>,
+    /// Ours (ADR 0091 §2): the mods' ground and space war tracks, by id.
+    war_extra: [Vec<usize>; 2],
 }
 
 /// The message speech's state (re/screens/audio.md §5): `PlayMessagesHang`'s start (`SDL_GetTicks` at exe 0x91a800,
@@ -290,6 +341,8 @@ impl MessageSpeech {
 impl Audio {
     /// The sound card when `device`, else silent (the state and log still run).
     pub fn new(install: Install, tables: SoundTables, device: bool) -> Self {
+        let mut tables = tables;
+        let (main_extra, war_extra) = mod_music(&install, &mut tables.music);
         let (output, mixer) = match device.then(|| output::open(0)).flatten() {
             Some((o, m)) => (Some(o), Some(m)),
             None => (None, None),
@@ -308,7 +361,8 @@ impl Audio {
             sound_volume: opts.int("Sound Volume").unwrap_or(100).clamp(0, 100),
             music_volume: opts.int("Music Volume").unwrap_or(100).clamp(0, 100),
             voice_volume: crate::display::voice_volume(&opts),
-            music: MusicState::default(),
+            music: MusicState { extra: main_extra, ..MusicState::default() },
+            war_extra,
             start_voice: None,
             ui: 0,
             log: Vec::new(),
@@ -340,11 +394,12 @@ impl Audio {
     pub fn play_message_speech(&mut self, en: i32, name: &str) {
         self.message.t0 = self.ui;
         let path = format!("dataraw/messagesounds/{en}/{name}");
-        if name.is_empty() || self.install.resolve(&path).is_none() {
+        let file = if name.is_empty() { None } else { self.install.resolve_sound(&[&path]) };
+        let Some(file) = file else {
             self.message.channel = None;
             self.message.found = false;
             return;
-        }
+        };
         self.stop_message_speech();
         self.music.duck = message_duck(self.music_volume);
         // `PlaySound(&MessagesHang, 1)`: nothing without `SOUND`.
@@ -354,7 +409,7 @@ impl Audio {
         }
         self.voice_log.push((path.clone(), self.ui));
         let rate = self.mixer.as_ref().and_then(|m| m.lock().ok().map(|m| m.rate)).unwrap_or(48000);
-        let Some(chunk) = self.install.read(&path).ok().and_then(|b| decode::chunk(b, rate).ok()) else { return };
+        let Some(chunk) = self.install.read(&file).ok().and_then(|b| said(&file, decode::chunk(b, rate))) else { return };
         self.message.end = self.ui + (chunk.len() as u64 * 100).div_ceil(rate as u64);
         let Some(mixer) = self.mixer.clone() else { return };
         let Ok(mut m) = mixer.lock() else { return };
@@ -446,8 +501,8 @@ impl Audio {
         let m = self.mixer.as_ref()?;
         let rate = m.lock().ok()?.rate;
         let h = self.tables.get(id.table, id.idx as usize)?;
-        let path = install_paths(&h.name).into_iter().find(|p| self.install.resolve(p).is_some())?;
-        decode::chunk(self.install.read(&path).ok()?, rate).ok()
+        let path = self.install.resolve_sound(&install_paths(&h.name))?;
+        said(&path, decode::chunk(self.install.read(&path).ok()?, rate))
     }
 
     /// `PlaySound(&<table>[idx], 0)` exe 0x55cd20: the first stopped of the record's three voices, else the first
@@ -595,8 +650,8 @@ impl Audio {
         self.voice_log.push((path.to_string(), self.ui));
         let mixer = self.mixer.clone()?;
         let rate = mixer.lock().ok()?.rate;
-        let real = real_names(path).into_iter().find(|p| self.install.resolve(p).is_some())?;
-        let chunk = decode::chunk(self.install.read(&real).ok()?, rate).ok()?;
+        let real = self.install.resolve_sound(&real_names(path))?;
+        let chunk = said(&real, decode::chunk(self.install.read(&real).ok()?, rate))?;
         let mut m = mixer.lock().ok()?;
         let ch = m.alloc_free();
         m.set_volume(ch, mixer_volume(convert_volume(self.voice_level() as f64)));
@@ -666,9 +721,9 @@ impl Audio {
                 self.music.regi = 0;
                 12
             }
-            Music::GrWar => 13 + (libc_rand(&mut self.seed) % 3) as usize,
+            Music::GrWar => war_pick(13, &self.war_extra[0], libc_rand(&mut self.seed) as usize),
             // `SDL_GetTicks()·7 % 3`: the client's milliseconds are its UI ticks × 10.
-            Music::SpWar => 16 + (self.ui as u32).wrapping_mul(10).wrapping_mul(7) as usize % 3,
+            Music::SpWar => war_pick(16, &self.war_extra[1], (self.ui as u32).wrapping_mul(10).wrapping_mul(7) as usize),
         };
         if let Some(t) = self.music.play(id, immediate) {
             self.start_track(t);
@@ -679,8 +734,9 @@ impl Audio {
         let Some(mixer) = self.mixer.clone() else { return };
         let Some(name) = self.tables.music.get(id) else { return };
         let Ok(rate) = mixer.lock().map(|m| m.rate) else { return };
-        let Ok(r) = self.install.open_stream(name) else { return };
-        let Ok(stream) = decode::OggStream::new(r, rate) else { return };
+        let Some(file) = self.install.resolve_sound(&[name]) else { return };
+        let Ok(r) = self.install.open_stream(&file) else { return };
+        let Some(stream) = said(&file, decode::FileStream::new(r, rate)) else { return };
         if let Ok(mut m) = mixer.lock() {
             m.set_music_volume(mixer_volume(music_volume(self.music.hangero, self.music_volume, self.music.duck_real)));
             m.play_music(Box::new(stream));
@@ -744,6 +800,53 @@ mod tests {
         assert_eq!(m.main_pick(3, true, || 0), Some(1));
         m.eppen = 7;
         assert_eq!(m.main_pick(1, false, || 0), None);
+    }
+
+    /// ADR 0091 §2: the mods' main tracks follow the race's three in turn; the war picks keep the exe's draws without
+    /// mod tracks.
+    #[test]
+    fn mod_tracks_join_the_rotation() {
+        let mut m = MusicState { extra: 19..21, regi: 8, ..MusicState::default() };
+        assert_eq!(m.main_pick(1, false, || unreachable!()), Some(19));
+        m.regi = 19;
+        assert_eq!(m.main_pick(1, false, || unreachable!()), Some(20));
+        m.regi = 20;
+        assert_eq!(m.main_pick(1, false, || unreachable!()), Some(6));
+        assert_eq!(m.main_pick(5, false, || unreachable!()), Some(3));
+        assert_eq!(m.main_pick(6, false, || unreachable!()), Some(9));
+        m.eppen = 20;
+        assert_eq!(m.main_pick(1, false, || 0), None);
+        for r in 0..20 {
+            assert_eq!(war_pick(13, &[], r), 13 + r % 3);
+        }
+        assert_eq!((war_pick(16, &[21, 22], 3), war_pick(16, &[21, 22], 9), war_pick(16, &[21, 22], 7)), (21, 22, 18));
+    }
+
+    #[test]
+    fn mod_music_lists_tracks_by_folder() {
+        let t = std::env::temp_dir().join(format!("ig2-mod-music-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        for rel in [
+            "install/dataraw/text/scenario.txt",
+            "mods/m/music/b.flac",
+            "mods/m/music/b.wav",
+            "mods/m/music/a.ogg",
+            "mods/m/music/space_war/s.wav",
+            "mods/m/music/notes.txt",
+            "mods/m/mfx/pol1.wav",
+        ] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "x").unwrap();
+        }
+        let (mods, _) = ig2_formats::vfs::Mod::find(&t.join("mods"), &["m".into()]);
+        let inst = Install::open_with_mods(t.join("install"), ig2_formats::text::Lang::En, mods).unwrap();
+        let mut music: Vec<String> = (0..19).map(|i| format!("mfx/{i}.ogg")).collect();
+        let (main, wars) = mod_music(&inst, &mut music);
+        assert_eq!((main, wars), (19..21, [vec![], vec![21]]));
+        assert_eq!(music[19..], ["music/a.ogg", "music/b.ogg", "music/space_war/s.ogg"]);
+        assert_eq!(inst.resolve_sound(&[&music[20]]).as_deref(), Some("music/b.flac"));
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     /// `Starmap_Belep`'s `PlayMusicMain(0, 0)` after a ground war (gwar 13..15 playing) picks the race's next main
@@ -859,7 +962,7 @@ mod tests {
         }
         assert_eq!(n, 205 - 10);
         for m in &t.music {
-            let mut s = decode::OggStream::new(inst.open_stream(m).unwrap(), 48000).unwrap();
+            let mut s = decode::FileStream::new(inst.open_stream(m).unwrap(), 48000).unwrap();
             let mut buf = [[0.0f32; 2]; 4800];
             assert_eq!(mixer::Stream::read(&mut s, &mut buf), 4800, "{m}");
         }

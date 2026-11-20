@@ -10,6 +10,9 @@ rust-version.workspace = true
 
 [dependencies]
 lz4_flex.workspace = true
+lewton.workspace = true
+# Mods' FLAC and WAV sounds and music (ADR 0091).
+symphonia = { workspace = true, features = ["flac", "wav", "pcm"] }
 encoding_rs.workspace = true
 thiserror.workspace = true
 miniz_oxide.workspace = true

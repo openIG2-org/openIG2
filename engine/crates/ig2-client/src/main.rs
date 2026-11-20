@@ -830,13 +830,13 @@ fn enabled_mods(o: &Options) -> Vec<ig2_formats::vfs::Mod> {
 }
 
 /// The enabled mods' fingerprint for the multiplayer room (`ig2_net::session::mods_fingerprint`): the override files
-/// but a pack's pictures and models (only drawn, ADR 0054 §7), each `rules.toml` as `rules.toml#<k>` in the order
-/// they apply (ADR 0044 §9), each text patch as `texts.<lang>.toml#<k>` likewise (§13) and each `stories.toml` as
-/// `stories.toml#<k>` in the order they run (ADR 0061 §6); a `kind = "visual"` mod's files are left out as a pack's
-/// are (ADR 0086 §2), its patches not; `None` without mods.
+/// but a pack's pictures and models (only drawn, ADR 0054 §7) and sound and music files (only heard, ADR 0091 §3),
+/// each `rules.toml` as `rules.toml#<k>` in the order they apply (ADR 0044 §9), each text patch as `texts.<lang>.toml#<k>`
+/// likewise (§13) and each `stories.toml` as `stories.toml#<k>` in the order they run (ADR 0061 §6); a
+/// `kind = "visual"` mod's files are left out as a pack's are (ADR 0086 §2), its patches not; `None` without mods.
 pub fn mods_fingerprint(install: &Install) -> Option<[u8; 32]> {
     let visual: Vec<&str> = install.mods().iter().filter(|m| m.info().is_ok_and(|i| i.kind == ig2_formats::vfs::ModKind::Visual)).map(|m| m.name.as_str()).collect();
-    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR) && !visual.contains(&f.mod_name)).map(|f| (f.path.to_owned(), install.read_file(f.file).unwrap_or_default())).collect();
+    let mut files: Vec<(String, Vec<u8>)> = install.overrides().iter().filter(|f| !f.path.starts_with(upscale::PACK_DIR) && ig2_formats::sound::stem(f.path).is_none() && !visual.contains(&f.mod_name)).map(|f| (f.path.to_owned(), install.read_file(f.file).unwrap_or_default())).collect();
     files.extend(install.rule_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("rules.toml#{k}"), b)));
     files.extend(install.text_patches().unwrap_or_default().into_iter().enumerate().map(|(k, (_, f, b))| (format!("{f}#{k}"), b)));
     files.extend(install.story_files().unwrap_or_default().into_iter().enumerate().map(|(k, (_, b))| (format!("{}#{k}", ig2_formats::vfs::STORY_FILE), b)));

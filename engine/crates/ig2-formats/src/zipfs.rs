@@ -195,8 +195,8 @@ pub fn build(files: &[(&str, &[u8], bool)]) -> Vec<u8> {
 }
 
 /// The file kinds a mod may hold: TOML, PNG, plain text (a readme or licence) and the game's own data formats.
-pub const KINDS: [&str; 20] =
-    ["toml", "png", "txt", "md", "ogg", "pvr", "xv", "xvb", "mp4", "mou", "map", "dsc", "scn", "eng", "ani", "tut", "res", "msg", "ttf", "otf"];
+pub const KINDS: [&str; 22] =
+    ["toml", "png", "txt", "md", "ogg", "pvr", "xv", "xvb", "mp4", "mou", "map", "dsc", "scn", "eng", "ani", "tut", "res", "msg", "ttf", "otf", "flac", "wav"];
 /// Text files without an extension a mod may hold.
 const PLAIN: [&str; 4] = ["license", "licence", "readme", "copying"];
 /// Starts of executables, scripts and archives, refused whatever the file's name.

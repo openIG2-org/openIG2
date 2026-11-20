@@ -161,5 +161,43 @@ fn bad_items_name_what_is_wrong() {
     assert_eq!(err(&format!("{tech}[[hulls.new]]\nkey = \"a\"\nlike = 9\n[[hulls.new]]\nkey = \"b\"\nlike = 9\ntech = \"a\"\n")), "hulls.new \"b\".tech: tech 71 already is another hull's or weapon's");
     assert_eq!(err(&format!("{tech}[[space_weapons.new]]\nkey = \"a\"\nlike = 30\n")), "space_weapons.new \"a\".tech: weapon 30 has no pod tech: give tech 71 a like");
     assert_eq!(err(&format!("{tech}like = 100\n")), "techs.new \"a\".like: tech 100 is not an original ship or tank item (1..=80, 145..=176)");
-    assert!(err(&format!("{tech}[[space_weapons.new]]\nkey = \"a\"\nlike = 3\nrelaod = 1\n")).starts_with("space_weapons.new \"a\".relaod: unknown field (fields: like, tech, kind,"));
+    assert!(err(&format!("{tech}[[space_weapons.new]]\nkey = \"a\"\nlike = 3\nrelaod = 1\n")).starts_with("space_weapons.new \"a\".relaod: unknown field (fields: like, tech, sound, kind,"));
+}
+
+/// ADR 0091 §2: `icon` and `sound` on new entries, their defaults (the like's) and the sound tables' new records.
+#[test]
+fn new_entries_bring_their_own_icon_and_sounds() {
+    let Some(inst) = Install::from_env(Lang::En) else { return };
+    let inst = inst.expect("valid install");
+    let mut r = Rules::from_install(&inst).expect("catalogued exe");
+    let before = r.clone();
+    let looks = MOD.replace("max_hp = 3000", "max_hp = 3000\nicon = \"fusion_prev.xv\"\nsound = \"fusion/start.wav\"");
+    let armada = ARMADA.replace("range = 80", "range = 80\nsound = 'fusion\\lance.flac'");
+    r.apply_patch(&looks).unwrap();
+    r.apply_patch(&armada).unwrap();
+    assert_eq!(r.building_models[56].preview, "fusion_prev.xv");
+    assert_eq!(r.building_models[56].model, before.building_models[55].model);
+    assert_eq!((r.added_buildings[0].sound.as_str(), r.added_weapons[0].sound.as_str(), r.added_weapons[0].like), ("fusion/start.wav", "fusion/lance.flac", 3));
+    // Without the fields: the like's picture and sounds, nothing in the tables.
+    let mut plain = before.clone();
+    plain.apply_patch(MOD).unwrap();
+    assert!(plain.added_buildings[0].sound.is_empty());
+    assert_eq!(ig2_rules::sounds::building_sound(&plain, 56), None);
+    // The sounds follow the exe's records: Colony_Hangok 58, SpWar_Hangok 42.
+    let mut t = ig2_rules::sounds::SoundTables::from_exe(&inst.read_raw("ig2.exe").unwrap()).unwrap();
+    let n: Vec<usize> = t.tables.iter().map(Vec::len).collect();
+    t.add_entry_sounds(&plain);
+    assert_eq!(t.tables.iter().map(Vec::len).collect::<Vec<_>>(), n);
+    t.add_entry_sounds(&r);
+    use ig2_rules::sounds::Table;
+    assert_eq!((ig2_rules::sounds::building_sound(&r, 56), ig2_rules::sounds::weapon_sound(&r, 40)), (Some(58), Some(42)));
+    assert_eq!((t.get(Table::Colony, 58).unwrap().name.as_str(), t.get(Table::SpWar, 42).unwrap().volume), ("fusion/start.wav", 100));
+    // Where the game has no sound or picture of an entry's own, the field is refused.
+    let err = |s: &str| before.clone().apply_patch(s).unwrap_err();
+    assert!(err(&MOD.replace("ai_priority = 8", "ai_priority = 8\nsound = \"a.wav\"")).contains("a tech has no sound of its own"));
+    assert!(err(&ARMADA.replace("range = 80", "range = 80\nmodel = \"x.xv\"")).contains("a new weapon has no model of its own yet"));
+    for bad in ["../x.wav", "/x.wav", "c:/x.wav", "x.mp3", "a//b.ogg"] {
+        let e = err(&MOD.replace("max_hp = 3000", &format!("max_hp = 3000\nsound = \"{bad}\"")));
+        assert!(e.starts_with("buildings.new \"fusion_reactor\".sound: expected a .ogg, .flac or .wav file"), "{bad}: {e}");
+    }
 }

@@ -363,6 +363,25 @@ The tech appears on the research screen once the Mezon plant is researched, and 
 once the tech is; computer empires research and build it too. Other fields and the limits are in ADR 0069; `ig2-check`
 shows where each new entry landed. Saves made with the mod need it to load.
 
+A new building may bring its own build-menu picture and starting sound, and a new space weapon its own firing sound
+(else they look and sound like their `like`; ADR 0091 §2):
+
+```toml
+[[buildings.new]]
+key = "fusion_reactor"
+like = 55
+icon = "a1full.xvb"           # the build menu's picture: a model in the game's format (the same as `preview`)
+sound = "fusion/start.wav"    # the mod's sounds/fusion/start.wav (.ogg, .flac or .wav), played when it is started
+
+[[space_weapons.new]]
+key = "plasma_lance"
+like = 3
+sound = "fusion/lance.flac"   # its firing sound, at the Beam laser's volume
+```
+
+Techs and hulls have no sound of their own in the game, and a new hull's or weapon's own model is not open yet: those
+fields are refused with the reason.
+
 Ships and tanks work the same way: every hull, weapon and part is a tech. A new hull or space weapon is a copy of an
 original (`like`) with its own tech, which says what it costs and how strong it is; a new part (an engine, a shield,
 a radar, a tank turret) is a tech that is `like` an original part and fits wherever that part fits. Example: a
@@ -575,6 +594,21 @@ replace is their data: the `.scn` maps (which stories start, their values), `dat
 In multiplayer every player needs the same mod files, `rules.toml`s and text patches: the room refuses a player with other mods
 ("Other mods enabled"; a dialog lists what differs, and "Download and join" installs the mods from the index, restarts and joins again), the room page lists its mods, and a multiplayer save made with mods resumes only with them. Texture and model packs (below)
 are the exception: they only change what you see, so players with and without them play together.
+
+### Sounds and music
+
+Sounds, voices and music may be **Ogg Vorbis, FLAC or WAV** (ADR 0091). Put the file at the original's path with
+any of the three endings: `sounds\ingame\click1.wav` replaces the install's `dataraw\sounds\ingame\click1.ogg`,
+`mfx\pol1.flac` a music track. Any mod's file beats the install's; between mods the higher one wins. Mono or
+stereo, 8 to 192 kHz, any length for music; effects and voices stop after 120 seconds. WAV must be plain PCM.
+
+New music: every sound file in a mod's `music\` folder joins the in-game music after your race's three tracks;
+`music\ground_war\` and `music\space_war\` add to the battle music. The menu track can only be replaced.
+
+A file that doesn't decode plays nothing and is named on stderr; `openIG2-check --mod <name>` decodes every sound of
+the mod and lists its kind, rate, channels and length. Sounds and music stay out of the multiplayer check: players
+in one room may use different ones (a mod with only sounds should say `kind = "visual"`). More in
+[Sounds and music](modding/sounds-and-music.md).
 
 ### Look files
 A mod's `visuals.toml` (at the mod's top) switches looks on while the mod is enabled (ADR 0088). It changes only what

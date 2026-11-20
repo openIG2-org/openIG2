@@ -349,6 +349,10 @@ pub struct AddedItem {
     pub key: String,
     pub index: usize,
     pub tech: usize,
+    /// The original it copies (`like`).
+    pub like: usize,
+    /// Ours (ADR 0091 §2), weapons only: its firing sound, a file relative to `sounds/`; empty = the like's.
+    pub sound: String,
 }
 
 /// A building kind a mod added (ADR 0069).
@@ -356,6 +360,8 @@ pub struct AddedItem {
 pub struct AddedBuilding {
     pub key: String,
     pub kind: usize,
+    /// Ours (ADR 0091 §2): the sound its building starts with, a file relative to `sounds/`; empty = the like's.
+    pub sound: String,
 }
 
 /// A race a mod added (ADR 0069 §13): its key, its number (15, 16, …), the original race it plays (`like`: the

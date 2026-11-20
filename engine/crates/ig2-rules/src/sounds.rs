@@ -109,13 +109,37 @@ impl SoundTables {
     pub fn get(&self, table: Table, idx: usize) -> Option<&Hang> {
         self.tables[table as usize].get(idx)
     }
+
+    /// The mods' added entries' own sounds (ADR 0091 §2) appended after the exe's records, at 100 per cent: each
+    /// added building's `sound` to `Colony_Hangok`, each added weapon's to `SpWar_Hangok`, in the rules' order.
+    /// [`building_sound`] and [`weapon_sound`] give their ids.
+    pub fn add_entry_sounds(&mut self, rules: &crate::Rules) {
+        let colony = rules.added_buildings.iter().map(|a| &a.sound).filter(|s| !s.is_empty()).map(|s| (Table::Colony, s));
+        let spwar = rules.added_weapons.iter().map(|a| &a.sound).filter(|s| !s.is_empty()).map(|s| (Table::SpWar, s));
+        for (t, name) in colony.chain(spwar) {
+            self.tables[t as usize].push(Hang { name: name.clone(), looping: 0, volume: 100, preload: false });
+        }
+    }
+}
+
+/// An added building kind's own start sound in `Colony_Hangok` ([`SoundTables::add_entry_sounds`]).
+pub fn building_sound(rules: &crate::Rules, kind: usize) -> Option<u16> {
+    let with: Vec<usize> = rules.added_buildings.iter().filter(|a| !a.sound.is_empty()).map(|a| a.kind).collect();
+    with.iter().position(|&k| k == kind).map(|i| (TABLES[Table::Colony as usize].1 + i) as u16)
+}
+
+/// An added space weapon's own firing sound in `SpWar_Hangok` ([`SoundTables::add_entry_sounds`]).
+pub fn weapon_sound(rules: &crate::Rules, weapon: usize) -> Option<u16> {
+    let with: Vec<usize> = rules.added_weapons.iter().filter(|a| !a.sound.is_empty()).map(|a| a.index).collect();
+    with.iter().position(|&w| w == weapon).map(|i| (TABLES[Table::SpWar as usize].1 + i) as u16)
 }
 
 /// The GOG install's files for a table name, in lookup order: `dir/Name.wav` → `dataraw/sounds/dir/name.ogg`, else
 /// `sounds/dir/name.ogg` (the `colony/st/` names live only there; re/screens/audio.md §1).
 pub fn install_paths(name: &str) -> [String; 2] {
     let lower = name.replace('\\', "/").to_ascii_lowercase();
-    let stem = lower.strip_suffix(".wav").unwrap_or(&lower);
+    // A mod's added entry may name its file `.ogg`, `.flac` or `.wav` (ADR 0091 §2).
+    let stem = [".wav", ".ogg", ".flac"].iter().find_map(|e| lower.strip_suffix(e)).unwrap_or(&lower);
     [format!("dataraw/sounds/{stem}.ogg"), format!("sounds/{stem}.ogg")]
 }
 
@@ -126,5 +150,6 @@ mod tests {
     #[test]
     fn wav_names_map_to_oggs() {
         assert_eq!(install_paths("colony/Click.wav")[0], "dataraw/sounds/colony/click.ogg");
+        assert_eq!(install_paths("mine/Lance.FLAC")[1], "sounds/mine/lance.ogg");
     }
 }
