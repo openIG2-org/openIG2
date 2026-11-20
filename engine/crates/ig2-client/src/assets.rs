@@ -20,17 +20,33 @@ impl Image {
     /// The texture at `path`, with what the texture upscaling or an enabled pack draws instead (ADR 0054).
     pub fn load(install: &Install, path: &str) -> Result<Self, String> {
         let mut img = Self::load_original(install, path)?;
-        img.hires = crate::upscale::hires(install, path, &img);
+        // A mod's own picture is drawn as it is: no upscaling, no pack picture (ADR 0090 §3).
+        if !path.contains('#') {
+            img.hires = crate::upscale::hires(install, path, &img);
+        }
         Ok(img)
     }
 
     /// [`Image::load`] drawn as it is (the font atlas).
     pub fn load_original(install: &Install, path: &str) -> Result<Self, String> {
+        if let Some((model, member)) = path.split_once('#') {
+            return Self::embedded(install, model, member);
+        }
         let bytes = install.read(path).map_err(|e| format!("{path}: {e}"))?;
         let pvr = Pvr::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
         let mut levels = pvr.decode_levels().map_err(|e| format!("{path}: {e}"))?.into_iter().map(|l| l.pixels);
         let rgba = levels.next().ok_or(format!("{path}: no pixels"))?;
         Ok(Self { width: pvr.width, height: pvr.height, rgba, mips: levels.collect(), hires: None })
+    }
+
+    /// A picture embedded in a mod's `.glb` (ADR 0090 §3): the archive member `member` of the converted model `model`.
+    /// A broken one is the mod's problem: an error, and the part draws untextured.
+    fn embedded(install: &Install, model: &str, member: &str) -> Result<Self, String> {
+        let bytes = install.read(model).map_err(|e| format!("{model}: {e}"))?;
+        let a = ig2_formats::xv::Archive::parse(&bytes).map_err(|e| format!("{model}: {e}"))?;
+        let m = a.get(member).ok_or(format!("{model}: no {member}"))?;
+        let (width, height, rgba) = ig2_formats::glb::decode_image(m.data).map_err(|e| format!("{model}: {member}: {e}"))?;
+        Ok(Self { width, height, rgba, mips: Vec::new(), hires: None })
     }
 
     /// The texture's `uv_mul` (its PVR's `CNST` metadata, `ig2_vertex.shader` scales the mesh UVs by it), else (1, 1).

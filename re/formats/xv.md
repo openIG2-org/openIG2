@@ -52,7 +52,7 @@ v0:    origin = (marker, u16, u16) as floats
 `LoadXVBx` re-measures the root after loading (`BoxUjraszamol` 0x602750): the half-extents become the vertices'
 reach from the pivot, and the root's scale `+0x4c` = `max/1024` when the file's root is exactly 1024 wide
 (re/screens/design.md §12c).
-A mod's `.glb` is converted to this format in memory by `ig2_formats::glb` (ADR 0090). Measured on meteor, kozepes1, flag10 and romb60: root half-extents 1024 and the vertices' largest reach from the pivot 1; the converter scales to that.
+A mod's `.glb` is converted to this format in memory by `ig2_formats::glb` (ADR 0090). Measured on meteor, kozepes1, flag10 and romb60: root half-extents 1024 (`colony/npv0`: 3040) and the vertices' largest reach from the pivot 1; the converter gives a model the replaced model's largest root half-extent. Embedded pictures become `~<image>.png` members.
 
 ## `.xvb` node
 ```

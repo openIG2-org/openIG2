@@ -792,8 +792,9 @@ impl Install {
         Ok(container::decode(path, &raw)?.into_owned())
     }
 
-    /// A mod's `<stem>.glb` in place of the `.xv` at `path` (ADR 0090), converted to that `.xv`: when no mod supplies
-    /// the `.xv`, or the `.glb`'s mod ranks at least as high as the `.xv`'s.
+    /// A mod's `<stem>.glb` in place of the `.xv` at `path` (ADR 0090), converted to that `.xv` at the size of the model
+    /// it replaces (its root's largest half-extent; 1024 when there is none): when no mod supplies the `.xv`, or the
+    /// `.glb`'s mod ranks at least as high as the `.xv`'s.
     fn glb_model(&self, path: &str) -> Option<Result<Vec<u8>>> {
         let p = normalize(path);
         let stem_path = p.strip_suffix(".xv")?;
@@ -803,7 +804,12 @@ impl Install {
             return None;
         }
         let stem = stem_path.rsplit('/').next().unwrap_or(stem_path);
-        Some(self.read_file(&self.index[&glb]).and_then(|b| crate::glb::to_xv(&b, stem).map_err(|e| crate::format_err("glb", format!("{glb}: {e}")))))
+        let size = self.read_raw(&p).ok().and_then(|raw| {
+            let xv = container::decode(&p, &raw).ok()?;
+            let o = crate::xv::Archive::parse(&xv).ok()?.scene(Some(stem)).ok()??.header.origin;
+            Some(o[0].max(o[1]).max(o[2])).filter(|s| *s > 0.0 && s.is_finite())
+        });
+        Some(self.read_file(&self.index[&glb]).and_then(|b| crate::glb::to_xv_sized(&b, stem, size.unwrap_or(1024.0)).map_err(|e| crate::format_err("glb", format!("{glb}: {e}")))))
     }
 
     /// Seekable decrypted stream, for `neGs` media (Ogg, MP4).
@@ -929,7 +935,10 @@ mod tests {
         let t = std::env::temp_dir().join(format!("ig2-vfs-glb-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&t);
         let glb = crate::glb::tests::sample();
+        let big = crate::glb::to_xv_sized(&glb, "big", 3040.0).unwrap();
         for (rel, body) in [
+            ("install/dataraw/vector/colony/big.xv", &big[..]),
+            ("mods/low/dataraw/vector/colony/big.glb", &glb),
             ("install/dataraw/text/scenario.txt", &b"base"[..]),
             ("install/dataraw/vector/colony/ship.xv", b"original"),
             ("install/dataraw/vector/colony/boat.xv", b"original"),
@@ -951,6 +960,10 @@ mod tests {
             assert_eq!(a.scene(Some("ship")).unwrap().unwrap().children[0].0.name, "Hull");
         }
         assert_eq!(text(&i, "dataraw/vector/colony/boat.xv"), "top xv");
+        // Sized as the model it replaces: `big`'s root is 3040 wide, `ship`'s original no model (1024).
+        let origin = |path: &str| crate::xv::Archive::parse(&i.read(path).unwrap()).unwrap().scene(None).unwrap().unwrap().header.origin;
+        assert_eq!(origin("dataraw/vector/colony/big.xv"), [3040.0; 3]);
+        assert_eq!(origin("dataraw/vector/colony/ship.xv"), [1024.0; 3]);
         let e = i.read("dataraw/vector/colony/bad.xv").unwrap_err().to_string();
         assert!(e.contains("dataraw/vector/colony/bad.glb"), "{e}");
         let _ = std::fs::remove_dir_all(&t);

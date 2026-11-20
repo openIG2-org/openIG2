@@ -18,6 +18,12 @@ thiserror.workspace = true
 miniz_oxide.workspace = true
 toml_edit = { workspace = true, features = ["display"] }
 serde_json.workspace = true
+png.workspace = true
+zune-jpeg = "0.4"
+
+[features]
+# The generated test models, for other crates' tests.
+test-util = []
 
 [lints]
 workspace = true

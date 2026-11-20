@@ -2273,10 +2273,12 @@ dependencies = [
  "lewton",
  "lz4_flex",
  "miniz_oxide 0.8.9",
+ "png",
  "serde_json",
  "symphonia",
  "thiserror 2.0.21",
  "toml_edit",
+ "zune-jpeg",
 ]
 
 [[package]]

@@ -253,7 +253,7 @@ impl Model {
         let archive = Archive::parse(&bytes).map_err(|e| format!("{path}: {e}"))?;
         match pack_model(install, &path) {
             Some(bytes) => Self::from_pack(&bytes, &archive, &path, stem, install, texture_dir, frame),
-            None => Self::posed(&archive, &path, stem, install, texture_dir, frame),
+            None => Self::posed(&archive, &path, &path, stem, install, texture_dir, frame),
         }
     }
 
@@ -262,7 +262,7 @@ impl Model {
     #[allow(clippy::too_many_arguments)]
     fn from_pack(bytes: &[u8], archive: &Archive, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
         let pack = Archive::parse(bytes).map_err(|e| format!("{}{path}: {e}", crate::upscale::PACK_DIR))?;
-        let mut model = Self::posed(&pack, path, stem, install, texture_dir, frame)?;
+        let mut model = Self::posed(&pack, &format!("{}{path}", crate::upscale::PACK_DIR), path, stem, install, texture_dir, frame)?;
         let original = archive.scene(Some(stem)).map_err(|e| format!("{path}: {e}"))?.ok_or(format!("{path}: no root node"))?.header.origin;
         model.fit(original);
         Ok(model)
@@ -287,16 +287,18 @@ impl Model {
             .into_iter()
             .map(|f| match &pack {
                 Some(bytes) => Self::from_pack(bytes, &archive, &path, stem, install, texture_dir, Some(f)),
-                None => Self::posed(&archive, &path, stem, install, texture_dir, Some(f)),
+                None => Self::posed(&archive, &path, &path, stem, install, texture_dir, Some(f)),
             })
             .collect()
     }
 
-    fn posed(archive: &Archive, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
+    /// `source`: the file `archive` was read from (a pack's model is read from `hires/<path>`).
+    fn posed(archive: &Archive, source: &str, path: &str, stem: &str, install: &Install, texture_dir: &str, frame: Option<usize>) -> Result<Self, String> {
         let scene = archive.scene(Some(stem)).map_err(|e| format!("{path}: {e}"))?.ok_or(format!("{path}: no root node"))?;
         let root = archive.root(Some(stem)).map(|m| m.name.clone()).unwrap_or_default();
         let mut w = Walk {
             archive,
+            source,
             install,
             texture_dir,
             prefix: format!("{}-", root.split('.').next().unwrap_or_default()),
@@ -424,6 +426,8 @@ impl Model {
 
 struct Walk<'a, 'b> {
     archive: &'a Archive<'b>,
+    /// The model file's game path: an embedded picture is the texture `<source>#<member>`.
+    source: &'a str,
     install: &'a Install,
     texture_dir: &'a str,
     prefix: String,
@@ -441,7 +445,7 @@ impl Walk<'_, '_> {
         if mat.texture.is_empty() {
             return None;
         }
-        self.install.resolve_texture(self.texture_dir, &mat.texture).or_else(|| {
+        self.embedded(&mat.texture).or_else(|| self.install.resolve_texture(self.texture_dir, &mat.texture)).or_else(|| {
             let screen = self.texture_dir.trim_start_matches("textures/").split('/').next().unwrap_or("");
             self.install.resolve_model_texture(screen, &mat.texture)
         })
@@ -455,10 +459,15 @@ impl Walk<'_, '_> {
         if mat.texture2.is_empty() || mat.texture2.eq_ignore_ascii_case("fenyek_2.bmp") || mat.texture2.eq_ignore_ascii_case("reflec.bmp") {
             return None;
         }
-        self.install.resolve_texture(self.texture_dir, &mat.texture2).or_else(|| {
+        self.embedded(&mat.texture2).or_else(|| self.install.resolve_texture(self.texture_dir, &mat.texture2)).or_else(|| {
             let screen = self.texture_dir.trim_start_matches("textures/").split('/').next().unwrap_or("");
             self.install.resolve_model_texture(screen, &mat.texture2)
         })
+    }
+
+    /// A texture name that is a picture embedded in a mod's `.glb` (ADR 0090 §3): its texture path `<source>#<member>`.
+    fn embedded(&self, name: &str) -> Option<String> {
+        (name.starts_with(ig2_formats::glb::EMBEDDED) && self.archive.get(name).is_some()).then(|| format!("{}#{name}", self.source))
     }
 
     /// The material's `texture` and `texture2` names as stored, lower case (empty when absent).
@@ -765,6 +774,42 @@ impl Transform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ADR 0090: a mod's `.glb` draws with its own embedded picture, as a file override and under `hires/`; the
+    /// override is hashed into the multiplayer fingerprint, the look-only `hires/` model is not.
+    #[test]
+    fn a_glb_draws_its_own_picture_and_only_overrides_count_in_multiplayer() {
+        use ig2_formats::glb::tests::{png, sample_with_picture};
+        let t = std::env::temp_dir().join(format!("ig2-scene-glb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let put = |rel: &str, body: &[u8]| {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        };
+        put("install/dataraw/text/scenario.txt", b"base");
+        put("mods/over/dataraw/vector/colony/ship.glb", &sample_with_picture(&png(2, 2, [255, 0, 0, 255])));
+        put("mods/look/hires/dataraw/vector/colony/ship.glb", &sample_with_picture(&png(4, 4, [0, 255, 0, 255])));
+        let open = |names: &[&str]| {
+            let (mods, _) = ig2_formats::vfs::Mod::find(&t.join("mods"), &names.iter().map(|n| n.to_string()).collect::<Vec<_>>());
+            Install::open_with_mods(t.join("install"), ig2_formats::text::Lang::En, mods).unwrap()
+        };
+        let drawn = |install: &Install| {
+            let m = Model::load(install, "vector/colony/", "ship.xvb", "textures/colony/").unwrap();
+            let tex = m.parts[0].texture.clone().unwrap();
+            let img = crate::assets::Image::load(install, &tex).unwrap();
+            (tex, img.width, img.rgba[..4].to_vec())
+        };
+        assert_eq!(drawn(&open(&["over"])), ("dataraw/vector/colony/ship.xv#~0.png".into(), 2, vec![255, 0, 0, 255]));
+        assert_eq!(drawn(&open(&["look", "over"])), ("hires/dataraw/vector/colony/ship.xv#~0.png".into(), 4, vec![0, 255, 0, 255]));
+        let over = crate::mods_fingerprint(&open(&["over"]));
+        assert!(over.is_some());
+        assert_eq!(crate::mods_fingerprint(&open(&["look"])), None);
+        assert_eq!(crate::mods_fingerprint(&open(&["look", "over"])), over);
+        put("mods/over/dataraw/vector/colony/ship.glb", &sample_with_picture(&png(2, 2, [0, 0, 255, 255])));
+        assert_ne!(crate::mods_fingerprint(&open(&["over"])), over);
+        let _ = std::fs::remove_dir_all(&t);
+    }
 
     #[test]
     fn poses_from_one_parse_match_each_load() {

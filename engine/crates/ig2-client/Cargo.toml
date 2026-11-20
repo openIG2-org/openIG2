@@ -65,6 +65,8 @@ web-sys = { workspace = true, features = ["Window", "Document", "Element", "Html
 [dev-dependencies]
 # Signs the test indexes the mod repository's tests verify.
 minisign = { version = "0.7", default-features = false }
+# The generated test models (ADR 0090).
+ig2-formats = { version = "0.1.0", path = "../ig2-formats", features = ["test-util"] }
 
 [lints]
 workspace = true

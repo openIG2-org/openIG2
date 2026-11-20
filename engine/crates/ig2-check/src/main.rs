@@ -78,12 +78,13 @@ fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Gro
         g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
         g.ok += 1;
     }
-    // Each model a mod gives as glTF, converted on its own (ADR 0090).
+    // Each model a mod gives as glTF, converted on its own, its own pictures decoded (ADR 0090).
     for o in overrides.iter().filter(|o| o.path.ends_with(".glb")) {
         let stem = o.path.rsplit('/').next().unwrap_or(o.path).trim_end_matches(".glb");
         g.check(&format!("mod {}: {}", o.mod_name, o.path), || {
             let b = inst.read_file(o.file).map_err(|e| e.to_string())?;
-            ig2_formats::glb::to_xv(&b, stem).map(|_| ()).map_err(|e| e.to_string())
+            let xv = ig2_formats::glb::to_xv(&b, stem).map_err(|e| e.to_string())?;
+            ig2_formats::glb::check_images(&xv).map_err(|e| e.to_string())
         });
     }
     rule_patches(inst, &mut g);

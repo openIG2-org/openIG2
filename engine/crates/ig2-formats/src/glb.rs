@@ -20,6 +20,11 @@ const MAX_DEPTH: usize = 32;
 const MAX_VERTICES: usize = 1 << 20;
 /// An `.xvo` counts its faces in a `u16` and indexes vertices with `u16`.
 const MESH_LIMIT: usize = 0xFFFF;
+/// An embedded picture's side, at most (the texture upscaling's `MAX_SIDE`).
+pub const MAX_IMAGE_SIDE: u32 = 4096;
+/// The first character of a texture name that is an embedded picture: the archive member of that name (`~0.png`).
+pub const EMBEDDED: char = '~';
+
 /// The archive stem leaves room for `-<15-byte name>.xvo` in a 64-byte member name.
 const MAX_STEM: usize = 40;
 
@@ -120,21 +125,36 @@ struct Writer<'a> {
     material_names: Names,
     /// glTF material → its `.xvm` name, once written.
     materials: Vec<Option<String>>,
+    /// The root's half-extents (every axis).
+    size: f32,
     seen: Vec<bool>,
     vertices: usize,
+    /// Images already stored as archive members.
+    images: HashSet<usize>,
 }
 
-/// Convert a `.glb` into an `.xv` archive whose root is `<stem>.xvb` (the game path's file stem). Fails with a clear
-/// message on anything malformed, oversized or outside the subset ADR 0090 reads; never panics.
+/// Convert a `.glb` into an `.xv` archive whose root is `<stem>.xvb` (the game path's file stem), at the original
+/// exporter's half-extents 1024. Fails with a clear message on anything malformed, oversized or outside the subset
+/// ADR 0090 reads; never panics.
 pub fn to_xv(glb: &[u8], stem: &str) -> Result<Vec<u8>> {
+    to_xv_sized(glb, stem, 1024.0)
+}
+
+/// [`to_xv`] with the root's half-extents `size` on every axis: the largest of the model's it replaces, so that it
+/// draws as large (not every original's root is 1024 wide: `colony/npv0`'s is 3040).
+pub fn to_xv_sized(glb: &[u8], stem: &str, size: f32) -> Result<Vec<u8>> {
+    if !(size > 0.0 && size.is_finite()) {
+        return Err(err(format!("model size {size} must be positive")));
+    }
     if stem.is_empty() || stem.len() > MAX_STEM || !stem.bytes().all(|b| b.is_ascii_graphic()) {
         return Err(err(format!("model name {stem:?} must be 1 to {MAX_STEM} plain ASCII characters")));
     }
     let doc = parse(glb)?;
     let nmat = arr(&doc.json, "materials").len();
     let nnodes = arr(&doc.json, "nodes").len();
-    if nnodes + nmat > MAX_MEMBERS {
-        return Err(err(format!("{nnodes} nodes and {nmat} materials; at most {MAX_MEMBERS} together")));
+    let nimg = arr(&doc.json, "images").len();
+    if nnodes + nmat + nimg > MAX_MEMBERS {
+        return Err(err(format!("{nnodes} nodes, {nmat} materials and {nimg} images; at most {MAX_MEMBERS} together")));
     }
     let mut w = Writer {
         doc,
@@ -143,8 +163,10 @@ pub fn to_xv(glb: &[u8], stem: &str) -> Result<Vec<u8>> {
         nodes: Names::default(),
         material_names: Names::default(),
         materials: vec![None; nmat],
+        size,
         seen: vec![false; nnodes],
         vertices: 0,
+        images: HashSet::new(),
     };
     w.root()?;
     Ok(archive(&w.members))
@@ -324,8 +346,8 @@ impl Writer<'_> {
         if lod.len() > 15 || !lod.bytes().all(|b| b.is_ascii_graphic()) {
             return Err(err(format!("scene extras.lod {lod:?} must be a model name of at most 15 plain ASCII characters")));
         }
-        // The original exporter wrote every model at half-extents 1024 with its largest reach from the pivot 1
-        // (re/formats/xv.md); the game sizes models by that.
+        // The original exporter wrote its models with their largest reach from the pivot 1 (re/formats/xv.md), the
+        // root's half-extents the model's size (mostly 1024); the game sizes models by that.
         let e = reach(&placed(&children));
         let big = e[0].max(e[1]).max(e[2]);
         if !(big > 0.0 && big.is_finite()) {
@@ -335,7 +357,7 @@ impl Writer<'_> {
             c.1 = c.1.map(|x| x / big);
             c.2 = c.2.map(|x| x / big);
         }
-        let (bytes, _) = self.xvb(&children, lod, Some([1024.0; 3]));
+        let (bytes, _) = self.xvb(&children, lod, Some([self.size; 3]));
         let name = format!("{}.xvb", self.stem);
         self.member(name, bytes);
         Ok(())
@@ -526,14 +548,82 @@ impl Writer<'_> {
         Ok(name)
     }
 
-    /// A texture reference's image name: the game texture it stands for (`panel_4_3.bmp`), at most 15 characters.
-    fn texture_name(&self, info: Option<&Value>) -> Result<String> {
+    /// A texture reference's texture name: an image named after a game texture (`panel_4_3.bmp`, a `.bmp` name of at
+    /// most 15 characters) is that texture; any other image is the model's own picture, stored as the archive member
+    /// `~<image>.png` / `.jpg` ([`EMBEDDED`]) and named so.
+    fn texture_name(&mut self, info: Option<&Value>) -> Result<String> {
         let Some(info) = info else { return Ok(String::new()) };
         let t = self.doc.item("textures", index(info, "index").ok_or_else(|| err("a texture reference has no index"))?)?;
         let Some(src) = index(t, "source") else { return Ok(String::new()) };
-        let name = self.doc.item("images", src)?.get("name").and_then(Value::as_str).unwrap_or("");
-        Ok(if name.len() <= 15 && name.bytes().all(|b| b.is_ascii_graphic()) { name.to_owned() } else { String::new() })
+        let img = self.doc.item("images", src)?;
+        let name = img.get("name").and_then(Value::as_str).unwrap_or("");
+        if name.len() <= 15 && name.bytes().all(|b| b.is_ascii_graphic()) && name.to_ascii_lowercase().ends_with(".bmp") {
+            return Ok(name.to_owned());
+        }
+        let ext = if img.get("mimeType").and_then(Value::as_str) == Some("image/png") { "png" } else { "jpg" };
+        let member = format!("{EMBEDDED}{src}.{ext}");
+        if !self.images.contains(&src) {
+            let bytes = self.doc.view(index(img, "bufferView").unwrap_or(0))?.0.to_vec();
+            self.images.insert(src);
+            self.member(member.clone(), bytes);
+        }
+        Ok(member)
     }
+}
+
+/// An embedded picture (PNG or JPEG, told by its signature) as width, height and RGBA rows: what a model's own texture
+/// draws (ADR 0090 §3). At most [`MAX_IMAGE_SIDE`] a side, checked before the pixels are decoded; a broken picture is
+/// an error, never a panic.
+pub fn decode_image(b: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+    decode(b).map_err(err)
+}
+
+fn decode(b: &[u8]) -> std::result::Result<(u32, u32, Vec<u8>), String> {
+    let fits = |w: u32, h: u32| {
+        if w == 0 || h == 0 || w.max(h) > MAX_IMAGE_SIDE {
+            return Err(format!("picture is {w} × {h}; at most {MAX_IMAGE_SIDE} a side"));
+        }
+        Ok(())
+    };
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") {
+        let mut d = png::Decoder::new(std::io::Cursor::new(b));
+        d.set_transformations(png::Transformations::EXPAND | png::Transformations::ALPHA | png::Transformations::STRIP_16);
+        let mut r = d.read_info().map_err(|e| format!("PNG: {e}"))?;
+        fits(r.info().width, r.info().height)?;
+        let mut buf = vec![0; r.output_buffer_size().ok_or_else(|| "PNG: too large".to_string())?];
+        let info = r.next_frame(&mut buf).map_err(|e| format!("PNG: {e}"))?;
+        buf.truncate(info.buffer_size());
+        let rgba = match info.color_type {
+            png::ColorType::Rgba => buf,
+            png::ColorType::GrayscaleAlpha => buf.chunks_exact(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+            c => return Err(format!("PNG: unsupported colour type {c:?}")),
+        };
+        return Ok((info.width, info.height, rgba));
+    }
+    if !b.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Err("picture is neither PNG nor JPEG".into());
+    }
+    let mut d = zune_jpeg::JpegDecoder::new(b);
+    d.decode_headers().map_err(|e| format!("JPEG: {e:?}"))?;
+    let (w, h) = d.dimensions().ok_or_else(|| "JPEG: no picture size".to_string())?;
+    fits(w as u32, h as u32)?;
+    let px = d.decode().map_err(|e| format!("JPEG: {e:?}"))?;
+    let rgba = match px.len() / (w * h) {
+        4 => px,
+        3 => px.chunks_exact(3).flat_map(|c| [c[0], c[1], c[2], 255]).collect(),
+        1 => px.iter().flat_map(|&g| [g, g, g, 255]).collect(),
+        _ => return Err("JPEG: an unusual colour layout".into()),
+    };
+    Ok((w as u32, h as u32, rgba))
+}
+
+/// Every embedded picture of the converted archive `xv` decodes ([`to_xv`]'s output; the mod check).
+pub fn check_images(xv: &[u8]) -> Result<()> {
+    let a = crate::xv::Archive::parse(xv)?;
+    for m in a.members.iter().filter(|m| m.name.starts_with(EMBEDDED)) {
+        decode(m.data).map_err(|e| err(format!("{}: {e}", m.name)))?;
+    }
+    Ok(())
 }
 
 /// An `.xv` archive of `members` (`xv.md` § Archive).
@@ -552,9 +642,12 @@ fn archive(members: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+/// Generated test models (also for the client's tests, with the `test-util` feature).
+#[cfg(any(test, feature = "test-util"))]
+#[doc(hidden)]
+pub mod tests {
     use super::*;
+    #[cfg(test)]
     use crate::xv::{Archive, ChildContent, Material};
     use serde_json::json;
 
@@ -588,12 +681,17 @@ pub(crate) mod tests {
 
     /// A unit quad in glTF's XY plane facing +Z: positions, normals, UVs, u16 indices and a PNG image.
     fn quad(normals: bool) -> (Value, Vec<u8>) {
+        quad_with(normals, "panel_4_3.bmp", b"\x89PNG\r\n\x1a\n\0\0\0\0")
+    }
+
+    /// [`quad`] whose image is `picture` (PNG or JPEG bytes), named `name`.
+    fn quad_with(normals: bool, name: &str, picture: &[u8]) -> (Value, Vec<u8>) {
         let mut bin = f32s(&[0., 0., 0., 1., 0., 0., 1., 1., 0., 0., 1., 0.]); // 0..48
         bin.extend(f32s(&[0., 0., 1.].repeat(4))); // 48..96
         bin.extend(f32s(&[0., 1., 1., 1., 1., 0., 0., 0.])); // 96..128
         bin.extend([0u16, 1, 2, 0, 2, 3].iter().flat_map(|x| x.to_le_bytes())); // 128..140
         bin.extend([0; 4]);
-        bin.extend(b"\x89PNG\r\n\x1a\n\0\0\0\0"); // 144..156
+        bin.extend(picture); // 144..
         let mut attrs = json!({ "POSITION": 0, "TEXCOORD_0": 2 });
         if normals {
             attrs["NORMAL"] = json!(1);
@@ -610,7 +708,7 @@ pub(crate) mod tests {
             "materials": [{ "name": "metal", "alphaMode": "BLEND",
                 "pbrMetallicRoughness": { "baseColorFactor": [1., 1., 1., 0.25], "baseColorTexture": { "index": 0 } } }],
             "textures": [{ "source": 0 }],
-            "images": [{ "name": "panel_4_3.bmp", "bufferView": 4, "mimeType": "image/png" }],
+            "images": [{ "name": name, "bufferView": 4, "mimeType": if picture.starts_with(b"\x89PNG") { "image/png" } else { "image/jpeg" } }],
             "accessors": [
                 { "bufferView": 0, "componentType": 5126, "count": 4, "type": "VEC3" },
                 { "bufferView": 1, "componentType": 5126, "count": 4, "type": "VEC3" },
@@ -622,18 +720,35 @@ pub(crate) mod tests {
                 { "buffer": 0, "byteOffset": 48, "byteLength": 48 },
                 { "buffer": 0, "byteOffset": 96, "byteLength": 32 },
                 { "buffer": 0, "byteOffset": 128, "byteLength": 12 },
-                { "buffer": 0, "byteOffset": 144, "byteLength": 12 }
+                { "buffer": 0, "byteOffset": 144, "byteLength": picture.len() }
             ]
         });
         (j, bin)
     }
 
     /// A valid two-node `.glb` (for the mod file system's tests).
-    pub(crate) fn sample() -> Vec<u8> {
+    pub fn sample() -> Vec<u8> {
         let (j, bin) = quad(true);
         glb(j, &bin)
     }
 
+    /// [`sample`] textured by its own picture `picture` (PNG or JPEG), its image named `hull.png`.
+    pub fn sample_with_picture(picture: &[u8]) -> Vec<u8> {
+        let (j, bin) = quad_with(true, "hull.png", picture);
+        glb(j, &bin)
+    }
+
+    /// A `w` × `h` RGBA PNG, every pixel `rgba`.
+    pub fn png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
+        let mut out = Vec::new();
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().unwrap().write_image_data(&rgba.repeat((w * h) as usize)).unwrap();
+        out
+    }
+
+    #[cfg(test)]
     fn close(a: &[f32], b: &[f32]) -> bool {
         a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5)
     }
@@ -707,6 +822,35 @@ pub(crate) mod tests {
         assert!(to_xv(&glb(j.clone(), &buf), "ship").unwrap_err().to_string().contains("triangles"));
         assert!(to_xv(b"glTF", "ship").is_err());
         assert!(to_xv(&glb(j.clone(), &bin), "a-very-long-model-name-that-has-no-room-left").is_err());
+    }
+
+    /// An image named after no game texture is the model's own picture: stored once in the archive as `~<image>.png`,
+    /// named so by every material that uses it, decoded to RGBA; a broken or oversized one is an error (ADR 0090 §3).
+    #[test]
+    fn embedded_pictures_are_the_models_own_textures() {
+        let picture = png(2, 3, [10, 20, 30, 255]);
+        let (mut j, bin) = quad_with(true, "hull.png", &picture);
+        j["materials"][0]["emissiveTexture"] = json!({ "index": 0 });
+        let xv = to_xv(&glb(j, &bin), "ship").unwrap();
+        let a = Archive::parse(&xv).unwrap();
+        let mat = Material::parse(a.get("ship-metal.xvm").unwrap().data).unwrap();
+        assert_eq!((mat.texture.as_str(), mat.texture2.as_str()), ("~0.png", "~0.png"));
+        assert_eq!(a.members.iter().filter(|m| m.name.starts_with(EMBEDDED)).count(), 1);
+        assert_eq!(a.get("~0.png").unwrap().data, &picture[..]);
+        assert_eq!(decode_image(&picture).unwrap(), (2, 3, [10, 20, 30, 255].repeat(6)));
+        check_images(&xv).unwrap();
+        // A picture with a broken body converts (its signature is right) but fails the check, with its member's name.
+        let mut broken = picture.clone();
+        let n = broken.len();
+        broken[n - 20..].fill(0);
+        let xv = to_xv(&sample_with_picture(&broken), "ship").unwrap();
+        assert!(check_images(&xv).unwrap_err().to_string().contains("~0.png"));
+        assert!(decode_image(&png(MAX_IMAGE_SIDE + 1, 1, [0; 4])).unwrap_err().to_string().contains("at most 4096"));
+        assert!(decode_image(b"\xFF\xD8\xFF\xE0 not a jpeg").is_err());
+        assert!(decode_image(b"GIF89a").is_err());
+        for k in 0..picture.len() {
+            let _ = decode_image(&picture[..k]);
+        }
     }
 
     /// Every truncation and every single-byte change of a valid file reads or fails; none panics.

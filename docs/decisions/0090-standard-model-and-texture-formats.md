@@ -1,6 +1,6 @@
 # ADR 0090: standard model and texture formats for mods
 
-Date: 2026-11-20. Status: **accepted** (2026-11-20; models part 1 built). Extends ADR 0044 (file overrides), ADR
+Date: 2026-11-20. Status: **accepted** (2026-11-20; models built: parts 1 and 2). Extends ADR 0044 (file overrides), ADR
 0054 §5–7 (`hires/` packs) and ADR 0086 (what to open to mods next). The packages are rows 574 (glTF models), 577
 (KTX2/DDS textures) and 578 (the convert tool) in `docs/ENHANCEMENTS.md`.
 
@@ -41,10 +41,14 @@ glTF is right-handed with +Y up and +Z the front; the game's models are right-ha
 (`re/screens/colony.md` §2.4). The scene's top-level nodes are turned by `(x, y, z) = (X, −Z, Y)` (a rotation:
 winding and handedness stay), which is what Blender's glTF exporter undoes, so a model made Z-up in Blender stands
 as modelled (checked in the colony view: a test model's +Y pillar stands up on every building). UVs keep glTF's
-origin (top left), the game's too. Units are free: the original exporter wrote every model with root half-extents
-1024 and its largest reach from the pivot exactly 1 (measured: `main/meteor`, `colony/kozepes1`, `spacewar/flag10`,
-`spacewar/romb60`), and the screens size models by that, so the conversion scales the whole model uniformly to the
-same: a `.glb` stands as large as the original it replaces, whatever its units. The glTF origin is the pivot the
+origin (top left), the game's too. Units are free: the original exporter wrote its models with their largest reach
+from the pivot exactly 1 and the root's half-extents the model's size, mostly 1024 (measured: `main/meteor`,
+`colony/kozepes1`, `spacewar/flag10`, `spacewar/romb60`; not all: `colony/npv0`'s root is 3040), and the screens size
+models by that. So the conversion scales the whole model uniformly to reach 1 and gives the root, on every axis, the
+largest half-extent of the model it replaces (the `.xv` the path would read without the `.glb`; 1024 when there is
+none): a `.glb` stands as large as the original it replaces, whatever its units. Under `hires/` the client fits it to
+the original as every pack model (ADR 0054 §6); both draw the same (checked in the colony view: every building as a
+file override and as a pack model, in the same place at the same size). The glTF origin is the pivot the
 game places and turns the model about, as the original's.
 
 ### 3. What is read
@@ -55,8 +59,14 @@ game places and turns the model about, as the original's.
   `node2`, …. Cameras, lights and empty groups are skipped; skins are ignored (drawn in the bind pose).
 - **Meshes**: triangle primitives only; `POSITION` (required), `NORMAL` (else flat shading, as glTF says),
   `TEXCOORD_0`; 8-, 16- or 32-bit indices. The primitives of one mesh share an `.xvo`, one material each.
-- **Materials**: the base colour texture's image **name** is the game texture it uses (`panel_4_3.bmp`, looked up
-  like the original's, ADR 0054 §6), the emissive texture's the self-illumination one; `alphaMode` `BLEND` sets the
+- **Materials**: the base colour texture is the part's texture, the emissive texture the self-illumination one. An
+  image whose name is a game texture's (a `.bmp` name of at most 15 characters, `panel_4_3.bmp`) is that texture,
+  looked up like the original's (ADR 0054 §6), and its embedded pixels are ignored; any other image is the model's
+  own picture: stored in the converted archive as the member `~<image>.png` / `.jpg`, named so in the `.xvm`, and
+  drawn as it is (no texture upscaling, no pack picture) through the client's texture path as the texture
+  `<model path>#<member>`. A picture is decoded when it is drawn: at most 4096 pixels a side, checked before its
+  pixels are decoded; a broken or oversized one draws untextured and `openIG2-check --mod` reports it. Blender's
+  exporter keeps a `.bmp` image name and drops `.png`/`.jpg` (checked with Blender 5.3); `alphaMode` `BLEND` sets the
   transparency `1 − alpha` of `baseColorFactor` (else opaque). Everything else in the material is ignored.
 - **Level of detail**: `scenes[n].extras.lod` names the next level's model (its stem, in the same folder), as the
   original's `lod_archive`. Without it the model has one level.
@@ -70,11 +80,14 @@ game places and turns the model about, as the original's.
 
 ### 4. Animation
 
-Not built: a converted model has no frames, and a screen that animates the original's (the colony's `teszt`, the
-space battle's `ora` and `karika`, the parts the screens move by name) moves its parts the same way, by name.
-Mapping is feasible: the node keys are per-frame matrices, so animation channels sampled at the frame count the
-screen expects give the keys exactly; morph targets give the vertex frames. It needs the frame counts each
-animated model's screen uses, so it waits for a mod that needs it.
+**Models from a `.glb` are static.** A converted model has no frames; the file's animations, skins (drawn in their
+bind pose) and morph targets are ignored. The parts the screens move by name (turrets, the parts `RotateObj` and
+`MoveObj` move) still move, so a model that keeps the original's part names keeps that motion. Node animation is
+not mapped: the original's keys are frames a screen picks with `SetFrame` at its own count and pace, which a glTF
+clip (keys in seconds) does not say, so sampled keys would play at a pace the modeller cannot see; only three
+shipped meshes carry vertex animation (`colony/teszt`, `spacewar/karika`, `spacewar/ora`). No second animation
+system is added; a mod that needs a moving model gives an `.xv`. Revisit when a mod needs it and the screens' frame
+counts are written down.
 
 ### 5. Multiplayer
 
@@ -117,7 +130,11 @@ Planned: a tool that turns an install's `.xv` into `.glb` (and back) so modeller
   check; tests on generated files, malformed input included. Checked in the client: a test `.glb` drawn in place of
   the main menu's meteor and ships and of every colony building, upright and at the original's size, textured by
   its image name.
-- Part 2 (to do): the embedded images as the model's own textures (decoded and registered under their names, with
-  row 577; today an image whose name is no game texture draws untextured), the tutorial page in `docs/modding/`,
-  the user guide's Mods section, and a look at a mod model on the remaining 3D screens (space battle, starmap
-  planets, design, research, spy).
+- Part 2 (built): the embedded pictures as the model's own textures (`glb::decode_image`, `glb::check_images`,
+  the scene loader's `<model>#<member>` texture path), a file override sized as the model it replaces
+  (`glb::to_xv_sized`), the mod check decoding every picture, the tutorial `docs/modding/models.md`; tests on
+  generated files (pictures, broken and oversized ones, sizing, the multiplayer fingerprint: an override is hashed,
+  a `hires/` model is not). Checked in the client: every colony building replaced by a generated `.glb` with its own
+  picture, as file overrides and under `hires/`, and by a model exported from Blender 5.3. Static models only (§4).
+  Not looked at with a mod model: the space battle, starmap planets, design, research and spy screens (they load
+  models through the same loader).

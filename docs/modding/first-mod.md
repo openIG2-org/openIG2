@@ -131,4 +131,5 @@ Two things to know before you share:
 - Change rule values (prices, research times, a race's production): `rules.toml`, in the user guide's Mods section.
 - Add techs, buildings, ship hulls, weapons, tanks, races and planet types: the same section, with examples.
 - Replace textures and models, or add sharper versions of them: the user guide's "Texture and model packs".
+- Put a model you made in Blender into the game: [Models from Blender](models.md).
 - Longer stories with timers, flags, battles and diplomacy: the `zorg-ultimatum` example in the user guide.

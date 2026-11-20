@@ -720,7 +720,8 @@ original, so a picture four times as large draws in the same spot, only sharper.
   its largest side matches the original's, so it fits the original's place whatever units it was built in. Its
   textures are found by name like the original's: put new ones in the mod's `dataraw\textures\colony\`, or sharper
   versions of the install's in `hires\`.
-  A model may also be a glTF 2.0 binary named `<name>.glb`, at the model's path or under `hires\` (ADR 0090).
+  A model may also be a glTF 2.0 binary named `<name>.glb`, at the model's path or under `hires\`, with its own
+  pictures inside it (ADR 0090): exporting one from Blender is in [Models from Blender](modding/models.md).
 - Enable the pack like any mod (`enabled.txt` or `--mod`). A pack's picture wins over Texture upscaling.
 - Packs, like all mods, are yours to make or download; the project ships no graphics.
 

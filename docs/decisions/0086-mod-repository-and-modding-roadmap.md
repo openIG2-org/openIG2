@@ -165,7 +165,7 @@ repository's docs page). Planned walk-throughs, each a page in `docs/modding/` w
 4. New ships, weapons and tanks.
 5. A new race and planet type.
 6. Writing a story campaign (timers, flags, battles, diplomacy).
-7. Texture and model packs (`hires/`).
+7. Texture and model packs (`hires/`). Models: `docs/modding/models.md` (ADR 0090), done; textures to come.
 8. Testing, packaging, publishing and multiplayer.
 
 ### 5. Modder tools in the release
