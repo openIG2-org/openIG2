@@ -77,6 +77,14 @@ fn check_mods(inst: &Install, missing: Vec<(String, String)>, lang: Lang) -> Gro
         g.notes.extend(files.iter().map(|o| format!("  {} {}", if o.replaces { "replaces" } else { "adds    " }, o.path)));
         g.ok += 1;
     }
+    // Each model a mod gives as glTF, converted on its own (ADR 0090).
+    for o in overrides.iter().filter(|o| o.path.ends_with(".glb")) {
+        let stem = o.path.rsplit('/').next().unwrap_or(o.path).trim_end_matches(".glb");
+        g.check(&format!("mod {}: {}", o.mod_name, o.path), || {
+            let b = inst.read_file(o.file).map_err(|e| e.to_string())?;
+            ig2_formats::glb::to_xv(&b, stem).map(|_| ()).map_err(|e| e.to_string())
+        });
+    }
     rule_patches(inst, &mut g);
     // Each text patch file on its own (ADR 0044 §12); together they were applied when the install opened.
     for (name, file, bytes) in inst.text_patches().unwrap_or_default() {
@@ -629,6 +637,24 @@ mod tests {
         g.check("c", || panic!("boom"));
         assert_eq!(g.ok, 1);
         assert_eq!(g.failed, [("b".to_string(), "bad".to_string()), ("c".to_string(), "loader panicked: boom".to_string())]);
+    }
+
+    /// A mod's broken `.glb` is a mod problem, named by its mod and path (ADR 0090).
+    #[test]
+    fn a_broken_glb_is_a_mod_problem() {
+        let t = std::env::temp_dir().join(format!("openig2-check-glb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        for (rel, body) in [("install/dataraw/text/scenario.txt", "base"), ("mods/m/dataraw/vector/colony/ship.glb", "glTF junk")] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        let (mods, _) = ig2_formats::vfs::Mod::find(&t.join("mods"), &["m".into()]);
+        let inst = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
+        let g = check_mods(&inst, Vec::new(), Lang::En);
+        assert_eq!(g.failed.len(), 1, "{:?}", g.failed);
+        assert_eq!(g.failed[0].0, "mod m: dataraw/vector/colony/ship.glb");
+        std::fs::remove_dir_all(&t).unwrap();
     }
 
     /// The dumps of the install in `IG2_INSTALL_DIR` read back: the texts as a patch, the rules as RON.

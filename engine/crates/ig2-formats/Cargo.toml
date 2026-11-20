@@ -14,8 +14,6 @@ encoding_rs.workspace = true
 thiserror.workspace = true
 miniz_oxide.workspace = true
 toml_edit = { workspace = true, features = ["display"] }
-
-[dev-dependencies]
 serde_json.workspace = true
 
 [lints]

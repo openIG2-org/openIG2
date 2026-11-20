@@ -92,3 +92,4 @@ code. Status is shown where the file states one.
 - [0087](0087-update-notice-and-updater.md): the update notice and the updater from GitHub releases (accepted)
 - [0088](0088-remaster-as-mods.md): the remaster ships as mods; a mod's `visuals.toml` switches looks on, including per-pixel lighting on every 3D screen; a mod's `effects.toml` describes the battle's particle effects; its `[starmap]` keys make a richer starmap (accepted)
 - [0089](0089-hd-pack.md): the HD pack: every picture, video, talking head, the font and the models' detail, made from the player's install (accepted; pictures built)
+- [0090](0090-standard-model-and-texture-formats.md): standard model and texture formats for mods: a glTF binary (`.glb`) model wherever an `.xv` goes, KTX2/DDS textures, a convert tool (accepted; glTF models part 1 built)

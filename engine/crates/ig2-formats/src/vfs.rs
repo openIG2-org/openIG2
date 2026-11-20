@@ -764,8 +764,25 @@ impl Install {
         if let Some(b) = self.patched.get(&normalize(path)) {
             return Ok(b.clone());
         }
+        if let Some(model) = self.glb_model(path) {
+            return model;
+        }
         let raw = self.read_raw(path)?;
         Ok(container::decode(path, &raw)?.into_owned())
+    }
+
+    /// A mod's `<stem>.glb` in place of the `.xv` at `path` (ADR 0090), converted to that `.xv`: when no mod supplies
+    /// the `.xv`, or the `.glb`'s mod ranks at least as high as the `.xv`'s.
+    fn glb_model(&self, path: &str) -> Option<Result<Vec<u8>>> {
+        let p = normalize(path);
+        let stem_path = p.strip_suffix(".xv")?;
+        let glb = format!("{stem_path}.glb");
+        let &(by, _) = self.modded.get(&glb)?;
+        if self.modded.get(&p).is_some_and(|&(xv_by, _)| xv_by < by) {
+            return None;
+        }
+        let stem = stem_path.rsplit('/').next().unwrap_or(stem_path);
+        Some(self.read_file(&self.index[&glb]).and_then(|b| crate::glb::to_xv(&b, stem).map_err(|e| crate::format_err("glb", format!("{glb}: {e}")))))
     }
 
     /// Seekable decrypted stream, for `neGs` media (Ogg, MP4).
@@ -882,6 +899,40 @@ mod tests {
 
     fn text(i: &Install, path: &str) -> String {
         String::from_utf8(i.read(path).unwrap()).unwrap()
+    }
+
+    /// ADR 0090: a mod's `.glb` stands for the `.xv` of the same stem, in a file override and under `hires/`; a
+    /// higher-ranked mod's `.xv` still wins, and a broken `.glb` fails its read with its path.
+    #[test]
+    fn a_mods_glb_stands_for_its_xv() {
+        let t = std::env::temp_dir().join(format!("ig2-vfs-glb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&t);
+        let glb = crate::glb::tests::sample();
+        for (rel, body) in [
+            ("install/dataraw/text/scenario.txt", &b"base"[..]),
+            ("install/dataraw/vector/colony/ship.xv", b"original"),
+            ("install/dataraw/vector/colony/boat.xv", b"original"),
+            ("mods/top/dataraw/vector/colony/boat.xv", b"top xv"),
+            ("mods/low/dataraw/vector/colony/Ship.GLB", &glb),
+            ("mods/low/dataraw/vector/colony/boat.glb", &glb),
+            ("mods/low/hires/dataraw/vector/colony/ship.glb", &glb),
+            ("mods/low/dataraw/vector/colony/bad.glb", b"glTF broken"),
+        ] {
+            let p = t.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        let (mods, _) = Mod::find(&t.join("mods"), &["top".into(), "low".into()]);
+        let i = Install::open_with_mods(t.join("install"), Lang::En, mods).unwrap();
+        for path in ["dataraw/vector/colony/ship.xv", "hires/dataraw/vector/colony/ship.xv"] {
+            let xv = i.read(path).unwrap();
+            let a = crate::xv::Archive::parse(&xv).unwrap();
+            assert_eq!(a.scene(Some("ship")).unwrap().unwrap().children[0].0.name, "Hull");
+        }
+        assert_eq!(text(&i, "dataraw/vector/colony/boat.xv"), "top xv");
+        let e = i.read("dataraw/vector/colony/bad.xv").unwrap_err().to_string();
+        assert!(e.contains("dataraw/vector/colony/bad.glb"), "{e}");
+        let _ = std::fs::remove_dir_all(&t);
     }
 
     #[test]

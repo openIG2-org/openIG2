@@ -61,6 +61,7 @@ Getting the game from "every part works" to "a player can install it and play it
 ### Graphics, options and mods
 - Graphics options: anti-aliasing, per-pixel lighting, soft colony shadows, glow, smooth glows, sharp text and UI on 1440p and 4K, texture upscaling (2x or 4x) and richer battle effects; all off keeps the original's look.
 - Mods: drop a zip into the `mods` folder and switch it on in the Mods page, or install, update and remove mods with their dependencies from the Browse tab; a broken mod no longer stops the game.
+- Mods can give 3D models as glTF binary files (`.glb`) in place of the game's own model files, at the model's path or under `hires`.
 - Apply in the Mods page loads the changed mods at once from the main menu, with no restart.
 - Mods can change rule values, texts, textures and sounds, and add techs, buildings, ship hulls, weapons, parts, tanks, races, planet types and their own stories; computer empires, saves and multiplayer games use them.
 - A mod's new ship hull can have its own equipment slots (`slots` in `[[hulls.new]]`), for example a destroyer with two rocket slots instead of its lasers; the designer, the battle and computer empires use them.
