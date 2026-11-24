@@ -190,9 +190,6 @@ const EMPIRE_SLOTS: usize = 19;
 const TECH_AI_PRIORITY: usize = 0xb7;
 const RACE_SLOTS: usize = 9;
 
-/// Pod types list at most this many techs (`PodTipusok +20`, i32 × 16).
-const POD_TECHS: usize = 16;
-
 /// Tech slot `t` is free (ADR 0069 §1): the exe's empty `-` record (static fields and every status zero) that no
 /// building prices itself with.
 fn free_slot(r: &Rules, t: usize) -> bool {
@@ -305,6 +302,8 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
         raw[TECH_STATUS + 1..TECH_STATUS + EMPIRE_SLOTS].fill(1);
         raw[TECH_AI_PRIORITY + 1..TECH_AI_PRIORITY + RACE_SLOTS].fill(prio);
         set_at(&mut r.research_size_mult, t - 1, size);
+        // A free field's skirmish start level is 0 (every level develops it); an added tech is never developed at start.
+        set_at(&mut r.skirmish_tech_start, t, i32::MAX);
         r.techs[t].name = key.clone();
         r.added_techs.push(AddedTech { key: key.clone(), index: t, name: key.clone(), description: Vec::new() });
         slots.push((t, at, *e));
@@ -528,9 +527,6 @@ fn add_new(r: &mut Rules, doc: &DocumentMut) -> Result<usize, String> {
             copy_at(&mut r.research_screen.models, l - 1, t - 1);
         }
         for p in r.pod_types.iter_mut().filter(|p| p.techs.contains(&(l as i32)) && !p.techs.contains(&(t as i32))) {
-            if p.techs.len() >= POD_TECHS {
-                return Err(format!("techs.new \"{}\": pod type {} already lists {POD_TECHS} techs", a.key, p.id));
-            }
             p.techs.push(t as i32);
         }
     }

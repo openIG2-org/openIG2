@@ -145,11 +145,11 @@ pub struct AiState {
     pub scout: [[[u8; GRID]; GRID]; EMPIRES],
 }
 
-/// A pod type (`PodTipusok`): its id and the 16 techs that fit it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// A pod type (`PodTipusok`): its id and the techs that fit it (the exe holds 16; mods may add more, ADR 0069 §7).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PodRule {
     pub id: i32,
-    pub techs: [i32; 16],
+    pub techs: Vec<i32>,
 }
 
 /// Rule tables (from the user's exe, ADR 0004; spec §1.2, §8.2).
@@ -1544,7 +1544,7 @@ mod tests {
             race_ai: Vec::new(),
         };
         fx.rules.pod_slot_max = slot_max;
-        fx.rules.pods = vec![PodRule { id: 7, techs: [20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }];
+        fx.rules.pods = vec![PodRule { id: 7, techs: vec![20] }];
         let tech = &mut fx.colony.tech;
         for t in [10, 20] {
             tech.set_status(t, 2, 5);

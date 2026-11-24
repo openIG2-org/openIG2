@@ -127,7 +127,7 @@ fn rules(r: &ig2_rules::Rules) -> Rules {
             pods: r
                 .pod_types
                 .iter()
-                .map(|p| PodRule { id: p.id, techs: std::array::from_fn(|i| p.techs.get(i).copied().unwrap_or(0)) })
+                .map(|p| PodRule { id: p.id, techs: p.techs.clone() })
                 .collect(),
             ground_priority: r.ai_ground_priority.clone(),
         },

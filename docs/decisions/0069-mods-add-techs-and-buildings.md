@@ -40,7 +40,9 @@ techs no category, field or name; filling the empty records keeps all of it.
    ```
    A field is free when its record is the exe's empty `-` (static fields and statuses zero) and no building prices
    itself with it (kinds 17, 18, 23, … point at tech 192). The record gets status 1 (unknown) for every race, so
-   `Research_TalalmanyUjraSzamol` shows it once its prerequisites are owned, and the AI priority for races 1..=8.
+   `Research_TalalmanyUjraSzamol` shows it once its prerequisites are owned, and the AI priority for races 1..=8. Its
+   skirmish start level (`ScirmishTalalmanyFejlesztes`, 0 for a free field) becomes "never", so a generated galaxy
+   doesn't hand it out at start.
 2. **A new building kind is appended** after the originals (56, 57, …; at most 255):
    ```toml
    [[buildings.new]]
@@ -102,7 +104,7 @@ research field.
    stealth, the battle's pod effects and weapon, the ground war's pods, the AI's design rules, the research picker's
    category) reads the tech's role (`DesignRules::role`); prices, time, hit points, firepower and capacity come from
    the tech's own record. The tech is appended to every pod type (`PodTipusok`) that lists the original, so it fits
-   wherever the original fits (at most 16 per pod type). Its research-screen model and size start as the original's.
+   wherever the original fits (the exe's pod table holds 16 per pod type; openIG2 keeps no limit). Its research-screen model and size start as the original's.
    Without `like`, a new tech in categories 1..=5 and 10..=11 gives nothing (as in part 1).
 8. **A new hull is appended** (`Alapok` 25, 26, …) as a copy of the original it is `like` (1..=24):
    ```toml
@@ -143,7 +145,7 @@ research field.
     mods fingerprint, ADR 0044 §9; the lockstep hash covers the designs and the tech table). A save whose design
     names a hull the active rules lack refuses to load ("enable the mods it was played with").
 12. Errors: a `like` outside the ranges above (or a defence/building tech), an unknown hull or weapon, a tech
-    that is not an added tech's or is already a hull's, a pod type over 16 techs: the load fails naming the entry.
+    that is not an added tech's or is already a hull's: the load fails naming the entry.
 
 **Consequences.** Classic play is byte-exact: without `like` the role is the tech itself and no table grows. A new
 item looks like its original (models, sounds, battle type); its texts are its tech's (`name`, `description`, a

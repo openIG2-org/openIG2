@@ -61,6 +61,7 @@ impl StartTexts {
             let originals = ig2_rules::layout::BUILDINGS.2;
             tables.push((ig2_rules::layout::TECHS.0, r.tech_defaults));
             tables.push((ig2_rules::layout::BUILDINGS.0, r.buildings[..originals].iter().flat_map(|b| b.raw()).collect()));
+            tables.push((ig2_rules::layout::SKIRMISH_TECH_START.0, r.skirmish_tech_start.iter().flat_map(|v| v.to_le_bytes()).collect()));
         }
         Ok(Self {
             exe,

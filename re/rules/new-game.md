@@ -144,7 +144,7 @@ Check asm: product operand order is irrelevant (commutative f64); the exe keeps 
 
 ### InitAdvancedTalalmanyok(mode) (exe 0x4e0f70, ELF 0x581c00)
 - mode 0 (campaign) only: for e = 1..ProgramPlayers2 with PlayerKi[e] != 1 (the AIs; includes the 3 non-playable-race slots): `TalalmanyKifejlesztve(e, t)` in this order: if Nehezseg>2: t=6, 0x12, 0x16; if Nehezseg>1: 0x99; if Nehezseg>3: 0x92, 0xa2. (Nehezseg is not changed by the calls.)
-- mode 3 (skirmish): for e = 1..8 with BirodalomEl[e]: level = ScrirmishTechicalLevel (0xBAD0D8), +1 if PlayerKi[e]==2 and Nehezseg>3; for t = 1..192: if status[t][e] is neither 0 nor 5 and ScirmishTalalmanyFejlesztes[t] (0x8EC218 + 4t, ig2-rules `SKIRMISH_TECH_START`) <= level: TalalmanyKifejlesztve(e, t). Then Research_TalalmanyUjraSzamol.
+- mode 3 (skirmish): for e = 1..8 with BirodalomEl[e]: level = ScrirmishTechicalLevel (0xBAD0D8), +1 if PlayerKi[e]==2 and Nehezseg>3; for t = 1..192: if status[t][e] is neither 0 nor 5 and ScirmishTalalmanyFejlesztes[t] (0x8EC218 + 4t, ig2-rules `SKIRMISH_TECH_START`) <= level: TalalmanyKifejlesztve(e, t). Then Research_TalalmanyUjraSzamol. A free field's entry is 0, so a mod's added tech gets `i32::MAX` (never developed at start, ADR 0069 §1).
 - all modes: for t = 1..192: for a=1..8: if status[t][a]==5: for b = 1..8: if status[t][b]==5: seen[t][a][b] = seen[t][b][a] = 1, where seen is the byte matrix at record offset +0xc0 + 9a + b.
 - TalalmanyKifejlesztve(e, t) (exe 0x524e50, ELF 0x5ebcb0): ported (research.rs).
 

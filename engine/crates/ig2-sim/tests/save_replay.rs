@@ -306,7 +306,7 @@ fn game_rules(inst: &Install) -> GameRules {
             mission_cost_mult: r.spy_race_cost_mult.clone(),
             design: design.clone(),
             pod_slot_max: r.pod_slots.iter().map(|t| t.iter().map(|h| h.iter().map(|s| s.max_count).collect()).collect()).collect(),
-            pods: r.pod_types.iter().map(|p| PodRule { id: p.id, techs: std::array::from_fn(|i| p.techs.get(i).copied().unwrap_or(0)) }).collect(),
+            pods: r.pod_types.iter().map(|p| PodRule { id: p.id, techs: p.techs.clone() }).collect(),
             ground_priority: r.ai_ground_priority.clone(),
         },
         radar: RadarRules { ranges: r.radar_ranges[..6].try_into().unwrap(), planet_ranges: r.planet_radar_ranges[..8].try_into().unwrap(), wormhole_colours: r.wormhole_colours },

@@ -32,6 +32,8 @@ fn the_test_mod_adds_a_tech_in_a_free_field_and_a_kind_after_the_originals() {
     let raw = &r.tech_defaults[136 * 276..137 * 276];
     assert_eq!((&raw[0x45..0x48], &raw[0xb7..0xba], raw[0xbf], raw[0xc0], raw[39]), (&[0, 1, 1][..], &[0, 8, 8][..], 8, 0, 56));
     assert_eq!(i32::from_le_bytes(raw[52..56].try_into().unwrap()), 40000);
+    // A skirmish start never develops it (the free field's start level was 0).
+    assert_eq!((before.skirmish_tech_start[136], r.skirmish_tech_start[136]), (0, i32::MAX));
     // Nothing else moved: every other raw record and every original kind.
     let other = |d: &[u8]| [&d[..136 * 276], &d[137 * 276..]].concat();
     assert_eq!(other(&r.tech_defaults), other(&before.tech_defaults));
@@ -106,6 +108,24 @@ fn the_ship_mod_appends_a_hull_a_weapon_and_a_tank_and_fits_its_parts() {
     // Nothing original moved.
     assert!(r.hulls[..25].iter().zip(&before.hulls).all(|(a, b)| (a.tech, a.like) == (b.tech, 0)));
     assert_eq!(r.space_weapon_table()[..40 * 0x5c], before.space_weapon_table()[..]);
+}
+
+#[test]
+fn a_pod_type_can_list_more_than_the_originals_16_techs() {
+    let Some(mut r) = rules() else { return };
+    let pod = |r: &Rules| r.pod_types.iter().find(|p| p.id == 42).unwrap().techs.clone();
+    let before = pod(&r);
+    // Six torpedoes like the last rocket (tech 69) take the rocket pod past the exe's 16 entries.
+    let mods: String = (0..6).map(|i| format!("[[techs.new]]
+key = \"t{i}\"
+category = 5
+like = 69
+")).collect();
+    r.apply_patch(&mods).unwrap();
+    let after = pod(&r);
+    assert_eq!(after.len(), before.len() + 6);
+    assert!(after.len() > 16);
+    assert_eq!(after[..before.len()], before[..]);
 }
 
 #[test]
